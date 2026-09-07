@@ -1,13 +1,22 @@
 """weworkremotely.com — remote-only board, read through its per-category RSS feeds.
 
-GET https://weworkremotely.com/categories/remote-programming-jobs.rss (and siblings)
+GET https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss (and siblings)
 
-The all-jobs feed caps at 100 items and is not paginated, so we read the programming category
-feeds and dedupe on ``<link>``. Items carry WWR's custom elements next to the RSS ones:
-``<region>`` ("Anywhere in the World", "Europe Only"), ``<country>``, ``<category>``,
-``<type>`` and ``<skills>``. Titles read "Company: Job title".
+No feed is paginated, so we read the programming/devops **leaf** categories and dedupe on
+``<link>``. The parent ``remote-programming-jobs.rss`` feed is deliberately *not* read: checked
+on 2026-09-07 it answered with 25 items where its leaves held 146, and its items carry only
+title/region/category/description/pubDate/guid/link — no ``<country>``, ``<state>``,
+``<skills>``, ``<type>`` or ``<expires_at>``. Since dedupe keeps the first copy seen, those
+poorer items used to shadow the full ones from the leaf feeds.
 
-Every posting is remote; ``<region>`` goes to ``Job.remote_region`` for the location filter.
+Leaf items carry WWR's custom elements next to the RSS ones: ``<region>`` ("Anywhere in the
+World", "USA Only", "Europe Only"), ``<country>`` (flag emoji + full country name, often a long
+list of every country the company hires from, often empty), ``<state>``, ``<category>``,
+``<type>`` ("Full-Time", "Contract") and ``<skills>`` (a prose list ending in ", and X").
+Titles read "Company: Job title" and descriptions open with a "Headquarters:" block.
+
+Every posting is remote; ``<region>`` goes to ``Job.remote_region`` for the location filter,
+and ``<country>`` sets ``Job.country`` when it names exactly one country.
 """
 
 from __future__ import annotations
@@ -22,10 +31,10 @@ from jobscraper.sources._common import guess_country, parse_date
 from jobscraper.sources.base import SourceContext, register, safe_records
 
 FEEDS = [
-    "https://weworkremotely.com/categories/remote-programming-jobs.rss",
     "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
     "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss",
     "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss",
+    "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
 ]
 
 _ANYWHERE_RE = re.compile(
@@ -43,6 +52,16 @@ def region_country(region: str | None) -> str | None:
     codes = {guess_country(part) for part in _REGION_SPLIT_RE.split(region) if part.strip()}
     codes.discard(None)
     return codes.pop() if len(codes) == 1 else None
+
+
+def skill_tags(skills: str | None) -> list[str]:
+    """"Node.js, React, and Mobile Development" → three tags; the trailing "and" is not one."""
+    tags = []
+    for part in (skills or "").split(","):
+        tag = re.sub(r"^and\s+", "", part.strip(), flags=re.IGNORECASE).strip()
+        if tag:
+            tags.append(tag)
+    return tags
 
 
 def split_company_title(raw: str) -> tuple[str | None, str]:
@@ -74,20 +93,21 @@ def parse_record(item: ET.Element) -> Job | None:
     if not link or not raw_title:
         return None
     company, title = split_company_title(raw_title)
-    region = _text(item, "region") or _text(item, "country")
+    region = _text(item, "region")
+    country = _text(item, "country")
     tags = [t for t in (_text(item, "category"),) if t]
     skills = _text(item, "skills")
-    if skills:
-        tags += [s.strip() for s in skills.split(",") if s.strip()]
+    tags += skill_tags(skills)
     return Job(
         source="weworkremotely",
         source_id=_text(item, "guid") or link,
         url=link,
         title=title,
-        company=company or _text(item, "company"),
+        company=company,
         description=strip_html(item.findtext("description")),
-        location_raw=region,
-        country=region_country(region),
+        location_raw=region or country,
+        # <region> is the "who may apply" statement; <country> only helps when it names one.
+        country=region_country(region) or region_country(country),
         remote="remote",
         remote_region=region,
         employment_type=_text(item, "type"),
@@ -97,10 +117,13 @@ def parse_record(item: ET.Element) -> Job | None:
             "link": link,
             "title": raw_title,
             "region": region,
+            "country": country,
+            "state": _text(item, "state"),
             "category": _text(item, "category"),
             "type": _text(item, "type"),
             "skills": skills,
             "pubDate": _text(item, "pubDate"),
+            "expires_at": _text(item, "expires_at"),
         },
     )
 
