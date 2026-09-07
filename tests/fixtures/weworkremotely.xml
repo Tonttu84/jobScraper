@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>We Work Remotely: Remote Programming Jobs</title>
+    <link>https://weworkremotely.com/categories/remote-programming-jobs</link>
+    <description>Remote Programming Jobs</description>
+    <language>en-us</language>
+    <item>
+      <title>Aurora Metrics: Junior Ruby on Rails Developer</title>
+      <region>Europe Only</region>
+      <category>Back-End Programming</category>
+      <type>Full-Time</type>
+      <skills>Ruby, Rails, PostgreSQL</skills>
+      <pubDate>Mon, 01 Sep 2026 09:12:00 +0000</pubDate>
+      <link>https://weworkremotely.com/remote-jobs/aurora-metrics-junior-ruby-on-rails-developer</link>
+      <guid isPermaLink="true">https://weworkremotely.com/remote-jobs/aurora-metrics-junior-ruby-on-rails-developer</guid>
+      <description><![CDATA[<p><strong>Aurora Metrics</strong> is looking for a junior Rails developer.</p><ul><li>1+ year of Rails</li><li>Working hours overlapping CET</li></ul>]]></description>
+    </item>
+    <item>
+      <title>Northstar Digital: Senior Front-End Engineer (React)</title>
+      <region>Anywhere in the World</region>
+      <country>Anywhere in the World</country>
+      <category>Front-End Programming</category>
+      <type>Contract</type>
+      <skills>React, TypeScript</skills>
+      <pubDate>Sun, 31 Aug 2026 14:00:00 +0000</pubDate>
+      <link>https://weworkremotely.com/remote-jobs/northstar-digital-senior-front-end-engineer-react</link>
+      <guid isPermaLink="true">https://weworkremotely.com/remote-jobs/northstar-digital-senior-front-end-engineer-react</guid>
+      <description><![CDATA[<p>7+ years of React. Fully distributed team.</p>]]></description>
+    </item>
+    <item>
+      <title>Standalone Title Without A Company</title>
+      <region>Germany Only</region>
+      <category>Full-Stack Programming</category>
+      <type>Full-Time</type>
+      <pubDate>Sat, 30 Aug 2026 08:30:00 +0000</pubDate>
+      <link>https://weworkremotely.com/remote-jobs/standalone-title-without-a-company</link>
+      <guid isPermaLink="true">https://weworkremotely.com/remote-jobs/standalone-title-without-a-company</guid>
+      <description><![CDATA[<p>Full-stack role, German timezone.</p>]]></description>
+    </item>
+    <item>
+      <title></title>
+      <region>Anywhere in the World</region>
+      <link></link>
+      <guid isPermaLink="false"></guid>
+      <description></description>
+    </item>
+  </channel>
+</rss>

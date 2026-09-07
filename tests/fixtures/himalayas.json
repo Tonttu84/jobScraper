@@ -1,0 +1,51 @@
+{
+  "totalCount": 3,
+  "offset": 0,
+  "limit": 50,
+  "jobs": [
+    {
+      "guid": "https://himalayas.app/companies/lumen-labs/jobs/junior-software-engineer",
+      "title": "Junior Software Engineer",
+      "companyName": "Lumen Labs",
+      "companyLogo": "https://himalayas.app/logos/lumen-labs.png",
+      "excerpt": "Join our platform team as a junior engineer.",
+      "description": "<p>We are looking for a <strong>junior software engineer</strong>.</p><p>Stack: TypeScript, Node, Postgres.</p>",
+      "applicationLink": "https://himalayas.app/companies/lumen-labs/jobs/junior-software-engineer",
+      "pubDate": 1756881000,
+      "locationRestrictions": ["Europe"],
+      "timezoneRestrictions": ["UTC-1", "UTC+3"],
+      "seniority": ["Entry-level", "Junior"],
+      "categories": ["Software Engineering", "Full Stack"],
+      "employmentType": "Full Time",
+      "minSalary": 40000,
+      "maxSalary": 60000,
+      "currency": "EUR"
+    },
+    {
+      "guid": "https://himalayas.app/companies/orbital/jobs/staff-data-engineer",
+      "title": "Staff Data Engineer",
+      "companyName": "Orbital",
+      "description": "<p>Own the data platform. 8+ years required.</p>",
+      "applicationLink": "https://orbital.example.com/careers/staff-data-engineer",
+      "pubDate": "2026-08-25T10:30:00Z",
+      "locationRestrictions": ["Portugal"],
+      "timezoneRestrictions": [],
+      "seniority": ["Staff"],
+      "categories": ["Data"],
+      "employmentType": "Full Time",
+      "minSalary": null,
+      "maxSalary": null,
+      "currency": null
+    },
+    {
+      "title": null,
+      "companyName": "Broken Co",
+      "description": null,
+      "applicationLink": null,
+      "guid": null,
+      "locationRestrictions": null,
+      "categories": "not-a-list",
+      "pubDate": null
+    }
+  ]
+}

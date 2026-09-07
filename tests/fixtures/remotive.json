@@ -1,0 +1,42 @@
+{
+  "0-legal-notice": "Remotive API — data is 24h delayed, max ~4 requests per day.",
+  "job-count": 3,
+  "jobs": [
+    {
+      "id": 1948321,
+      "url": "https://remotive.com/remote-jobs/software-dev/junior-backend-engineer-1948321",
+      "title": "Junior Backend Engineer (Python)",
+      "company_name": "Sunrise Labs",
+      "company_logo": "https://remotive.com/job/1948321/logo",
+      "category": "Software Development",
+      "tags": ["python", "django", "postgresql", "junior"],
+      "job_type": "full_time",
+      "publication_date": "2026-08-28T09:15:11",
+      "candidate_required_location": "Europe",
+      "salary": "€45,000 - €58,000",
+      "description": "<p>We are hiring a <strong>Junior Backend Engineer</strong> to work on our Python/Django API.</p><ul><li>0-2 years of experience</li><li>English working language</li></ul>"
+    },
+    {
+      "id": 1948400,
+      "url": "https://remotive.com/remote-jobs/software-dev/senior-platform-engineer-1948400",
+      "title": "Senior Platform Engineer",
+      "company_name": "Northwind Systems",
+      "category": "Software Development",
+      "tags": ["kubernetes", "go"],
+      "job_type": "contract",
+      "publication_date": "2026-08-27T18:02:00",
+      "candidate_required_location": "USA Only",
+      "salary": "",
+      "description": "<p>8+ years running production Kubernetes. US-based candidates only.</p>"
+    },
+    {
+      "id": null,
+      "url": null,
+      "title": null,
+      "company_name": null,
+      "candidate_required_location": "Anywhere in the World",
+      "description": null,
+      "publication_date": null
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+[
+  {
+    "legal": "By using this API you agree to keep the 'Powered by Remote OK' attribution and link back to remoteok.com.",
+    "last_updated": "2026-08-31T06:00:03+00:00"
+  },
+  {
+    "slug": "junior-backend-developer-brightloop",
+    "id": "1099231",
+    "epoch": 1756713600,
+    "date": "2026-09-01T08:00:00+00:00",
+    "company": "Brightloop",
+    "company_logo": "https://remoteok.com/assets/img/jobs/brightloop.png",
+    "position": "Junior Backend Developer",
+    "tags": ["dev", "backend", "python", "junior"],
+    "logo": "https://remoteok.com/assets/img/jobs/brightloop.png",
+    "description": "<p>We're hiring a junior backend developer.</p><p>Python, FastAPI, Postgres.</p>\n\nPlease mention the word **BRILLIANT** when applying to show you read the job post completely.",
+    "location": "Europe",
+    "salary_min": 40000,
+    "salary_max": 60000,
+    "apply_url": "https://remoteok.com/remote-jobs/1099231-junior-backend-developer-brightloop",
+    "url": "/remote-jobs/1099231-junior-backend-developer-brightloop"
+  },
+  {
+    "slug": "senior-sales-manager-cloudhaus",
+    "id": "1099180",
+    "epoch": 1756627200,
+    "date": "2026-08-31T08:00:00+00:00",
+    "company": "Cloudhaus",
+    "position": "Senior Sales Manager",
+    "tags": ["sales", "marketing"],
+    "description": "<p>Own the EMEA pipeline.</p>",
+    "location": "Worldwide",
+    "salary_min": 0,
+    "salary_max": 0,
+    "url": "https://remoteok.com/remote-jobs/1099180-senior-sales-manager-cloudhaus"
+  },
+  {
+    "slug": "site-reliability-engineer-nordvector",
+    "id": "1099144",
+    "epoch": 1756540800,
+    "date": "2026-08-30T08:00:00+00:00",
+    "company": "Nordvector",
+    "position": "Site Reliability Engineer",
+    "tags": ["engineer", "devops", "kubernetes"],
+    "description": "<p>Keep the platform up. Kubernetes, Terraform.</p>",
+    "location": "Germany",
+    "salary_min": 70000,
+    "salary_max": 95000,
+    "url": "https://remoteok.com/remote-jobs/1099144-site-reliability-engineer-nordvector"
+  },
+  {
+    "slug": "broken-row",
+    "id": null,
+    "position": null,
+    "tags": ["dev"],
+    "description": null,
+    "url": null
+  }
+]

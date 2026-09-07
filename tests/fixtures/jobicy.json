@@ -1,0 +1,53 @@
+{
+  "apiVersion": "2.0",
+  "documentationUrl": "https://jobicy.com/jobs-rss-feed",
+  "friendlyNotice": "Jobicy Remote Jobs API. Attribution required.",
+  "jobCount": 3,
+  "jobs": [
+    {
+      "id": 331902,
+      "url": "https://jobicy.com/jobs/331902-junior-frontend-developer",
+      "jobSlug": "331902-junior-frontend-developer",
+      "jobTitle": "Junior Frontend Developer",
+      "companyName": "Helio Interactive",
+      "companyLogo": "https://jobicy.com/assets/helio.png",
+      "jobIndustry": ["Software Engineering", "Web Development"],
+      "jobType": ["full-time"],
+      "jobGeo": "Europe",
+      "jobLevel": "Junior",
+      "jobExcerpt": "Build accessible React interfaces with a small distributed team.",
+      "jobDescription": "<p>You will build <b>React</b> interfaces.</p><ul><li>TypeScript</li><li>1+ year experience</li></ul>",
+      "pubDate": "2026-08-30 07:41:02",
+      "annualSalaryMin": 42000,
+      "annualSalaryMax": 55000,
+      "salaryCurrency": "EUR"
+    },
+    {
+      "id": 331877,
+      "url": "https://jobicy.com/jobs/331877-devops-engineer",
+      "jobTitle": "DevOps Engineer",
+      "companyName": "Cloudpeak",
+      "jobIndustry": ["DevOps & Sysadmin"],
+      "jobType": ["full-time", "contract"],
+      "jobGeo": "Germany",
+      "jobLevel": "Senior",
+      "jobExcerpt": "Own our Terraform estate.",
+      "jobDescription": "<p>Terraform, AWS, on-call rotation.</p>",
+      "pubDate": "2026-08-29 12:00:00",
+      "annualSalaryMin": 0,
+      "annualSalaryMax": 0,
+      "salaryCurrency": ""
+    },
+    {
+      "id": 331500,
+      "url": "https://jobicy.com/jobs/331500-support-engineer",
+      "jobTitle": null,
+      "companyName": "Nowhere Ltd",
+      "jobIndustry": null,
+      "jobType": null,
+      "jobGeo": "Anywhere",
+      "jobDescription": null,
+      "pubDate": "not a date"
+    }
+  ]
+}
