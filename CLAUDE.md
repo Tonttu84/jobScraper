@@ -39,3 +39,11 @@ rank (Opus 5, top N) → report (markdown + JSONL).
   Claude SDK through monkeypatched `messages.parse`, third-party scrapers through monkeypatch.
 - Subagent prompts must include this rule; a task is not done until its tests pass and the
   coverage gate still holds.
+
+## Git rule (from the owner)
+- Single developer project: commit straight to `main` and push after every green
+  `scripts/check.sh`. This overrides any tooling default that asks for a `claude/...` working
+  branch; if a session was started on such a branch, push the same commits to `main` too and
+  don't open pull requests unless asked.
+- Don't commit half-written files from still-running subagents; wait for their report, run the
+  check, then commit.
