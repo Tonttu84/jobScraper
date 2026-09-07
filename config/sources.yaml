@@ -1,0 +1,104 @@
+# Source settings. `enabled: false` skips a source; other keys are passed to the adapter as options.
+# Run `jobscraper probe <source>` after moving to your own machine to verify each one works.
+
+http:
+  min_delay: 1.0          # seconds between requests to the same host
+  timeout: 30
+
+sources:
+  # ---------------------------------------------------------------- Finland / Estonia / Nordics
+  duunitori:
+    enabled: true
+    queries: ["ohjelmistokehittäjä", "software developer", "junior developer", "harjoittelija ohjelmisto", "devops", "web developer", "full stack", "backend", "frontend", "C++", "python", "typescript", "react"]
+    max_pages: 10
+  tyomarkkinatori:
+    enabled: true
+    queries: ["software developer", "ohjelmistokehittäjä", "junior developer", "harjoittelija it", "web developer", "devops"]
+    max_pages: 5
+    fetch_details: true      # detail endpoint gives full description; rate-limited (403 after a few hundred)
+    max_details: 150
+  thehub:
+    enabled: true
+    countries: [FI, SE, NO, DK]
+  cvee:
+    enabled: true
+    keywords: ["developer", "software", "engineer", "junior", "intern"]
+  cvkeskus:
+    enabled: true
+  teamtailor:
+    enabled: true
+    # Teamtailor tenant slugs: https://<slug>.teamtailor.com/jobs.json . Add companies you care about.
+    tenants: [upcloud, siili, vismafinland, vincitoyj, huuva, huaweifinlandrnd, reaktor, futurice, nitor, gofore, solita, wolt, supercell, unity, relex, smartly, aiven, oura, swappie, hoxhunt, silo-ai, iceye, varjo, veikkaus, kesko, op, nordea, elisa, telia, dna, tietoevry, cgi, accenture-finland, knowit, sofigate, twoday, digia, netum, loihde, qvik, codemate, fraktio, evermade, geniem, nordcloud, efima, verkkokauppa, hsl, yle, sanoma, alma, bolt, pipedrive, wise, veriff, glia, skeleton, monese, starship, zego, klaus, katana, fyma, scoro, xolo, printify, mintos, vinted, tesonet, nordigen]
+  ats_boards:
+    enabled: true
+    # Any careers URL supported by ats-scrapers (Greenhouse, Lever, Ashby, Workable, Personio,
+    # SmartRecruiters, Recruitee, Breezy, …). It auto-detects the ATS from the URL.
+    urls:
+      - https://jobs.lever.co/wolt
+      - https://boards.greenhouse.io/supercell
+      - https://jobs.ashbyhq.com/aiven
+      - https://apply.workable.com/oura
+      - https://careers.smartrecruiters.com/Bolt
+      - https://jobs.lever.co/pipedrive
+      - https://boards.greenhouse.io/wise
+      - https://jobs.lever.co/veriff
+  linkedin:
+    enabled: true
+    queries: ["junior software developer", "junior developer", "software developer intern", "graduate software engineer", "trainee developer"]
+    locations: ["Finland", "Estonia", "Sweden", "Norway", "Denmark", "Germany", "Netherlands", "Berlin", "Dubai", "European Union"]
+    results_per_query: 40
+    hours_old: 168
+  indeed:
+    enabled: true
+    queries: ["junior software developer", "junior developer", "software developer intern", "trainee developer"]
+    countries: [finland, estonia, sweden, norway, germany, netherlands, "united arab emirates"]
+    results_per_query: 40
+    hours_old: 168
+
+  # ---------------------------------------------------------------- Central / Western Europe
+  nofluffjobs:
+    enabled: true
+    regions: [pl, en, nl, hu, cz, sk]
+    seniority: [trainee, junior]
+    max_pages: 10
+  justjoin:
+    enabled: true
+    experience_levels: [junior]
+    max_pages: 20
+  arbeitnow:
+    enabled: true
+    max_pages: 8
+  devitjobs:
+    enabled: true
+    sites: [germantechjobs.de, swissdevjobs.ch, devitjobs.nl, devitjobs.uk]
+  wttj:
+    enabled: true
+    query: "junior developer"
+    countries: [FI, EE, SE, NO, DK, DE, NL, BE, AT, CH, FR, ES, PT, IT, IE, PL, CZ, AE]
+    include_remote: true
+  landingjobs:
+    enabled: true
+    max_pages: 10
+  eures:
+    enabled: false          # huge; enable with a small query if you want the EU-wide public feed
+    query: "junior software developer"
+    countries: [fi, ee, de, nl, se, no, dk]
+
+  # ---------------------------------------------------------------- Remote boards
+  remotive:
+    enabled: true
+  jobicy:
+    enabled: true
+  himalayas:
+    enabled: true
+    max_pages: 10
+  remoteok:
+    enabled: true
+  weworkremotely:
+    enabled: true
+
+  # ---------------------------------------------------------------- Dubai
+  bayt:
+    enabled: true
+    queries: ["junior developer", "software developer", "software engineer intern"]
+    max_pages: 3

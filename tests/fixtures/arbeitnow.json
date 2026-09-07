@@ -1,0 +1,40 @@
+{
+  "data": [
+    {
+      "slug": "junior-software-developer-berlin-123456",
+      "company_name": "Beispiel GmbH",
+      "title": "Junior Software Developer (m/w/d)",
+      "description": "<p>We are looking for a <strong>Junior Developer</strong> to join our Berlin team.</p><ul><li>TypeScript, React</li><li>English is our working language; German is a plus</li></ul>",
+      "remote": false,
+      "url": "https://www.arbeitnow.com/jobs/companies/beispiel-gmbh/junior-software-developer-berlin-123456",
+      "tags": ["Software Development", "TypeScript"],
+      "job_types": ["Full time"],
+      "location": "Berlin",
+      "created_at": 1756900000
+    },
+    {
+      "slug": "senior-java-architect-munich-654321",
+      "company_name": "Example AG",
+      "title": "Senior Java Architect",
+      "description": "<p>10+ years of experience required. Fließende Deutschkenntnisse erforderlich.</p>",
+      "remote": true,
+      "url": "https://www.arbeitnow.com/jobs/companies/example-ag/senior-java-architect-munich-654321",
+      "tags": [],
+      "job_types": ["Full time"],
+      "location": "München",
+      "created_at": 1756800000
+    },
+    {
+      "slug": "broken-record",
+      "company_name": null,
+      "title": null,
+      "description": null,
+      "remote": null,
+      "url": null,
+      "location": null,
+      "created_at": null
+    }
+  ],
+  "links": {"first": "https://www.arbeitnow.com/api/job-board-api?page=1", "next": null},
+  "meta": {"current_page": 1, "per_page": 100}
+}

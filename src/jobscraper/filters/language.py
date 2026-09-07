@@ -1,0 +1,139 @@
+"""Language detection and 'language X required' detection.
+
+Two questions per posting:
+1. What language is the posting written in? (lingua, restricted to the languages we care about)
+2. Does the text *require* a language the candidate can't work in? We look at sentences that
+   mention a language name and classify them as required vs. nice-to-have with keyword heuristics.
+   This is intentionally conservative: when in doubt we flag for review rather than drop.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from functools import lru_cache
+
+# Language names as they appear in job ads, in English, Finnish, German, Swedish and the local
+# language itself. Keys are ISO-639-1 codes.
+LANGUAGE_NAMES: dict[str, list[str]] = {
+    "en": ["english", "englanti", "englannin", "englisch", "engelska"],
+    "fi": ["finnish", "suomi", "suomen kiel", "finnisch", "finska"],
+    "de": ["german", "saksa", "saksan kiel", "deutsch", "tyska"],
+    "sv": ["swedish", "ruotsi", "ruotsin kiel", "schwedisch", "svenska"],
+    "no": ["norwegian", "norja", "norsk", "norwegisch"],
+    "da": ["danish", "tanska", "dansk", "dänisch"],
+    "et": ["estonian", "viro", "viron kiel", "eesti keel", "estnisch"],
+    "pl": ["polish", "puola", "polski", "polnisch", "języka polskiego", "język polski"],
+    "nl": ["dutch", "hollanti", "nederlands", "niederländisch", "flemish"],
+    "fr": ["french", "ranska", "français", "francais", "französisch"],
+    "es": ["spanish", "espanja", "español", "espanol", "spanisch", "castellano"],
+    "pt": ["portuguese", "portugali", "português", "portugues", "portugiesisch"],
+    "it": ["italian", "italia ", "italiano", "italienisch"],
+    "cs": ["czech", "tšekki", "čeština", "cestina", "tschechisch"],
+    "sk": ["slovak", "slovakki", "slovenčina", "slowakisch"],
+    "hu": ["hungarian", "unkari", "magyar", "ungarisch"],
+    "ro": ["romanian", "romania", "română", "rumänisch"],
+    "ru": ["russian", "venäjä", "venäjän kiel", "русск", "russisch"],
+    "uk": ["ukrainian", "ukraina", "українськ"],
+    "lt": ["lithuanian", "liettua", "lietuvių"],
+    "lv": ["latvian", "latvia", "latviešu"],
+    "ar": ["arabic", "arabia", "arabisch"],
+    "tr": ["turkish", "turkki", "türkçe", "türkisch"],
+    "el": ["greek", "kreikka", "ελληνικ"],
+    "hr": ["croatian", "kroatia", "hrvatski"],
+    "sl": ["slovenian", "slovene", "slovenščina"],
+    "bg": ["bulgarian", "bulgaria", "български"],
+    "ja": ["japanese", "japani"],
+    "zh": ["chinese", "mandarin", "kiina"],
+}
+
+_REQUIRED_WORDS = re.compile(
+    r"\b(required|require|requirement|must|mandatory|essential|necessary|need(ed)?|fluent|fluency|native|"
+    r"proficien|excellent|business[- ]level|c1|c2|working language|"
+    r"vaaditaan|edellyt|välttämät|sujuva|erinomai|äidinkiel|työkieli|"
+    r"erforderlich|voraussetzung|vorausgesetzt|zwingend|fließend|fliessend|verhandlungssicher|muttersprach|sehr gut|"
+    r"krävs|flytande|obligatorisk|wymagan|biegł|płynn|vereist|vloeiend|requis|courant|imprescindible|obligatorio)\b",
+    re.I,
+)
+_OPTIONAL_WORDS = re.compile(
+    r"\b(plus|bonus|advantage|asset|nice[- ]to[- ]have|preferred|preferably|appreciated|beneficial|desirable|"
+    r"optional|not required|not necessary|no need|would be|is a merit|helpful|"
+    r"eduksi|etu|katsotaan eduksi|plussaa|hyödyksi|ei vaadita|ei edellytetä|"
+    r"von vorteil|wünschenswert|nicht erforderlich|kein muss|gerne gesehen|"
+    r"meriterande|mile widziane|dodatkowym atutem|pré|een pre|un plus|deseable)\b",
+    re.I,
+)
+_NOT_NEEDED = re.compile(
+    r"\b(no|not|don'?t|without|isn'?t|aren'?t|ei|nicht|kein|ohne|inte)\b[^.\n]{0,40}\b(need|require|necessary|must|"
+    r"vaadi|tarvitse|edellyt|erforderlich|voraussetzung|notwendig|krävs)\w*",
+    re.I,
+)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?•\n])\s+|\s*[•·▪▸►]\s*|\n+")
+
+# lingua is slow to build; restrict to languages that actually show up in EU tech ads.
+_DETECT_LANGS = ["en", "fi", "de", "sv", "no", "da", "et", "pl", "nl", "fr", "es", "pt", "it", "cs", "sk",
+                 "hu", "ro", "bg", "hr", "sl", "lt", "lv", "ru", "uk", "tr", "el"]
+
+
+@lru_cache(maxsize=1)
+def _detector():
+    from lingua import IsoCode639_1, LanguageDetectorBuilder
+
+    codes = [getattr(IsoCode639_1, c.upper()) for c in _DETECT_LANGS]
+    return LanguageDetectorBuilder.from_iso_codes_639_1(*codes).with_preloaded_language_models().build()
+
+
+def detect_language(text: str | None, min_confidence: float = 0.75) -> tuple[str | None, float]:
+    """Return (iso639-1, confidence) for the posting text, or (None, 0) if unsure/short."""
+    if not text or len(text) < 80:
+        return None, 0.0
+    sample = text[:4000]
+    try:
+        values = _detector().compute_language_confidence_values(sample)
+    except Exception:  # noqa: BLE001 — lingua missing or model failed; never block the pipeline
+        return None, 0.0
+    if not values:
+        return None, 0.0
+    best = values[0]
+    code = best.language.iso_code_639_1.name.lower()
+    return (code, best.value) if best.value >= min_confidence else (None, best.value)
+
+
+@dataclass
+class LanguageRequirements:
+    required: set[str] = field(default_factory=set)
+    optional: set[str] = field(default_factory=set)
+    mentioned: set[str] = field(default_factory=set)
+    evidence: dict[str, str] = field(default_factory=dict)  # code → sentence
+
+
+def find_language_requirements(text: str | None) -> LanguageRequirements:
+    """Scan sentences mentioning a natural language and classify required vs optional."""
+    out = LanguageRequirements()
+    if not text:
+        return out
+    for sentence in _SENTENCE_SPLIT.split(text):
+        s = sentence.strip()
+        if not s or len(s) > 600:
+            continue
+        low = s.lower()
+        # Skip programming-language false positives: "Go", "Rust" don't collide, but
+        # "Swift"/"Ruby" don't either; only natural-language names are in the table.
+        hits = {code for code, names in LANGUAGE_NAMES.items() if any(n in low for n in names)}
+        if not hits:
+            continue
+        out.mentioned |= hits
+        if _NOT_NEEDED.search(low):
+            out.optional |= hits
+            continue
+        required = bool(_REQUIRED_WORDS.search(low)) and not _OPTIONAL_WORDS.search(low)
+        for code in hits:
+            if required:
+                out.required.add(code)
+                out.evidence.setdefault(code, s[:200])
+            else:
+                out.optional.add(code)
+    # A language that is required in one sentence and optional in another counts as required,
+    # except when explicitly negated; keep it simple.
+    out.optional -= out.required
+    return out
