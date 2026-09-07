@@ -74,6 +74,7 @@ sources:
   devitjobs:
     enabled: true
     sites: [germantechjobs.de, swissdevjobs.ch, devitjobs.nl, devitjobs.uk]
+    remote_only_sites: [devitjobs.uk]   # UK jobs are only interesting when they are remote
   wttj:
     enabled: true
     query: "junior developer"

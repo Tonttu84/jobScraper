@@ -22,6 +22,11 @@ configured sites, with any unused share rolling over). Rows that look entry-leve
 in the detail queue and in the yielded order — so a small ``max_details`` (or ``probe``'s limit)
 is spent on the jobs this pipeline cares about. A failed detail costs the description, never the
 job.
+
+Options: ``sites``, ``fetch_details``, ``max_details``, and ``remote_only_sites`` (default ``[]``)
+— boards in that list contribute only their ``workplace: remote`` rows, dropped before any detail
+call and before they count against ``max_details``. A row with a missing or unrecognised
+``workplace`` is dropped too.
 """
 
 from __future__ import annotations
@@ -152,6 +157,14 @@ def record_remote(rec: dict[str, Any], *texts: str | None) -> str:
     return guess_remote(*texts)
 
 
+def is_remote_row(rec: Any) -> bool:
+    """Does the light row's own ``workplace`` say remote? Junk/missing counts as not remote."""
+    workplace = rec.get("workplace") if isinstance(rec, dict) else None
+    if not isinstance(workplace, str):
+        return False
+    return WORKPLACE_REMOTE.get(workplace.strip().lower()) == "remote"
+
+
 def remote_region(rec: dict[str, Any], country: str | None) -> str | None:
     """``remoteType`` says who may apply remotely: 'DE only', 'DE + EU', 'Anywhere'."""
     value = rec.get("remoteType")
@@ -241,12 +254,15 @@ class DevITJobs:
     def fetch(self, ctx: SourceContext) -> Iterable[Job]:
         sites = [str(s).strip().lower() for s in (ctx.opt("sites", ["germantechjobs.de", "swissdevjobs.ch"]) or [])
                  if str(s).strip()]
+        remote_only = {str(s).strip().lower() for s in (ctx.opt("remote_only_sites", []) or []) if str(s).strip()}
         want_details = bool(ctx.opt("fetch_details", True))
         budget = max(int(ctx.opt("max_details", 150) or 0), 0) if want_details else 0
         yielded = 0
         seen: set[str] = set()
         for index, site in enumerate(sites):
             rows = self._light_feed(ctx, site)
+            if site in remote_only:  # drop them here: before the detail calls, before `max_details`
+                rows = [rec for rec in rows if is_remote_row(rec)]
             # Entry-level rows first: they get the detail calls, and `ctx.limit` keeps them.
             rows.sort(key=lambda rec: not is_entry_level(rec))
             share = budget // (len(sites) - index)  # unused share rolls over to the next board

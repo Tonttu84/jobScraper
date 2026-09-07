@@ -200,6 +200,30 @@ def test_devitjobs_keeps_the_job_when_the_detail_is_not_an_object(make_ctx):
     assert job.source_id == NETKNIGHTS and job.description is None
 
 
+def test_devitjobs_remote_only_sites_skips_non_remote_rows_before_the_detail_call(make_ctx):
+    routes = {**FEEDS, **DETAILS}
+    options = {"sites": ["germantechjobs.de"], "remote_only_sites": ["germantechjobs.de"]}
+    ctx = make_ctx(routes, options=options)
+    jobs = list(DevITJobs().fetch(ctx))
+
+    # Only the workplace: "remote" row survives; the office/hybrid ones never cost a detail call.
+    assert [j.source_id for j in jobs] == [TELUS]
+    assert detail_ids(ctx) == [TELUS]
+
+    # Without the option the same feed yields the hybrid and office rows too.
+    all_jobs = list(DevITJobs().fetch(make_ctx(routes, options={"sites": ["germantechjobs.de"]})))
+    assert [j.source_id for j in all_jobs] == [NETKNIGHTS, TELUS, EMBEDDED]
+
+
+def test_devitjobs_remote_only_leaves_other_sites_alone(make_ctx):
+    ctx = make_ctx(FEEDS, options={"sites": ["germantechjobs.de", "swissdevjobs.ch"],
+                                   "remote_only_sites": ["germantechjobs.de"], **NO_DETAILS})
+    # The unfiltered board keeps its hybrid/office rows; the remote-only board keeps one.
+    assert [j.source_id for j in DevITJobs().fetch(ctx)] == [
+        TELUS, "68ee5a0c39bdedf9c20fcb9a", "6313076be3f58101d34f7316",
+    ]
+
+
 def test_devitjobs_deduplicates_ids_across_sites(make_ctx):
     ctx = make_ctx(FEEDS, options={"sites": ["germantechjobs.de", "germantechjobs.de"], **NO_DETAILS})
     jobs = list(DevITJobs().fetch(ctx))
