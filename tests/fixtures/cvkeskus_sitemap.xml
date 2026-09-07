@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://www.cvkeskus.ee/ai-agent-developer-tallinnas-bolt-technology-ou-1051058</loc>
-    <lastmod>2026-08-26T04:32:09+03:00</lastmod>
-  </url>
-  <url>
-    <loc>https://www.cvkeskus.ee/junior-developer-tartus-example-ou-1051099</loc>
-    <lastmod>2026-08-28T09:00:00+03:00</lastmod>
-  </url>
+<!-- Real sitemap-listings-information-technology-en.xml, 3 of its 241 <url> entries.
+     The Wise ad is first so the max_details=1 test only asks for the routed page. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1" xsi:schemaLocation="http://www.sitemaps.org/schemas/sitemap/0.9 http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd http://www.google.com/schemas/sitemap-image/1.1 http://www.google.com/schemas/sitemap-image/1.1/sitemap-image.xsd">
+  <url><loc>https://www.cvkeskus.ee/senior-full-stack-developer-tallinnas-wise-1052794</loc><lastmod>2026-09-03T14:13:27+03:00</lastmod><image:image><image:loc>https://www.cvkeskus.ee/job_logos/2026/36/1052794-6f95be874c8093816f160aa45ceca8d1.png</image:loc></image:image></url>
+  <url><loc>https://www.cvkeskus.ee/ai-agent-developer-tallinnas-bolt-technology-ou-1051058</loc><lastmod>2026-08-26T04:32:09+03:00</lastmod><image:image><image:loc>https://www.cvkeskus.eehttps://www.cvkeskus.ee/gfx/transl/en/gfx589_est.png</image:loc></image:image></url>
+  <url><loc>https://www.cvkeskus.ee/back-end-developer-tartus-turnit-ou-1047845</loc><lastmod>2026-08-10T10:29:36+03:00</lastmod><image:image><image:loc>https://www.cvkeskus.ee/job_logos/2026/33/1047845-9fa4384dd5be4ec1d3003652472a1a9d.png</image:loc></image:image></url>
 </urlset>
