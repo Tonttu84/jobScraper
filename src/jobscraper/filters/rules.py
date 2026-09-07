@@ -13,8 +13,9 @@ from collections import defaultdict
 from jobscraper.config import Profile
 from jobscraper.filters.language import detect_language, find_language_requirements
 from jobscraper.models import FilterResult, Job
+from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-09-07.2"
+RULES_VERSION = "2026-09-07.3"
 
 _YEARS_RE = re.compile(
     r"(?:(?:at least|minimum|min\.?|minimum of|over|more than|vähintään|yli|mindestens|mind\.|über|"
@@ -56,6 +57,9 @@ def _years_required(text: str) -> int | None:
     return min(found) if found else None
 
 
+_REMOTE_COUNTRY_ONLY = re.compile(r"\b([A-Za-z][A-Za-z .]{1,30}?)\s+only\b", re.I)
+
+
 def classify_remote_region(text: str | None) -> str:
     if not text:
         return "unknown"
@@ -65,18 +69,28 @@ def classify_remote_region(text: str | None) -> str:
         return "europe"
     if _REMOTE_WORLD.search(text):
         return "worldwide"
+    # "GB only", "UK only", "Germany only": remote in name, but closed to applicants elsewhere.
+    match = _REMOTE_COUNTRY_ONLY.search(text)
+    if match:
+        code = guess_country(match.group(1))
+        if code:
+            return f"country_only:{code}"
     return "unknown"
 
 
-def _location_tier(job: Job, profile: Profile) -> int | None:
+def _country_tier(country: str | None, profile: Profile) -> int | None:
     loc = profile.location
-    if job.country in loc.tier1:
+    if country in loc.tier1:
         return 1
-    if job.country in loc.tier2:
+    if country in loc.tier2:
         return 2
-    if job.country in loc.tier3:
+    if country in loc.tier3:
         return 3
     return None
+
+
+def _location_tier(job: Job, profile: Profile) -> int | None:
+    return _country_tier(job.country, profile)
 
 
 def evaluate(job: Job, profile: Profile) -> FilterResult:
@@ -156,6 +170,10 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
         tier = tier or 0
         if remote_region == "us_only":
             review.append("remote but text suggests US-only; worth checking (high pay)")
+        elif remote_region.startswith("country_only:"):
+            only = remote_region.split(":", 1)[1]
+            if _country_tier(only, profile) is None:
+                review.append(f"remote but restricted to {only}, outside target countries")
     elif tier is None:
         if job.country:
             reasons.append(f"on-site in {job.country}, outside target countries")

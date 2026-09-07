@@ -281,3 +281,23 @@ def test_onsite_with_unknown_country_is_review_not_drop(settings):
     res = evaluate(job, settings.profile)
     assert res.status == "review"
     assert any("unknown" in r for r in res.reasons)
+
+
+def test_remote_restricted_to_a_non_target_country_is_review(settings):
+    """devitjobs.uk marks many jobs 'remote' with remote_region 'GB only': remote in name, but
+    closed to applicants outside the UK. Permissive filter → review, not keep, not drop."""
+    job = Job(source="devitjobs", source_id=str(next(_ids)), url="https://x/1", title="Junior Software Developer",
+              company="Acme", description=ENGLISH_DESC, location_raw="London, GB", country="GB", remote="remote",
+              remote_region="GB only")
+    res = evaluate(job, settings.profile)
+    assert res.status == "review"
+    assert any("GB" in r for r in res.reasons)
+    assert res.signals["remote_region"] == "country_only:GB"
+
+
+def test_remote_restricted_to_a_target_country_is_kept(settings):
+    job = Job(source="devitjobs", source_id=str(next(_ids)), url="https://x/2", title="Junior Software Developer",
+              company="Acme", description=ENGLISH_DESC, location_raw="Helsinki, FI", country="FI", remote="remote",
+              remote_region="FI only")
+    res = evaluate(job, settings.profile)
+    assert res.status == "keep"
