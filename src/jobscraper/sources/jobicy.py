@@ -1,11 +1,21 @@
 """jobicy.com — remote job board with a free public API, filterable by geo and industry.
 
 GET https://jobicy.com/api/v2/remote-jobs?count=50&geo=europe&industry=dev
-    → {"jobs": [...], "jobCount": N}
+    → {"apiVersion": "2.2.16", "jobCount": N, "lastUpdate": …, "appliedFilters": {…},
+       "jobs": [...], "statusCode": 200, "success": true}
 
-One request per geo (default ``europe`` + ``anywhere``), results deduped by ``id``.
-Every posting is remote; ``jobGeo`` ("Europe", "Anywhere", "Germany") says who may apply and
-goes to ``Job.remote_region`` for the location filter.
+One request per geo (default ``europe`` + ``anywhere``), results deduped by ``id``. The API
+canonicalizes the industry itself: ``industry=dev`` comes back as ``engineering`` in
+``appliedFilters``.
+
+Every posting is remote. ``jobGeo`` says who may apply and goes to ``Job.remote_region``; it is
+either one place ("Poland", "EMEA", "Anywhere") or a padded list ("Europe,  USA") — a list of
+countries stays ``country=None`` rather than guessing one of them. ``jobLevel`` is a *string*
+("Senior", "Entry-Level, Junior"), ``jobType`` and ``jobIndustry`` are lists.
+
+Salary (API v2.2: only present on a minority of records, and the keys are no longer the
+``annualSalary*`` ones of v2.0): ``salaryMin``/``salaryMax``/``salaryCurrency`` plus
+``salaryPeriod`` — "yearly", "monthly" or "hourly", so the period has to be kept.
 """
 
 from __future__ import annotations
@@ -29,16 +39,22 @@ _REGION_SPLIT_RE = re.compile(r"\s*(?:,|/|;|\||\bor\b|\band\b)\s*", re.IGNORECAS
 
 
 def region_country(region: str | None) -> str | None:
-    """ISO2 only when the "who can apply" text names exactly one country (see remotive)."""
+    """ISO2 only when the "who can apply" text names exactly one country.
+
+    Every part has to resolve to the same country: "Poland" is PL, but "Europe, USA" is a
+    two-region posting, not a US one, and "EMEA" is no country at all.
+    """
     if not region or _ANYWHERE_RE.search(region):
         return None
     codes = {guess_country(part) for part in _REGION_SPLIT_RE.split(region) if part.strip()}
-    codes.discard(None)
-    return codes.pop() if len(codes) == 1 else None
+    return codes.pop() if len(codes) == 1 and None not in codes else None
 
 
-def salary_text(low: Any, high: Any, currency: Any) -> str | None:
-    """"55000 - 75000 USD" from the annualSalaryMin/Max/salaryCurrency triple."""
+_PERIODS = {"yearly": "year", "annual": "year", "monthly": "month", "weekly": "week", "daily": "day", "hourly": "hour"}
+
+
+def salary_text(low: Any, high: Any, currency: Any, period: Any = None) -> str | None:
+    """"5,300 - 6,600 USD/month" from the salaryMin/Max/Currency/Period quartet."""
 
     def num(value: Any) -> str | None:
         try:
@@ -52,7 +68,10 @@ def salary_text(low: Any, high: Any, currency: Any) -> str | None:
         return None
     span = f"{low_s} - {high_s}" if low_s and high_s else (low_s or high_s)
     unit = str(currency).strip().upper() if currency else ""
-    return f"{span} {unit}".strip()
+    text = f"{span} {unit}".strip()
+    key = str(period).strip().lower() if period else ""
+    per = _PERIODS.get(key, key)
+    return f"{text}/{per}" if per else text
 
 
 def _strings(value: Any) -> list[str]:
@@ -71,7 +90,10 @@ def parse_record(rec: dict[str, Any]) -> Job | None:
     title = rec.get("jobTitle")
     if not title or not (job_id or url):
         return None
-    region = rec.get("jobGeo") or None
+    # jobGeo pads its separators ("Europe,  USA"); collapse so the region reads like a list.
+    raw_geo = rec.get("jobGeo")
+    region = re.sub(r"\s+", " ", raw_geo).strip() if isinstance(raw_geo, str) else None
+    region = region or None
     levels = _strings(rec.get("jobLevel"))
     return Job(
         source="jobicy",
@@ -88,7 +110,10 @@ def parse_record(rec: dict[str, Any]) -> Job | None:
         employment_type=", ".join(_strings(rec.get("jobType"))) or None,
         tags=_strings(rec.get("jobIndustry")),
         salary_text=salary_text(
-            rec.get("annualSalaryMin"), rec.get("annualSalaryMax"), rec.get("salaryCurrency")
+            rec.get("salaryMin"),
+            rec.get("salaryMax"),
+            rec.get("salaryCurrency"),
+            rec.get("salaryPeriod"),
         ),
         posted_at=parse_date(rec.get("pubDate")),
         raw=rec,
