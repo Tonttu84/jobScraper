@@ -1,0 +1,55 @@
+{
+  "docs": [
+    {
+      "id": "68b0c1d2e3f4a5b6c7d8e9f0",
+      "title": "Junior Backend Developer",
+      "status": "ACTIVE",
+      "company": {"name": "Nordic Startup Oy", "slug": "nordic-startup"},
+      "location": {"address": "Mannerheimintie 12, Helsinki, Finland", "locality": "Helsinki", "country": "Finland"},
+      "geoLocation": {"center": {"type": "Point", "coordinates": [24.9384, 60.1699]}},
+      "countryCode": "FI",
+      "isRemote": false,
+      "description": "<p>Join our platform team. <strong>Go</strong> and PostgreSQL.</p>",
+      "publishedAt": "2026-09-03T07:00:00.000Z",
+      "link": "https://jobs.lever.co/nordic-startup/junior-backend",
+      "salary": "competitive",
+      "salaryRange": {"from": 42000, "to": 52000, "currency": "EUR"},
+      "jobPositionTypes": ["Full-time"],
+      "jobRoles": ["Backend"]
+    },
+    {
+      "_id": "68b0c1d2e3f4a5b6c7d8e9f1",
+      "title": "Remote Frontend Engineer",
+      "status": "ACTIVE",
+      "company": {"name": "Hubtech AB"},
+      "location": {"locality": "Stockholm", "country": "Sweden"},
+      "countryCode": "SE",
+      "isRemote": true,
+      "publishedAt": "2026-09-02T12:00:00.000Z",
+      "link": "",
+      "jobPositionTypes": [],
+      "jobRoles": []
+    },
+    {
+      "id": "68b0c1d2e3f4a5b6c7d8e9f2",
+      "title": "Expired Data Engineer",
+      "status": "EXPIRED",
+      "company": {"name": "Old Corp"},
+      "location": {"locality": "Oslo", "country": "Norway"},
+      "countryCode": "NO",
+      "description": "Should never be ingested.",
+      "publishedAt": "2026-05-01T12:00:00.000Z"
+    },
+    {
+      "id": null,
+      "title": null,
+      "status": "ACTIVE",
+      "company": null,
+      "location": null
+    }
+  ],
+  "page": 1,
+  "pages": 1,
+  "total": 4,
+  "limit": 15
+}

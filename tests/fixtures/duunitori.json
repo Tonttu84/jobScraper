@@ -1,0 +1,36 @@
+{
+  "count": 3,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 9911001,
+      "slug": "esimerkki-oy-junior-software-developer-9911001",
+      "heading": "Junior Software Developer",
+      "company_name": "Esimerkki Oy",
+      "municipality_name": "Helsinki",
+      "descr": "<p>Etsimme <strong>junior-kehittäjää</strong> tiimiimme Helsinkiin.</p><ul><li>Python, Django, React</li><li>Työkielemme on englanti</li></ul>",
+      "date_posted": "2026-09-01",
+      "salary": null,
+      "job_entry_type": "tyopaikka"
+    },
+    {
+      "id": 9911002,
+      "slug": "etana-oy-full-stack-developer-remote-9911002",
+      "heading": "Full Stack Developer (etätyö)",
+      "company_name": "Etäna Oy",
+      "municipality_name": "Tampere, Etätyö",
+      "descr": "<p>Remote-first team. TypeScript ja Node.js.</p>",
+      "date_posted": "2026-08-28T09:15:00+03:00",
+      "salary": "3500 - 4500 €/kk"
+    },
+    {
+      "slug": null,
+      "heading": null,
+      "company_name": null,
+      "municipality_name": null,
+      "descr": null,
+      "date_posted": null
+    }
+  ]
+}

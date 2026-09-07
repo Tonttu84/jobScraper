@@ -1,0 +1,57 @@
+{
+  "total": 3,
+  "searchMode": "ELASTIC",
+  "searchId": "0f4b1a8e-2c3d-4e5f-9a0b-1c2d3e4f5a6b",
+  "vacancies": [
+    {
+      "id": 1476412,
+      "positionTitle": "Full Stack Developer",
+      "positionContent": "",
+      "employerId": 181230,
+      "employerName": "Bolt Technology OÜ",
+      "townId": 312,
+      "countyId": 67,
+      "countryId": 1,
+      "salaryFrom": 3000.0,
+      "salaryTo": 4500.0,
+      "hourlySalary": false,
+      "remoteWork": false,
+      "remoteWorkType": "HYBRID",
+      "publishDate": "2026-09-01T09:12:00+03:00",
+      "expirationDate": "2026-10-01T23:59:59+03:00",
+      "categories": [10],
+      "keywords": ["react", "node.js"],
+      "workTimes": [2],
+      "quickApply": true
+    },
+    {
+      "id": 1476500,
+      "positionTitle": "Junior Python Developer",
+      "employerName": "Tartu Tech OÜ",
+      "townId": 314,
+      "salaryFrom": null,
+      "salaryTo": null,
+      "remoteWork": true,
+      "remoteWorkType": "REMOTE",
+      "publishDate": "2026-08-30T11:00:00+03:00",
+      "categories": [10],
+      "keywords": []
+    },
+    {
+      "id": 1476601,
+      "positionTitle": "IT-spetsialist",
+      "employerName": "Vahendatud pakkumised",
+      "townId": 312,
+      "remoteWork": false,
+      "publishDate": "2026-08-29T08:00:00+03:00"
+    },
+    {
+      "id": null,
+      "positionTitle": null,
+      "employerName": null
+    }
+  ],
+  "categories": {"INFORMATION_TECHNOLOGY": 241},
+  "workTimes": {"FULL_TIME": 2282},
+  "languages": {"et": 682, "en": 376}
+}

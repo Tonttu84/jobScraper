@@ -1,0 +1,46 @@
+{
+  "content": [
+    {
+      "id": "TE-1234567",
+      "title": {"fi": "Ohjelmistokehittäjä", "sv": "Programvaruutvecklare", "en": "Software Developer"},
+      "employer": {
+        "ownerName": {"fi": "Esimerkkiyritys Oy", "en": "Example Company Ltd"},
+        "ownerOfficeName": "Helsingin toimisto"
+      },
+      "location": {
+        "foreignCountry": false,
+        "municipalities": [
+          {"label": {"fi": "Helsinki", "sv": "Helsingfors", "en": "Helsinki"}},
+          {"label": {"fi": "Espoo"}}
+        ]
+      },
+      "publishDate": "2026-09-02T06:00:00Z"
+    },
+    {
+      "id": "TE-7654321",
+      "title": {"fi": "Junior-kehittäjä (etätyö)"},
+      "employer": {"ownerName": "Kotikonttori Oy", "ownerOfficeName": ""},
+      "location": {"foreignCountry": false, "municipalities": []},
+      "publishDate": "2026-09-01T10:30:00Z"
+    },
+    {
+      "id": "TE-9999999",
+      "title": {"en": "Backend Developer"},
+      "employer": {"ownerName": {}, "ownerOfficeName": "Tallinn branch"},
+      "location": {
+        "foreignCountry": true,
+        "municipalities": [{"label": {"en": "Tallinn, Estonia"}}]
+      },
+      "publishDate": "2026-08-30T08:00:00Z"
+    },
+    {
+      "id": "",
+      "title": null,
+      "employer": null,
+      "location": null,
+      "publishDate": null
+    }
+  ],
+  "lastPage": true,
+  "totalElements": 3
+}

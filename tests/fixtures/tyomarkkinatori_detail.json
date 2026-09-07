@@ -1,0 +1,12 @@
+{
+  "descriptionsContentType": "plain",
+  "position": {
+    "title": {"en": "Software Developer (Python)", "fi": "Ohjelmistokehittäjä (Python)"},
+    "jobDescription": {
+      "fi": "Etsimme ohjelmistokehittäjää.",
+      "en": "We are looking for a <b>Software Developer</b> to join our platform team.\nPython, FastAPI, PostgreSQL."
+    }
+  },
+  "owner": {"company": {"fi": "Esimerkkiyritys Oy", "en": "Example Company Ltd"}},
+  "application": {"published": "2026-09-02T06:00:00Z"}
+}

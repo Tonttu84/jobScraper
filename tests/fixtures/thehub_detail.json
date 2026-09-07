@@ -1,0 +1,13 @@
+{
+  "doc": {
+    "_id": "68b0c1d2e3f4a5b6c7d8e9f1",
+    "title": "Remote Frontend Engineer",
+    "status": "ACTIVE",
+    "company": {"name": "Hubtech AB"},
+    "description": "<p>Fully remote within the Nordics. <em>React</em>, TypeScript, Vite.</p>",
+    "isRemote": true,
+    "countryCode": "SE",
+    "publishedAt": "2026-09-02T12:00:00.000Z",
+    "salaryRange": {"from": 500000, "to": 650000, "currency": "SEK"}
+  }
+}
