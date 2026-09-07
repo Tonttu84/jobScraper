@@ -19,7 +19,7 @@ sources:
     max_details: 150
   thehub:
     enabled: true
-    countries: [FI, SE, NO, DK]
+    countries: [FI, SE, "NO", DK]   # "NO" quoted: bare NO is YAML for false
   cvee:
     enabled: true
     keywords: ["developer", "software", "engineer", "junior", "intern"]
@@ -77,7 +77,7 @@ sources:
   wttj:
     enabled: true
     query: "junior developer"
-    countries: [FI, EE, SE, NO, DK, DE, NL, BE, AT, CH, FR, ES, PT, IT, IE, PL, CZ, AE]
+    countries: [FI, EE, SE, "NO", DK, DE, NL, BE, AT, CH, FR, ES, PT, IT, IE, PL, CZ, AE]   # "NO" quoted: bare NO is YAML for false
     include_remote: true
   landingjobs:
     enabled: true
