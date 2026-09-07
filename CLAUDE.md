@@ -27,3 +27,15 @@
 ## Pipeline
 scrape (sources → SQLite) → filter (rules, permissive) → prefilter (Sonnet 5, permissive) →
 rank (Opus 5, top N) → report (markdown + JSONL).
+
+## Testing rule (from the owner): TDD, high coverage
+- Write the failing test first, then the code. For a new adapter: fixture + parser test before
+  the adapter body. For a rule/prompt change: a case in `tests/test_rules.py` /
+  `tests/test_ai_stage.py` first.
+- Definition of done: `scripts/check.sh` passes (ruff + full pytest with the coverage threshold
+  set in that script). Subset runs (`pytest tests/test_x.py`) print coverage but don't gate.
+  Raise the threshold as coverage grows, never lower it.
+- Network is never touched in tests: sources go through `FakeHttp` (tests/conftest.py), the
+  Claude SDK through monkeypatched `messages.parse`, third-party scrapers through monkeypatch.
+- Subagent prompts must include this rule; a task is not done until its tests pass and the
+  coverage gate still holds.
