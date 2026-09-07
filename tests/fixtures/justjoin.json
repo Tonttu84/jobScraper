@@ -1,43 +1,228 @@
 {
   "data": [
     {
-      "guid": "9f1c2e33-junior-python-developer",
-      "slug": "acme-warsaw-junior-python-developer",
-      "title": "Junior Python Developer",
-      "companyName": "Acme Sp. z o.o.",
-      "city": "Warszawa",
-      "countryCode": "PL",
-      "workplaceType": "hybrid",
-      "experienceLevel": "junior",
-      "publishedAt": "2025-09-03T08:15:00.000Z",
-      "requiredSkills": [{"name": "Python"}, {"name": "SQL"}],
-      "employmentTypes": [{"from": 8000, "to": 12000, "currency": "pln", "type": "b2b"}]
-    },
-    {
-      "guid": "7ab4-remote-frontend",
-      "slug": "nordics-digital-junior-frontend-developer",
-      "title": "Junior Frontend Developer",
-      "companyName": "Nordics Digital",
-      "city": "Tallinn",
-      "countryCode": "EE",
+      "guid": "ba853a14-f777-4071-9dd3-2c54960257ee",
+      "slug": "craftware-junior-ai-engineer-warszawa-ai",
+      "title": "Junior AI Engineer",
       "workplaceType": "remote",
+      "workingTime": "full_time",
       "experienceLevel": "junior",
-      "publishedAt": "2025-09-01T10:00:00.000Z",
-      "requiredSkills": [{"name": "React"}],
-      "employmentTypes": [{"from": 2500, "to": null, "currency": "eur", "type": "permanent"}]
+      "category": {
+        "key": "ai",
+        "parentKey": null
+      },
+      "city": "Warszawa",
+      "street": "Al. Jerozolimskie 134",
+      "latitude": 52.2214304,
+      "longitude": 20.9737114,
+      "isRemoteInterview": false,
+      "companyName": "Craftware",
+      "publishedAt": "2026-09-06T17:00:07.2387318Z",
+      "isOpenToHireUkrainians": false,
+      "locations": [
+        {
+          "city": "Warszawa",
+          "street": "Al. Jerozolimskie 134",
+          "latitude": 52.2214304,
+          "longitude": 20.9737114,
+          "slug": "craftware-junior-ai-engineer-warszawa-ai"
+        }
+      ],
+      "employmentTypes": [
+        {
+          "from": 13440.0,
+          "fromPerUnit": 80.0,
+          "to": 25200.0,
+          "toPerUnit": 150.0,
+          "currency": "PLN",
+          "currencySource": "original",
+          "type": "b2b",
+          "unit": "Hour",
+          "gross": false
+        },
+        {
+          "from": 3643.0,
+          "fromPerUnit": 21.6825672159584,
+          "to": 6830.0,
+          "toPerUnit": 40.654813529922,
+          "currency": "USD",
+          "currencySource": "conversion",
+          "type": "b2b",
+          "unit": "Hour",
+          "gross": false
+        }
+      ],
+      "requiredSkills": [
+        {
+          "name": "Python",
+          "level": 2
+        },
+        {
+          "name": "AI",
+          "level": 3
+        },
+        {
+          "name": "Cloud",
+          "level": 2
+        },
+        {
+          "name": "Agentic Frameworks",
+          "level": 2
+        },
+        {
+          "name": "ML frameworks",
+          "level": 2
+        }
+      ],
+      "niceToHaveSkills": [],
+      "languages": [],
+      "isPromoted": false,
+      "isSuperOffer": false,
+      "applyMethod": "external",
+      "applyUrl": "https://system.erecruiter.pl/FormTemplates/RecruitmentForm.aspx?WebID=289094f1761046648443378e9f316492",
+      "lastPublishedAt": "2026-07-28T16:47:46.525026Z",
+      "expiredAt": "2026-10-26T17:20:47.115Z",
+      "companyProfileSlug": null,
+      "hybridWorkSchedule": null
     },
     {
-      "guid": null,
+      "guid": "3bee7ffd-29f8-425a-a895-28cfcf1d6ea8",
+      "slug": "emagine-polska-workplace-engineer-lisbon-admin-21d60a84",
+      "title": "Workplace Engineer",
+      "workplaceType": "remote",
+      "workingTime": "full_time",
+      "experienceLevel": "junior",
+      "category": {
+        "key": "admin",
+        "parentKey": null
+      },
+      "city": "Lisbon",
+      "street": "Centrum",
+      "latitude": 39.0479737,
+      "longitude": -9.1013498,
+      "isRemoteInterview": true,
+      "companyName": "emagine Polska",
+      "publishedAt": "2026-09-07T07:00:16.0771799Z",
+      "isOpenToHireUkrainians": true,
+      "locations": [
+        {
+          "city": "Lisbon",
+          "street": "Centrum",
+          "latitude": 39.0479737,
+          "longitude": -9.1013498,
+          "slug": "emagine-polska-workplace-engineer-lisbon-admin-21d60a84"
+        }
+      ],
+      "employmentTypes": [
+        {
+          "from": null,
+          "fromPerUnit": null,
+          "to": null,
+          "toPerUnit": null,
+          "currency": "PLN",
+          "currencySource": "original",
+          "type": "any",
+          "unit": "month",
+          "gross": false
+        },
+        {
+          "from": null,
+          "fromPerUnit": null,
+          "to": null,
+          "toPerUnit": null,
+          "currency": "GBP",
+          "currencySource": "conversion",
+          "type": "any",
+          "unit": "month",
+          "gross": false
+        }
+      ],
+      "requiredSkills": [
+        {
+          "name": "MacOS",
+          "level": 4
+        },
+        {
+          "name": "Android",
+          "level": 4
+        },
+        {
+          "name": "Cloud",
+          "level": 4
+        },
+        {
+          "name": "iOS",
+          "level": 4
+        },
+        {
+          "name": "Microsoft Deployment Toolkit (MDT)",
+          "level": 4
+        },
+        {
+          "name": "Microsoft Sharepoint",
+          "level": 4
+        },
+        {
+          "name": "Amazon Web Services (AWS)",
+          "level": 4
+        },
+        {
+          "name": "Microsoft Intune",
+          "level": 4
+        },
+        {
+          "name": "Microsoft Windows",
+          "level": 4
+        },
+        {
+          "name": "Security Management (Workplace)",
+          "level": 4
+        }
+      ],
+      "niceToHaveSkills": [],
+      "languages": [
+        {
+          "code": "en",
+          "level": "B1"
+        },
+        {
+          "code": "es",
+          "level": "B1"
+        }
+      ],
+      "isPromoted": false,
+      "isSuperOffer": false,
+      "applyMethod": "external",
+      "applyUrl": "https://portal.emagine.org/jobs/176373/workplace-engineer?utm_source=JustJoinIt",
+      "lastPublishedAt": "2026-08-03T07:10:17.899438Z",
+      "expiredAt": "2026-11-01T07:10:17.899438Z",
+      "companyProfileSlug": null,
+      "hybridWorkSchedule": null
+    },
+    {
+      "guid": "b7ad0b7e-0000-0000-0000-000000000000",
       "slug": null,
       "title": null,
-      "companyName": null,
+      "workplaceType": "remote",
+      "experienceLevel": "junior",
       "city": null,
-      "countryCode": null,
-      "workplaceType": null,
+      "companyName": null,
       "publishedAt": null,
       "requiredSkills": "broken",
-      "employmentTypes": "broken"
+      "employmentTypes": "broken",
+      "locations": null
     }
   ],
-  "meta": {"next": null, "totalItems": 2}
+  "meta": {
+    "from": 0,
+    "totalItems": 3,
+    "prev": {
+      "cursor": null,
+      "itemsCount": 3
+    },
+    "next": {
+      "cursor": 3,
+      "itemsCount": 3
+    }
+  }
 }
