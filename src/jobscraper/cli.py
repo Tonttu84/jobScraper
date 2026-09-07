@@ -61,7 +61,7 @@ def sources() -> None:
 
 
 @app.command()
-def probe(names: list[str] | None = typer.Argument(None), limit: int = 5, verbose: bool = False) -> None:
+def probe(names: list[str] | None = typer.Argument(None), limit: int = 5, verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     """Fetch a handful of jobs from each source and show what came back. Run this first on your machine."""
     _setup_logging(verbose)
     settings = load_settings()
@@ -94,7 +94,7 @@ def probe(names: list[str] | None = typer.Argument(None), limit: int = 5, verbos
 
 
 @app.command()
-def scrape(names: list[str] | None = typer.Argument(None), verbose: bool = False, limit: int | None = None) -> None:
+def scrape(names: list[str] | None = typer.Argument(None), verbose: bool = typer.Option(False, "--verbose", "-v"), limit: int | None = None) -> None:
     """Fetch jobs from enabled sources into the database."""
     _setup_logging(verbose)
     settings = load_settings()
@@ -118,7 +118,7 @@ def scrape(names: list[str] | None = typer.Argument(None), verbose: bool = False
 
 
 @app.command("filter")
-def filter_cmd(days: int = 30, verbose: bool = False) -> None:
+def filter_cmd(days: int = 30, verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     """Apply the rule filter to jobs seen within the last DAYS days."""
     _setup_logging(verbose)
     settings = load_settings()
@@ -152,7 +152,7 @@ def _load_state(store: Store, days: int) -> tuple[list[Job], dict]:
 
 
 @app.command()
-def prefilter(days: int = 30, force: bool = False, model: str | None = None, verbose: bool = False, max_jobs: int | None = None) -> None:
+def prefilter(days: int = 30, force: bool = False, model: str | None = None, verbose: bool = typer.Option(False, "--verbose", "-v"), max_jobs: int | None = None) -> None:
     """Sonnet pass over rule-filter survivors (keep + review)."""
     _setup_logging(verbose)
     from jobscraper.ai.client import AIStage, estimate_cost
@@ -170,7 +170,7 @@ def prefilter(days: int = 30, force: bool = False, model: str | None = None, ver
 
 
 @app.command()
-def rank(days: int = 30, top: int | None = None, force: bool = False, model: str | None = None, verbose: bool = False) -> None:
+def rank(days: int = 30, top: int | None = None, force: bool = False, model: str | None = None, verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     """Opus pass over the best prefilter survivors."""
     _setup_logging(verbose)
     from jobscraper.ai.client import AIStage, estimate_cost
@@ -209,7 +209,7 @@ def report(days: int = 30, out: Path | None = None) -> None:
 
 
 @app.command()
-def run(days: int = 30, skip_ai: bool = False, verbose: bool = False) -> None:
+def run(days: int = 30, skip_ai: bool = False, verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     """Full pipeline: scrape → filter → prefilter → rank → report."""
     scrape(None, verbose=verbose)
     filter_cmd(days=days, verbose=verbose)

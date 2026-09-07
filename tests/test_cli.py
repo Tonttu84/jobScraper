@@ -120,3 +120,10 @@ def test_stats_command_reports_the_database(data_dir, fake_http):
     result = runner.invoke(cli_mod.app, ["stats"])
     assert result.exit_code == 0, result.output
     assert "arbeitnow" in result.output
+
+
+def test_short_verbose_flag_is_accepted(data_dir, fake_http):
+    """README documents ``-v`` as the short form of ``--verbose`` on every command that logs."""
+    for args in (["probe", "-v", "arbeitnow"], ["scrape", "-v", "arbeitnow"], ["filter", "-v"]):
+        result = runner.invoke(cli_mod.app, args)
+        assert result.exit_code == 0, f"{args}: {result.output}"
