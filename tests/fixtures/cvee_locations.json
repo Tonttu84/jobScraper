@@ -1,0 +1,56 @@
+{
+  "towns": [
+    {
+      "id": 303,
+      "countyId": 75,
+      "countryId": 1,
+      "name": "Pärnu"
+    },
+    {
+      "id": 312,
+      "countyId": 67,
+      "countryId": 1,
+      "name": "Tallinn"
+    },
+    {
+      "id": 314,
+      "countyId": 78,
+      "countryId": 1,
+      "name": "Tartu"
+    }
+  ],
+  "counties": {
+    "67": {
+      "id": 67,
+      "countryId": 1,
+      "name": "Harjumaa"
+    },
+    "75": {
+      "id": 75,
+      "countryId": 1,
+      "name": "Pärnumaa"
+    },
+    "78": {
+      "id": 78,
+      "countryId": 1,
+      "name": "Tartumaa"
+    }
+  },
+  "countries": {
+    "1": {
+      "id": 1,
+      "iso": "EE",
+      "name": "Estonia"
+    },
+    "4": {
+      "id": 4,
+      "iso": "US",
+      "name": "USA"
+    },
+    "144": {
+      "id": 144,
+      "iso": "DE",
+      "name": "Germany"
+    }
+  }
+}
