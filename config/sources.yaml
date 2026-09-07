@@ -85,7 +85,7 @@ sources:
   eures:
     enabled: false          # huge; enable with a small query if you want the EU-wide public feed
     query: "junior software developer"
-    countries: [fi, ee, de, nl, se, no, dk]
+    countries: [fi, ee, de, nl, se, "no", dk]   # "no" quoted: bare no is YAML for false
 
   # ---------------------------------------------------------------- Remote boards
   remotive:
