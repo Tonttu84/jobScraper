@@ -4,8 +4,24 @@ Primary door is the undocumented but public DRF endpoint used by the site itself
 
     GET https://duunitori.fi/api/v1/jobentries?search=<q>&search_also_descr=1&page=N
         Accept: application/json
-    -> {"count": N, "next": url|null, "previous": ..., "results": [{slug, heading,
-        company_name, municipality_name, descr (HTML), date_posted, ...}]}
+    -> {"count": N, "next": url|null, "previous": url|null, "results": [...]}
+
+A result has exactly nine keys (observed 2026-09-07, see ``tests/fixtures/duunitori.json``):
+``slug``, ``heading``, ``company_name``, ``municipality_name``, ``descr``, ``date_posted``,
+``export_image_url``, ``latitude``, ``longitude``. Notably absent: any id or URL (the posting
+URL is built from the slug), and any salary, employment-type, tag or remote-work field.
+Two consequences for the mapping:
+
+* ``descr`` is **plain text with newlines**, not HTML — it still goes through
+  :func:`~jobscraper.http.strip_html`, which is a no-op on it, so the HTML fallback below can
+  share the same normalizer.
+* ``municipality_name`` is usually a single city, but a country-wide posting says ``Finland``.
+  That is not a city, so :func:`parse_record` leaves ``city`` empty for it.
+
+Because there is no remote flag, ``remote`` is guessed from the location and title. The one
+structured hint the payload does carry is the ``Remote status: ...`` footer that
+Teamtailor-syndicated postings keep in ``descr``; :func:`_remote_from_descr` reads it and
+``guess_remote`` stays the fallback.
 
 Duunitori sits behind Cloudflare and the endpoint is not contractual: it may answer with
 HTML (the DRF browsable API, or a challenge page) instead of JSON. When that happens we fall
@@ -18,13 +34,14 @@ A Cloudflare 403 raises (``jobscraper probe`` should report the source as broken
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlsplit
 
 from jobscraper.http import SourceHTTPError, _raise_for_status, strip_html
 from jobscraper.models import Job
-from jobscraper.sources._common import guess_country, guess_remote, parse_date
+from jobscraper.sources._common import COUNTRY_NAMES, guess_country, guess_remote, parse_date
 from jobscraper.sources.base import SourceContext, register, safe_records
 
 log = logging.getLogger(__name__)
@@ -40,12 +57,40 @@ DEFAULT_QUERIES = ["software developer", "ohjelmistokehittäjä", "junior develo
 # Text that means "this is a relative date, not a company name" in a search card.
 _DATE_HINTS = ("sitten", "tänään", "eilen", "ago", "today", "yesterday", "päivä", "tunti")
 
+# Footer that Teamtailor-syndicated postings keep in `descr`, e.g. "Remote status: Hybrid".
+_REMOTE_STATUS_RE = re.compile(r"^[ \t]*remote status:[ \t]*(.+)$", re.I | re.M)
+
 
 def _slug_from_url(url: str | None) -> str | None:
     if not url:
         return None
     path = urlsplit(str(url)).path.rstrip("/")
     return path.rsplit("/", 1)[-1] or None
+
+
+def _remote_from_descr(description: str | None) -> str | None:
+    """Remote kind from a ``Remote status: ...`` footer, or ``None`` to keep guessing.
+
+    The value is classified with :func:`guess_remote` rather than a hard-coded vocabulary,
+    so a wording we haven't seen simply falls through to the location/title guess.
+    """
+    if not description:
+        return None
+    match = _REMOTE_STATUS_RE.search(description)
+    if not match:
+        return None
+    kind = guess_remote(match.group(1).strip())
+    return kind if kind != "unknown" else None
+
+
+def _city(location: str | None) -> str | None:
+    """First component of the location, unless it names a country ("Finland")."""
+    if not location:
+        return None
+    city = str(location).split(",")[0].strip()
+    if not city or city.lower() in COUNTRY_NAMES:
+        return None
+    return city
 
 
 def parse_record(rec: dict[str, Any]) -> Job | None:
@@ -66,9 +111,8 @@ def parse_record(rec: dict[str, Any]) -> Job | None:
         description=description,
         location_raw=str(location) if location else None,
         country=guess_country(location) or "FI",
-        city=str(location).split(",")[0].strip() if location else None,
-        remote=guess_remote(location, str(heading)),
-        salary_text=rec.get("salary") or None,
+        city=_city(location),
+        remote=_remote_from_descr(description) or guess_remote(location, str(heading)),
         posted_at=parse_date(rec.get("date_posted") or rec.get("posted_date")),
         raw=rec,
     )
