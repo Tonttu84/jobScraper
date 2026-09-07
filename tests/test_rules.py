@@ -271,3 +271,13 @@ def test_dedupe_keeps_unrelated_jobs_apart():
 )
 def test_classify_remote_region(text, expected):
     assert classify_remote_region(text) == expected
+
+
+def test_onsite_with_unknown_country_is_review_not_drop(settings):
+    """LinkedIn rows queried as 'European Union' often carry no location at all; a junior job
+    with an unknown country must reach the AI stage, not be thrown away (permissive filter)."""
+    job = Job(source="linkedin", source_id=str(next(_ids)), url="https://x/1", title="Junior Full Stack Developer",
+              company="Acme", description=ENGLISH_DESC, location_raw=None, country=None, remote="onsite")
+    res = evaluate(job, settings.profile)
+    assert res.status == "review"
+    assert any("unknown" in r for r in res.reasons)

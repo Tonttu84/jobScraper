@@ -14,7 +14,7 @@ from jobscraper.config import Profile
 from jobscraper.filters.language import detect_language, find_language_requirements
 from jobscraper.models import FilterResult, Job
 
-RULES_VERSION = "2026-09-07.1"
+RULES_VERSION = "2026-09-07.2"
 
 _YEARS_RE = re.compile(
     r"(?:(?:at least|minimum|min\.?|minimum of|over|more than|vähintään|yli|mindestens|mind\.|über|"
@@ -162,7 +162,9 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
         elif job.remote == "unknown":
             review.append("location unknown")
         else:
-            reasons.append("on-site with unknown country")
+            # Permissive: an on-site job whose country we could not parse (LinkedIn rows queried as
+            # "European Union" often have no location) goes to the AI stage instead of the bin.
+            review.append("on-site with unknown country")
     if tier == 3 and job.country in profile.location.notes:
         signals["work_rights_note"] = profile.location.notes[job.country]
 
