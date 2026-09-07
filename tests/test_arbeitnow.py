@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from jobscraper.sources.arbeitnow import Arbeitnow
 
@@ -14,7 +14,7 @@ def test_arbeitnow_parses_fixture(make_ctx):
     assert j.url.endswith("junior-software-developer-berlin-123456")
     assert j.country == "DE" and j.city == "Berlin" and j.remote == "onsite"
     assert "Junior Developer" in j.description and "<" not in j.description
-    assert j.posted_at == datetime.fromtimestamp(1756900000, tz=timezone.utc)
+    assert j.posted_at == datetime.fromtimestamp(1756900000, tz=UTC)
     assert jobs[1].remote == "remote"
 
 

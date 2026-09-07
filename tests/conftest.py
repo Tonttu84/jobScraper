@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -75,4 +76,4 @@ def make_ctx(settings) -> Callable[..., SourceContext]:
     return _make
 
 
-__all__ = ["FakeHttp", "fixture_json", "fixture_text", "_raise_for_status"]
+__all__ = ["FakeHttp", "_raise_for_status", "fixture_json", "fixture_text"]

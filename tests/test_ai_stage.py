@@ -15,8 +15,9 @@ from jobscraper.store import Store
 
 
 def _job(**kw) -> Job:
-    base = dict(source="test", source_id="1", url="https://x/1", title="Junior Developer", company="Acme",
-                description="We build things in Go. English working language. Helsinki.", country="FI")
+    base = {"source": "test", "source_id": "1", "url": "https://x/1", "title": "Junior Developer",
+            "company": "Acme", "country": "FI",
+            "description": "We build things in Go. English working language. Helsinki."}
     base.update(kw)
     return Job(**base)
 
