@@ -1,59 +1,136 @@
 {
   "version": "https://jsonfeed.org/version/1.1",
-  "title": "Jobs at Examplia",
-  "home_page_url": "https://examplia.teamtailor.com/jobs",
-  "feed_url": "https://examplia.teamtailor.com/jobs.json",
+  "title": "UpCloud",
+  "home_page_url": "https://upcloud.teamtailor.com/jobs",
+  "feed_url": "https://upcloud.teamtailor.com/jobs.json",
   "items": [
     {
-      "id": "1234567",
-      "url": "https://examplia.teamtailor.com/jobs/1234567-junior-software-developer",
-      "title": "Junior Software Developer",
-      "content_html": "<p>We are looking for a <strong>Junior Developer</strong> to join our platform team in Helsinki.</p><ul><li>Python</li><li>TypeScript</li></ul>",
-      "date_published": "2026-09-01T08:30:00+03:00",
+      "id": "d8938509-ff5a-4755-a5f7-5f89a0ac791e",
+      "title": "Business Intelligence Analyst",
+      "url": "https://upcloud.teamtailor.com/jobs/8323453-business-intelligence-analyst",
+      "date_published": "2026-09-04T14:50:13+03:00",
+      "content_html": "<p><span>We are looking for a <strong>Business Intelligence Analyst</strong> to join UpCloud’s Finance team and help us make better use of data across the company.</span></p><p><span>This is an opportunity for someone early in their career who enjoys working with data and wants to develop their skills in business intelligence and analytics. You don’t need years of experience. An internship, relevant consulting project work, or previous similar hands-on experience with BI can be enough.</span></p>",
       "_jobposting": {
+        "@context": "http://schema.org/",
         "@type": "JobPosting",
-        "title": "Junior Software Developer",
-        "employmentType": "FULL_TIME",
-        "datePosted": "2026-09-01",
-        "hiringOrganization": {"@type": "Organization", "name": "Examplia Oy"},
+        "title": "Business Intelligence Analyst",
+        "description": "<p><span>We are looking for a <strong>Business Intelligence Analyst</strong> to join UpCloud’s Finance team and help us make better use of data across the company.</span></p><p><span>This is an opportunity for someone early in their career who enjoys working with data and wants to develop their skills in business intelligence and analytics. You don’t need years of experience. An internship, relevant consulting project work, or previous similar hands-on experience with BI can be enough.</span></p>",
+        "identifier": {
+          "@type": "PropertyValue",
+          "name": "UpCloud",
+          "value": 8323453
+        },
+        "datePosted": "2026-09-04T14:50:13+03:00",
+        "hiringOrganization": {
+          "@type": "Organization",
+          "name": "UpCloud",
+          "sameAs": "https://upcloud.teamtailor.com"
+        },
         "jobLocation": [
           {
             "@type": "Place",
             "address": {
               "@type": "PostalAddress",
+              "streetAddress": "Aleksanterinkatu 15 B",
               "addressLocality": "Helsinki",
-              "addressRegion": "Uusimaa",
-              "addressCountry": "FI"
+              "postalCode": "00100",
+              "addressCountry": "FI",
+              "addressRegion": "Finland"
             }
           }
         ]
       }
     },
     {
-      "id": "7654321",
-      "url": "https://examplia.teamtailor.com/jobs/7654321-backend-engineer-remote",
-      "title": "Backend Engineer",
-      "content_html": "<p>Fully distributed team, apply from anywhere in the EU.</p>",
-      "date_published": "2026-08-28T11:00:00+02:00",
+      "id": "2a4eb6a0-7aa9-4acf-bcce-4d8b37287035",
+      "title": "Full Stack Developer",
+      "url": "https://upcloud.teamtailor.com/jobs/7958695-full-stack-developer",
+      "date_published": "2026-06-23T16:35:08+03:00",
+      "content_html": "<p>At UpCloud, you’ll be literally building the cloud. Particularly in this role, you’ll be touching everything our customers see - that is, more than 10,000 people worldwide.</p><p>We’re on a mission to be the number #1 European cloud platform, built on performance, reliability, and trust. While data sovereignty has become a hot topic in the EU, we can proudly say that we’ve been mastering it since 2011.</p>",
       "_jobposting": {
+        "@context": "http://schema.org/",
         "@type": "JobPosting",
-        "employmentType": "PART_TIME",
-        "jobLocationType": "TELECOMMUTE",
-        "datePosted": "2026-08-28",
-        "hiringOrganization": {"@type": "Organization", "name": "Examplia Oy"},
+        "title": "Full Stack Developer",
+        "description": "<p>At UpCloud, you’ll be literally building the cloud. Particularly in this role, you’ll be touching everything our customers see - that is, more than 10,000 people worldwide.</p><p>We’re on a mission to be the number #1 European cloud platform, built on performance, reliability, and trust. While data sovereignty has become a hot topic in the EU, we can proudly say that we’ve been mastering it since 2011.</p>",
+        "identifier": {
+          "@type": "PropertyValue",
+          "name": "UpCloud",
+          "value": 7958695
+        },
+        "datePosted": "2026-06-23T16:35:08+03:00",
+        "hiringOrganization": {
+          "@type": "Organization",
+          "name": "UpCloud",
+          "sameAs": "https://upcloud.teamtailor.com"
+        },
         "jobLocation": [
           {
             "@type": "Place",
-            "address": {"@type": "PostalAddress", "addressLocality": "Tallinn", "addressCountry": "EE"}
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": "Europe",
+              "addressLocality": "Helsinki",
+              "postalCode": null,
+              "addressCountry": "FI",
+              "addressRegion": "Europe"
+            }
           }
         ]
       }
     },
     {
-      "id": "9999999",
-      "url": "https://examplia.teamtailor.com/jobs/9999999-broken",
-      "content_html": "<p>No title — must be skipped, not raised.</p>",
-      "_jobposting": {}
+      "id": "fc1257d7-c11a-4074-a0a3-883330ac9b39",
+      "title": "Growth Engineer, Lifecycle Marketing",
+      "url": "https://upcloud.teamtailor.com/jobs/7929083-growth-engineer-lifecycle-marketing",
+      "date_published": "2026-06-17T12:51:10+03:00",
+      "content_html": "<p><span>UpCloud is on a mission to be the number #1 European cloud platform, built on performance, reliability, and trust. While data sovereignty has become a hot topic in the EU, we can proudly say that we’ve been mastering it since 2011. With a strong, continually expanding portfolio of solutions and a rapidly growing international customer base, we are poised for explosive growth.</span></p><p><span>To accelerate this growth, we’re looking for a <strong>Growth Engineer, focusing on Lifecycle Marketing </strong>to join our diverse Marketing team. Rather than a traditional lifecycle marketeer, though, this is a hybrid role for someone who loves both data and execution. You will map out how customers enter our platform and build the automated nurture streams that help them grow, turning every sign-up into a thriving, multi-product deployment.</span></p>",
+      "_jobposting": {
+        "@context": "http://schema.org/",
+        "@type": "JobPosting",
+        "title": "Growth Engineer, Lifecycle Marketing",
+        "description": "<p><span>UpCloud is on a mission to be the number #1 European cloud platform, built on performance, reliability, and trust. While data sovereignty has become a hot topic in the EU, we can proudly say that we’ve been mastering it since 2011. With a strong, continually expanding portfolio of solutions and a rapidly growing international customer base, we are poised for explosive growth.</span></p><p><span>To accelerate this growth, we’re looking for a <strong>Growth Engineer, focusing on Lifecycle Marketing </strong>to join our diverse Marketing team. Rather than a traditional lifecycle marketeer, though, this is a hybrid role for someone who loves both data and execution. You will map out how customers enter our platform and build the automated nurture streams that help them grow, turning every sign-up into a thriving, multi-product deployment.</span></p>",
+        "identifier": {
+          "@type": "PropertyValue",
+          "name": "UpCloud",
+          "value": 7929083
+        },
+        "datePosted": "2026-06-17T12:51:10+03:00",
+        "hiringOrganization": {
+          "@type": "Organization",
+          "name": "UpCloud",
+          "sameAs": "https://upcloud.teamtailor.com"
+        },
+        "jobLocation": [
+          {
+            "@type": "Place",
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": "Aleksanterinkatu 15 B",
+              "addressLocality": "Helsinki",
+              "postalCode": "00100",
+              "addressCountry": "FI",
+              "addressRegion": "Finland"
+            }
+          },
+          {
+            "@type": "Place",
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": "Europe",
+              "addressLocality": "Helsinki",
+              "postalCode": null,
+              "addressCountry": "FI",
+              "addressRegion": "Europe"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "content_html": "<p>Deliberately broken fixture item: no id, title or url.</p>",
+      "_jobposting": {
+        "@type": "JobPosting"
+      }
     }
   ]
 }

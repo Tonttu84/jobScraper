@@ -3,14 +3,22 @@
 Every public Teamtailor career site serves two anonymous feeds:
 
 * ``GET https://{slug}.teamtailor.com/jobs.json`` — JSON Feed 1.1. Preferred: the
-  ``_jobposting`` extension carries schema.org fields (structured city + ISO country,
-  ``jobLocationType``, ``employmentType``, hiring organization), which the RSS feed lacks.
+  ``_jobposting`` extension carries schema.org fields the RSS feed lacks — a structured
+  postal address (city + ISO country) and the hiring organization's real name.
+  Observed ``_jobposting`` keys, and nothing else: ``@context``, ``@type``, ``title``,
+  ``description``, ``identifier``, ``datePosted``, ``hiringOrganization``, ``jobLocation``.
+  In particular there is **no** ``employmentType`` and **no** ``jobLocationType``, so a
+  fully remote role is indistinguishable from an on-site one here.
 * ``GET https://{slug}.teamtailor.com/jobs.rss?per_page=200`` — RSS with the
   ``https://teamtailor.com/locations`` namespace (``tt:city``, ``tt:country``,
-  ``tt:department``, ``tt:role``). Used as a fallback when jobs.json is missing (404) or
-  serves something that isn't JSON (some tenants only expose the RSS feed).
+  ``tt:name``, ``tt:department``, ``tt:role``) plus ``<remoteStatus>`` (``none`` /
+  ``hybrid`` / ``fully``), the only remote marker Teamtailor publishes. Used as a
+  fallback when jobs.json is missing (404) or serves something that isn't JSON (some
+  tenants only expose the RSS feed).
 
-Both feeds list every open job in one request — no pagination.
+Both feeds list every open job in one request — no pagination. The item id differs
+between them: jobs.json uses the job's UUID (also the RSS ``<guid>``), the RSS parser
+uses the numeric id from the job URL.
 
 One tenant is one endpoint: a dead/renamed slug (404, DNS failure, 403) is logged and
 skipped so the rest of the tenants still produce jobs; only an *all tenants failed* run
@@ -38,6 +46,8 @@ RSS_URL = "https://{slug}.teamtailor.com/jobs.rss"
 RSS_PER_PAGE = 200
 
 TT_NS = {"tt": "https://teamtailor.com/locations"}
+# <remoteStatus> values seen in the wild; "hybrid" is handled separately in parse_rss_item.
+_REMOTE_FLAG = {"fully": True, "none": False}
 # Public job URLs look like https://{slug}.teamtailor.com/jobs/1234567-some-title
 _URL_ID_RE = re.compile(r"/jobs/(\d+)")
 # Teamtailor tenant slugs are DNS labels; refuse anything else so a config typo can't
@@ -87,14 +97,10 @@ def parse_json_item(item: dict[str, Any], slug: str) -> Job | None:
     company = (org or {}).get("name") if isinstance(org, dict) else None
 
     location_raw = ", ".join(p for p in (city, country) if p) or None
-    location_type = str(posting.get("jobLocationType") or "").upper()
-    if location_type:
-        remote_flag = location_type == "TELECOMMUTE"
-    else:
-        # schema.org only sets jobLocationType for telecommute roles, so a posting with a
-        # real street address and no marker is on-site (``guess_remote`` still overrides
-        # this when the title/location says remote or hybrid).
-        remote_flag = False if (city or country) else None
+    # jobs.json has no remote marker at all (see the module docstring): treat a posting
+    # with a real address as on-site and let ``guess_remote`` override that when the
+    # title or location says remote/hybrid.
+    remote_flag = False if (city or country) else None
 
     return Job(
         source=NAME,
@@ -107,7 +113,6 @@ def parse_json_item(item: dict[str, Any], slug: str) -> Job | None:
         country=guess_country(country, city),
         city=city,
         remote=guess_remote(location_raw, str(title), flag=remote_flag),
-        employment_type=str(posting["employmentType"]) if posting.get("employmentType") else None,
         posted_at=parse_date(item.get("date_published") or posting.get("datePosted")),
         raw=item,
     )
@@ -141,7 +146,12 @@ def parse_rss_item(item: ET.Element, slug: str) -> Job | None:
     location_raw = ", ".join(p for p in (city, country) if p) or None
 
     status = (_text(item, "remoteStatus") or "").lower()
-    remote_flag = True if status == "fully" else (False if status == "none" else None)
+    if status == "hybrid":
+        remote = "hybrid"
+    else:
+        # "fully"/"none" are the other values Teamtailor emits; anything else (or a
+        # missing element) leaves the decision to the title/location text.
+        remote = guess_remote(location_raw, title, flag=_REMOTE_FLAG.get(status))
     tags = [t for t in (_text(item, "tt:department"), _text(item, "tt:role")) if t]
 
     return Job(
@@ -154,7 +164,7 @@ def parse_rss_item(item: ET.Element, slug: str) -> Job | None:
         location_raw=location_raw,
         country=guess_country(country, city),
         city=city,
-        remote=guess_remote(location_raw, title, flag=remote_flag),
+        remote=remote,
         tags=tags,
         posted_at=parse_date(_text(item, "pubDate")),
         raw={"link": link, "guid": guid, "title": title},

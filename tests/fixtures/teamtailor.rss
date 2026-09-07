@@ -1,43 +1,46 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:tt="https://teamtailor.com/locations">
   <channel>
-    <title>Jobs at Rssonly</title>
-    <link>https://rssonly.teamtailor.com/jobs</link>
-    <description>Open positions at Rssonly</description>
+    <title>UpCloud</title>
+    <description>Open roles</description>
+    <link>https://upcloud.teamtailor.com/jobs</link>
     <item>
-      <title>Trainee Frontend Developer</title>
-      <link>https://rssonly.teamtailor.com/jobs/2222222-trainee-frontend-developer</link>
-      <guid isPermaLink="false">4f2a1c88-0d1e-4b7a-9a0c-8f2b6e5d1234</guid>
-      <pubDate>Mon, 25 Aug 2026 09:30:04 +0300</pubDate>
-      <description>&lt;p&gt;Join our &lt;strong&gt;frontend&lt;/strong&gt; team as a trainee.&lt;/p&gt;</description>
-      <remoteStatus>none</remoteStatus>
-      <tt:department>Engineering</tt:department>
-      <tt:role>Frontend Developer</tt:role>
+      <title>Business Intelligence Analyst</title>
+      <description>&lt;p&gt;&lt;span&gt;We are looking for a &lt;strong&gt;Business Intelligence Analyst&lt;/strong&gt; to join UpCloud’s Finance team and help us make better use of data across the company.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This is an opportunity for someone early in their career who enjoys working with data and wants to develop their skills in business intelligence and analytics. You don’t need years of experience. An internship, relevant consulting project work, or previous similar hands-on experience with BI can be enough.&lt;/span&gt;&lt;/p&gt;</description>
+      <pubDate>Fri, 04 Sep 2026 14:50:13 +0300</pubDate>
+      <link>https://upcloud.teamtailor.com/jobs/8323453-business-intelligence-analyst</link>
+      <remoteStatus>hybrid</remoteStatus>
+      <guid>d8938509-ff5a-4755-a5f7-5f89a0ac791e</guid>
       <tt:locations>
         <tt:location>
-          <tt:name>Tampere Office</tt:name>
-          <tt:city>Tampere</tt:city>
+          <tt:name>Helsinki</tt:name>
+          <tt:address>Aleksanterinkatu 15 B</tt:address>
+          <tt:zip>00100</tt:zip>
+          <tt:city>Helsinki</tt:city>
           <tt:country>Finland</tt:country>
         </tt:location>
       </tt:locations>
+      <tt:department>Finance</tt:department>
+      <tt:role>Business Intelligence Analyst</tt:role>
     </item>
     <item>
-      <title>Cloud Engineer</title>
-      <link>https://rssonly.teamtailor.com/jobs/3333333-cloud-engineer</link>
-      <guid isPermaLink="false">8b3c9d10-77aa-4c31-b2ef-1a9d4c6e7788</guid>
-      <pubDate>Wed, 20 Aug 2026 12:00:00 +0200</pubDate>
-      <description>&lt;p&gt;Work from anywhere in Europe.&lt;/p&gt;</description>
+      <title>Full Stack Developer</title>
+      <description>&lt;p&gt;At UpCloud, you’ll be literally building the cloud. Particularly in this role, you’ll be touching everything our customers see - that is, more than 10,000 people worldwide.&lt;/p&gt;&lt;p&gt;We’re on a mission to be the number #1 European cloud platform, built on performance, reliability, and trust. While data sovereignty has become a hot topic in the EU, we can proudly say that we’ve been mastering it since 2011.&lt;/p&gt;</description>
+      <pubDate>Tue, 23 Jun 2026 16:35:08 +0300</pubDate>
+      <link>https://upcloud.teamtailor.com/jobs/7958695-full-stack-developer</link>
       <remoteStatus>fully</remoteStatus>
-      <tt:department>Infrastructure</tt:department>
+      <guid>2a4eb6a0-7aa9-4acf-bcce-4d8b37287035</guid>
       <tt:locations>
         <tt:location>
-          <tt:name>Remote</tt:name>
+          <tt:name>EU</tt:name>
+          <tt:address>Europe</tt:address>
+          <tt:zip/>
+          <tt:city>Helsinki</tt:city>
+          <tt:country>Finland</tt:country>
         </tt:location>
       </tt:locations>
-    </item>
-    <item>
-      <title>Broken item without a link</title>
-      <guid isPermaLink="false">no-link-at-all</guid>
+      <tt:department>Product Engineering</tt:department>
+      <tt:role>Full Stack Developer</tt:role>
     </item>
   </channel>
 </rss>
