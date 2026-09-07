@@ -1,12 +1,18 @@
 """landing.jobs — Portugal-based, Europe-wide tech board with a public v1 feed.
 
 GET https://landing.jobs/api/v1/jobs?limit=50&offset=N → a JSON ARRAY of
-``{id, title, url, locations: [{city, country_code}], remote, published_at, created_at,
-   type, tags, gross_salary_low, gross_salary_high, role_description, main_requirements,
-   nice_to_have, ...}``
+``{id, title, url, locations: [{city, country_code}], remote, created_at, updated_at,
+   published_at, expires_at, type, tags, currency_code, gross_salary_low,
+   gross_salary_high, role_description, main_requirements, nice_to_have, perks,
+   relocation_paid}``
 
-The feed carries no company field on every posting: when ``company_name`` is missing the
-employer is humanized from the posting URL (``https://landing.jobs/at/<company>/<job>``).
+The whole feed is small (tens of jobs) and NOT ordered by date: it keeps long-lived postings,
+so plenty of rows are a year old. ``published_at`` is the posting date; ``updated_at`` is a
+bulk re-stamp (identical across most rows) and must not be used for it.
+
+There is no company field at all — the employer is humanized from the posting URL
+(``https://landing.jobs/at/<company>/<job>``). Salary is ``gross_salary_low``/``_high`` in
+``currency_code`` (EUR, sometimes BRL); only a fifth of the rows carry one.
 Paging stops on the first empty (or short) page.
 """
 
@@ -49,26 +55,37 @@ def salary_text(rec: dict[str, Any]) -> str | None:
     if not low and not high:
         return None
     span = f"{low} - {high}" if low and high and low != high else (low or high)
-    currency = rec.get("gross_salary_currency") or rec.get("currency")
+    currency = rec.get("currency_code") or rec.get("gross_salary_currency") or rec.get("currency")
     if isinstance(currency, str) and currency.strip():
         span = f"{span} {currency.strip().upper()}"
     return span
 
 
 def _locations(rec: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
-    """→ (location_raw, city, country) from ``locations: [...]`` or a plain ``location`` string."""
+    """→ (location_raw, city, country) from ``locations: [...]`` or a plain ``location`` string.
+
+    A posting can list several offices in several countries; each city keeps its own code
+    ("Munich (DE), Lisbon (PT), Cologne (DE)") and the first country wins, because dropping it
+    for being ambiguous would make the rule filter throw the posting away as "on-site with
+    unknown country".
+    """
     entries = [loc for loc in (rec.get("locations") or []) if isinstance(loc, dict)]
-    cities, countries = [], []
+    labels, cities, countries = [], [], []
     for loc in entries:
         city = loc.get("city")
+        city = city.strip() if isinstance(city, str) and city.strip() else None
         code = str(loc.get("country_code") or "").strip()
-        if isinstance(city, str) and city.strip():
-            cities.append(city.strip())
-        if len(code) == 2 and code.isalpha():
-            countries.append(code.upper())
-    if cities or countries:
-        parts = [", ".join(dict.fromkeys([*cities, *countries]))]
-        return parts[0] or None, (cities[0] if cities else None), (countries[0] if countries else None)
+        code = code.upper() if len(code) == 2 and code.isalpha() else None
+        if city:
+            cities.append(city)
+        if code:
+            countries.append(code)
+        if city and code:
+            labels.append(f"{city} ({code})")
+        elif city or code:
+            labels.append(city or code)
+    if labels:
+        return ", ".join(dict.fromkeys(labels)), (cities[0] if cities else None), (countries[0] if countries else None)
     text = rec.get("location") if isinstance(rec.get("location"), str) else None
     text = text.strip() if text else None
     if not text:
