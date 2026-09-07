@@ -1,0 +1,59 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "Jobs at Examplia",
+  "home_page_url": "https://examplia.teamtailor.com/jobs",
+  "feed_url": "https://examplia.teamtailor.com/jobs.json",
+  "items": [
+    {
+      "id": "1234567",
+      "url": "https://examplia.teamtailor.com/jobs/1234567-junior-software-developer",
+      "title": "Junior Software Developer",
+      "content_html": "<p>We are looking for a <strong>Junior Developer</strong> to join our platform team in Helsinki.</p><ul><li>Python</li><li>TypeScript</li></ul>",
+      "date_published": "2026-09-01T08:30:00+03:00",
+      "_jobposting": {
+        "@type": "JobPosting",
+        "title": "Junior Software Developer",
+        "employmentType": "FULL_TIME",
+        "datePosted": "2026-09-01",
+        "hiringOrganization": {"@type": "Organization", "name": "Examplia Oy"},
+        "jobLocation": [
+          {
+            "@type": "Place",
+            "address": {
+              "@type": "PostalAddress",
+              "addressLocality": "Helsinki",
+              "addressRegion": "Uusimaa",
+              "addressCountry": "FI"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "7654321",
+      "url": "https://examplia.teamtailor.com/jobs/7654321-backend-engineer-remote",
+      "title": "Backend Engineer",
+      "content_html": "<p>Fully distributed team, apply from anywhere in the EU.</p>",
+      "date_published": "2026-08-28T11:00:00+02:00",
+      "_jobposting": {
+        "@type": "JobPosting",
+        "employmentType": "PART_TIME",
+        "jobLocationType": "TELECOMMUTE",
+        "datePosted": "2026-08-28",
+        "hiringOrganization": {"@type": "Organization", "name": "Examplia Oy"},
+        "jobLocation": [
+          {
+            "@type": "Place",
+            "address": {"@type": "PostalAddress", "addressLocality": "Tallinn", "addressCountry": "EE"}
+          }
+        ]
+      }
+    },
+    {
+      "id": "9999999",
+      "url": "https://examplia.teamtailor.com/jobs/9999999-broken",
+      "content_html": "<p>No title — must be skipped, not raised.</p>",
+      "_jobposting": {}
+    }
+  ]
+}

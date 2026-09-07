@@ -17,6 +17,7 @@ dependencies = [
     "ats-scrapers[scrapers]>=0.3.0",
     "python-jobspy",
     "feedparser>=6",
+    "pandas>=2",
 ]
 
 [project.optional-dependencies]

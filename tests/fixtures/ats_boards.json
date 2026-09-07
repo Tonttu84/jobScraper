@@ -1,0 +1,39 @@
+[
+  {
+    "url": "https://boards.greenhouse.io/supercell/jobs/4567890",
+    "title": "Junior Backend Engineer",
+    "company": "Supercell",
+    "ats_type": "greenhouse",
+    "ats_id": "4567890",
+    "location": "Helsinki, Finland",
+    "description": "<p>Join our <strong>backend</strong> team.</p><ul><li>Go</li><li>Kubernetes</li></ul>",
+    "employment_type": "FULL_TIME",
+    "department": "Engineering",
+    "salary_summary": "45 000 € – 60 000 € / year",
+    "posted_at": "2026-09-02T10:00:00Z"
+  },
+  {
+    "url": "https://jobs.lever.co/wolt/2f7a1c88-0d1e-4b7a-9a0c-8f2b6e5d1234",
+    "title": "Software Engineer, Platform (Remote)",
+    "company": "Wolt",
+    "ats_type": "lever",
+    "ats_id": "2f7a1c88-0d1e-4b7a-9a0c-8f2b6e5d1234",
+    "location": "Remote - Europe",
+    "is_remote": true,
+    "description": "Plain text body handed over by the ATS, no markup at all.",
+    "salary_min": 55000,
+    "salary_max": 70000,
+    "salary_currency": "EUR",
+    "salary_period": "YEAR",
+    "team": "Platform",
+    "commitment": "Full-time"
+  },
+  {
+    "url": "https://apply.workable.com/oura/j/ABC123",
+    "title": "Data Engineer",
+    "company": "Oura",
+    "ats_type": "workable",
+    "location": "Tallinn, Estonia",
+    "country_iso": "EE"
+  }
+]

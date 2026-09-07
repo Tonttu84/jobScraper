@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:tt="https://teamtailor.com/locations">
+  <channel>
+    <title>Jobs at Rssonly</title>
+    <link>https://rssonly.teamtailor.com/jobs</link>
+    <description>Open positions at Rssonly</description>
+    <item>
+      <title>Trainee Frontend Developer</title>
+      <link>https://rssonly.teamtailor.com/jobs/2222222-trainee-frontend-developer</link>
+      <guid isPermaLink="false">4f2a1c88-0d1e-4b7a-9a0c-8f2b6e5d1234</guid>
+      <pubDate>Mon, 25 Aug 2026 09:30:04 +0300</pubDate>
+      <description>&lt;p&gt;Join our &lt;strong&gt;frontend&lt;/strong&gt; team as a trainee.&lt;/p&gt;</description>
+      <remoteStatus>none</remoteStatus>
+      <tt:department>Engineering</tt:department>
+      <tt:role>Frontend Developer</tt:role>
+      <tt:locations>
+        <tt:location>
+          <tt:name>Tampere Office</tt:name>
+          <tt:city>Tampere</tt:city>
+          <tt:country>Finland</tt:country>
+        </tt:location>
+      </tt:locations>
+    </item>
+    <item>
+      <title>Cloud Engineer</title>
+      <link>https://rssonly.teamtailor.com/jobs/3333333-cloud-engineer</link>
+      <guid isPermaLink="false">8b3c9d10-77aa-4c31-b2ef-1a9d4c6e7788</guid>
+      <pubDate>Wed, 20 Aug 2026 12:00:00 +0200</pubDate>
+      <description>&lt;p&gt;Work from anywhere in Europe.&lt;/p&gt;</description>
+      <remoteStatus>fully</remoteStatus>
+      <tt:department>Infrastructure</tt:department>
+      <tt:locations>
+        <tt:location>
+          <tt:name>Remote</tt:name>
+        </tt:location>
+      </tt:locations>
+    </item>
+    <item>
+      <title>Broken item without a link</title>
+      <guid isPermaLink="false">no-link-at-all</guid>
+    </item>
+  </channel>
+</rss>

@@ -12,3 +12,4 @@ data/exports/
 .ruff_cache/
 *.egg-info/
 dist/
+.coverage
