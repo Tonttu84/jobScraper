@@ -1,0 +1,48 @@
+[
+  {
+    "_id": "66d7f1a2c3b4e5f600112233",
+    "name": "Junior Backend Developer (m/f/d)",
+    "company": "Beispiel Tech GmbH",
+    "jobUrl": "/jobs/junior-backend-developer-beispiel-tech-berlin",
+    "redirectJobUrl": "https://beispiel.tech/careers/junior-backend",
+    "actualCity": "Berlin",
+    "cityCategory": "Berlin",
+    "country": "Germany",
+    "jobType": "Full-Time",
+    "contractTypes": {"permanent": true, "freelance": false, "temporary": false, "internship": false},
+    "language": "English",
+    "hasLangCheck": true,
+    "postedAt": "2025-09-02T09:00:00.000Z",
+    "postedAtUnix": 1756803600,
+    "annualSalaryFrom": 48000,
+    "annualSalaryTo": 60000,
+    "source": "germantechjobs",
+    "technologies": ["Python", "Django", "PostgreSQL"]
+  },
+  {
+    "_id": "66d7f1a2c3b4e5f600445566",
+    "name": "Working Student Frontend",
+    "company": "Remote Werk AG",
+    "jobUrl": "https://germantechjobs.de/jobs/working-student-frontend-remote-werk",
+    "actualCity": null,
+    "cityCategory": "Remote",
+    "country": null,
+    "jobType": "Internship",
+    "contractTypes": ["internship"],
+    "language": "German",
+    "postedAtUnix": 1756700000,
+    "annualSalaryFrom": null,
+    "annualSalaryTo": null,
+    "techs": ["React", "TypeScript"]
+  },
+  {
+    "_id": "66d7f1a2c3b4e5f600778899",
+    "name": null,
+    "company": null,
+    "jobUrl": null,
+    "redirectJobUrl": null,
+    "technologies": "broken",
+    "contractTypes": 7,
+    "postedAt": null
+  }
+]

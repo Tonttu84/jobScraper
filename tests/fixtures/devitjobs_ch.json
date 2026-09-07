@@ -1,0 +1,19 @@
+[
+  {
+    "_id": "66d7f1a2c3b4e5f600aabbcc",
+    "name": "Junior Software Engineer",
+    "company": "Alpine Labs AG",
+    "jobUrl": "junior-software-engineer-alpine-labs-zurich",
+    "actualCity": "Zurich",
+    "cityCategory": "Zurich",
+    "country": "Switzerland",
+    "jobType": "Full-Time",
+    "contractTypes": {"permanent": true},
+    "language": "English",
+    "postedAt": "2025-09-04T07:30:00.000Z",
+    "annualSalaryFrom": 90000,
+    "annualSalaryTo": 110000,
+    "source": "swissdevjobs",
+    "technologies": ["Go", "Kubernetes"]
+  }
+]

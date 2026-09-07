@@ -1,0 +1,17 @@
+{
+  "id": "abcd1234",
+  "title": "Junior Python Developer",
+  "specifics": {
+    "dailyTasks": [
+      "Build REST endpoints with FastAPI",
+      "Write unit tests and review pull requests"
+    ],
+    "description": "<p>We are hiring a <strong>Junior Python Developer</strong> for our Warsaw team.</p>"
+  },
+  "requirements": {
+    "musts": [{"value": "Python", "type": "main"}, {"value": "SQL"}],
+    "nices": [{"value": "Docker"}, {"value": "AWS"}],
+    "langs": [{"code": "en", "level": "B2"}]
+  },
+  "details": {"description": "<p>English is the working language; Polish is a plus.</p>"}
+}

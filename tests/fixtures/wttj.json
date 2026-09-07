@@ -1,0 +1,55 @@
+{
+  "hits": [
+    {
+      "objectID": "1234567",
+      "reference": "WTTJ-1234567",
+      "name": "Junior Backend Developer",
+      "slug": "junior-backend-developer_helsinki",
+      "organization": {"name": "Nordic Softworks", "slug": "nordic-softworks", "reference": "nordic-softworks"},
+      "offices": [{"city": "Helsinki", "country": "Finland", "country_code": "FI"}],
+      "remote": "partial",
+      "experience_level_minimum": 1,
+      "contract_type": "full_time",
+      "published_at": "2025-09-02T06:00:00Z",
+      "published_at_timestamp": 1756792800,
+      "salary_minimum": 38000,
+      "salary_maximum": 46000,
+      "salary_currency": "EUR",
+      "salary_period": "yearly",
+      "sectors": [{"name": "SaaS / Cloud Services"}],
+      "profile": "<p>You have finished a CS degree or a bootcamp and write clean Python.</p>",
+      "sections": [
+        {"name": "Your mission", "description": "<p>Ship features in our Django monolith.</p>"},
+        {"title": "Nice to have", "content": "Docker, CI/CD"}
+      ]
+    },
+    {
+      "objectID": "7654321",
+      "name": "Graduate Software Engineer (Remote, EU)",
+      "slug": "graduate-software-engineer",
+      "organization": {"name": "Remote Collective", "slug": "remote-collective"},
+      "offices": [{"city": "Tallinn", "country": "Estonia", "country_code": "EE"}],
+      "remote": "fulltime",
+      "experience_level_minimum": 0,
+      "contract_type": "internship",
+      "published_at_timestamp": 1756700000,
+      "salary_yearly_minimum": 30000,
+      "salary_currency": "eur",
+      "salary_period": "yearly",
+      "description": "<p>A twelve-month graduate programme, fully remote inside the EU.</p>"
+    },
+    {
+      "objectID": "0000000",
+      "name": null,
+      "slug": null,
+      "organization": "not-an-object",
+      "offices": "broken",
+      "remote": null,
+      "published_at_timestamp": null
+    }
+  ],
+  "nbHits": 2,
+  "nbPages": 1,
+  "page": 0,
+  "hitsPerPage": 100
+}

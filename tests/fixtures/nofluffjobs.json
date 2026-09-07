@@ -1,0 +1,48 @@
+{
+  "postings": [
+    {
+      "id": "abcd1234",
+      "url": "junior-python-developer-acme-warszawa-abcd1234",
+      "title": "Junior Python Developer",
+      "name": "Acme Software",
+      "technology": "Python",
+      "category": "backend",
+      "seniority": ["Trainee", "Junior"],
+      "location": {
+        "places": [
+          {"city": "Warszawa", "province": "Mazowieckie", "country": {"code": "PL", "name": "Poland"}},
+          {"city": "Kraków", "country": {"code": "PL", "name": "Poland"}}
+        ],
+        "fullyRemote": false,
+        "covidTimeRemotely": true
+      },
+      "salary": {"from": 1800, "to": 2600, "currency": "EUR", "type": "b2b"},
+      "posted": 1756900000000,
+      "renewed": 1756910000000
+    },
+    {
+      "id": "efgh5678",
+      "url": "remote-junior-frontend-developer-nordics-efgh5678",
+      "title": "Junior Frontend Developer (React)",
+      "name": "Nordics Digital",
+      "technology": "JavaScript",
+      "category": "frontend",
+      "seniority": ["Junior"],
+      "location": {"places": [{"city": "Tallinn", "country": {"code": "EE", "name": "Estonia"}}], "fullyRemote": true},
+      "salary": {"from": 2200, "to": null, "currency": "EUR", "type": "permanent"},
+      "posted": 1756800000000
+    },
+    {
+      "id": null,
+      "url": null,
+      "title": null,
+      "name": null,
+      "seniority": null,
+      "location": null,
+      "salary": "not-a-dict",
+      "posted": null
+    }
+  ],
+  "totalCount": 2,
+  "totalPages": 1
+}

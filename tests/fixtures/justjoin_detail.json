@@ -1,0 +1,7 @@
+{
+  "slug": "acme-warsaw-junior-python-developer",
+  "body": "<h2>About the role</h2><p>You will build <strong>FastAPI</strong> services with our team.</p><ul><li>English B2</li><li>Some Django experience</li></ul>",
+  "requiredSkills": [{"name": "Python"}, {"name": "FastAPI"}],
+  "experienceLevel": {"value": "junior"},
+  "companyName": "Acme Sp. z o.o."
+}

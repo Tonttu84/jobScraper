@@ -1,0 +1,43 @@
+{
+  "data": [
+    {
+      "guid": "9f1c2e33-junior-python-developer",
+      "slug": "acme-warsaw-junior-python-developer",
+      "title": "Junior Python Developer",
+      "companyName": "Acme Sp. z o.o.",
+      "city": "Warszawa",
+      "countryCode": "PL",
+      "workplaceType": "hybrid",
+      "experienceLevel": "junior",
+      "publishedAt": "2025-09-03T08:15:00.000Z",
+      "requiredSkills": [{"name": "Python"}, {"name": "SQL"}],
+      "employmentTypes": [{"from": 8000, "to": 12000, "currency": "pln", "type": "b2b"}]
+    },
+    {
+      "guid": "7ab4-remote-frontend",
+      "slug": "nordics-digital-junior-frontend-developer",
+      "title": "Junior Frontend Developer",
+      "companyName": "Nordics Digital",
+      "city": "Tallinn",
+      "countryCode": "EE",
+      "workplaceType": "remote",
+      "experienceLevel": "junior",
+      "publishedAt": "2025-09-01T10:00:00.000Z",
+      "requiredSkills": [{"name": "React"}],
+      "employmentTypes": [{"from": 2500, "to": null, "currency": "eur", "type": "permanent"}]
+    },
+    {
+      "guid": null,
+      "slug": null,
+      "title": null,
+      "companyName": null,
+      "city": null,
+      "countryCode": null,
+      "workplaceType": null,
+      "publishedAt": null,
+      "requiredSkills": "broken",
+      "employmentTypes": "broken"
+    }
+  ],
+  "meta": {"next": null, "totalItems": 2}
+}
