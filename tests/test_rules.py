@@ -76,7 +76,8 @@ def test_senior_title_is_dropped(settings):
     assert res.signals["seniority"] == "senior_by_title"
 
 
-def test_three_years_experience_is_review_not_drop(settings):
+def test_three_years_experience_is_dropped(settings):
+    """Owner (2026-09-07): only trainee/intern/junior roles; an unlabelled title asking 3+ years is out."""
     job = make_job(
         title="Software Developer",
         description="We are looking for someone with 3+ years of experience in web development. "
@@ -85,8 +86,37 @@ def test_three_years_experience_is_review_not_drop(settings):
         country="EE",
     )
     res = evaluate(job, settings.profile)
-    assert res.status == "review"
+    assert res.status == "drop"
     assert res.signals["years_required"] == 3
+
+
+def test_junior_title_asking_three_years_is_only_review(settings):
+    job = make_job(title="Junior Software Developer",
+                   description="3+ years of experience with Python. " + ENGLISH_DESC)
+    assert evaluate(job, settings.profile).status == "review"
+
+
+@pytest.mark.parametrize("title", ["Mid-level Backend Developer", "Medior Java Developer",
+                                   "Experienced Software Developer", "Mid Software Engineer",
+                                   "Kokenut ohjelmistokehittäjä", "Intermediate Frontend Developer"])
+def test_mid_level_titles_are_dropped(settings, title):
+    res = evaluate(make_job(title=title), settings.profile)
+    assert res.status == "drop", title
+    assert any("title" in r for r in res.reasons)
+
+
+def test_middleware_is_not_mid_level(settings):
+    res = evaluate(make_job(title="Software Engineer - Platform & Middleware (Early Career)"), settings.profile)
+    assert res.status != "drop"
+
+
+def test_mid_seniority_label_drops_unlabelled_title(settings):
+    """Boards label seniority separately (justjoin 'mid', nofluffjobs 'Mid', devitjobs 'Regular')."""
+    res = evaluate(make_job(title="Backend Developer", seniority_raw="Mid"), settings.profile)
+    assert res.status == "drop"
+    assert any("label" in r for r in res.reasons)
+    assert evaluate(make_job(title="Backend Developer", seniority_raw="Trainee, Junior"), settings.profile).status != "drop"
+    assert evaluate(make_job(title="Junior Backend Developer", seniority_raw="Mid"), settings.profile).status != "drop"
 
 
 def test_six_years_experience_is_dropped(settings):

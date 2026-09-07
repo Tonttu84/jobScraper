@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = Path(os.environ.get("JOBSCRAPER_CONFIG_DIR", ROOT / "config"))
 DATA_DIR = Path(os.environ.get("JOBSCRAPER_DATA_DIR", ROOT / "data"))
+# Human-facing output (markdown reports); gitignored, separate from the scraper's working data.
+RESULTS_DIR = Path(os.environ.get("JOBSCRAPER_RESULTS_DIR", ROOT / "results"))
 
 
 class LanguagePolicy(BaseModel):

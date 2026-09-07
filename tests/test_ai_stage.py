@@ -111,3 +111,11 @@ def test_prefilter_prompt_short_circuits_hard_failures(settings):
     assert "immediately" in sys_pre.lower()
     assert "programming language" in sys_pre.lower()  # a language mismatch is explicitly NOT a hard failure
     assert PROMPT_VERSION != "2026-09-07.1"  # wording changed → cached verdicts must be recomputed
+
+
+def test_prompts_limit_seniority_to_entry_level(settings):
+    """Owner (2026-09-07): the ranked results were all trainee/intern/junior and that is enough."""
+    sys_pre = system_prompt("prefilter", settings.profile).lower()
+    assert "mid-level" in sys_pre and "3+ years" in sys_pre
+    assert "borderline but possible" not in sys_pre
+    assert PROMPT_VERSION not in ("2026-09-07.1", "2026-09-07.2")

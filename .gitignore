@@ -16,3 +16,4 @@ dist/
 data/probe.log
 data/*.log
 .claude/worktrees/
+results/

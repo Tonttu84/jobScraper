@@ -16,7 +16,7 @@ from jobscraper.filters.language import detect_language, find_language_requireme
 from jobscraper.models import FilterResult, Job
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-09-07.4"
+RULES_VERSION = "2026-09-07.5"
 
 _YEARS_RE = re.compile(
     r"(?:(?:at least|minimum|min\.?|minimum of|over|more than|vähintään|yli|mindestens|mind\.|über|"
@@ -58,6 +58,7 @@ def _years_required(text: str) -> int | None:
     return min(found) if found else None
 
 
+_MID_LABEL_RE = re.compile(r"(mid|middle|medior|regular|intermediate|experienced)", re.I)
 _REMOTE_COUNTRY_ONLY = re.compile(r"\b([A-Za-z][A-Za-z .]{1,30}?)\s+only\b", re.I)
 
 
@@ -125,6 +126,12 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
         signals["seniority"] = "senior_by_title"
     else:
         signals["seniority"] = "unlabeled"
+        # Boards label seniority separately from the title (justjoin "mid", nofluffjobs "Mid", devitjobs
+        # "Regular"): an above-junior label on an unlabelled title is as strong as a senior title.
+        label = job.seniority_raw or ""
+        if label and not (keep_sen and keep_sen.search(label)) and ((drop_sen and drop_sen.search(label)) or _MID_LABEL_RE.search(label)):
+            reasons.append(f"seniority label {label!r} is above junior")
+            signals["seniority"] = "senior_by_label"
     years = _years_required(text)
     if years is not None:
         signals["years_required"] = years

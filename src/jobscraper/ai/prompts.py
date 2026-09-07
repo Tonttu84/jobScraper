@@ -6,7 +6,7 @@ from __future__ import annotations
 from jobscraper.config import Profile
 from jobscraper.models import FilterResult, Job
 
-PROMPT_VERSION = "2026-09-07.2"
+PROMPT_VERSION = "2026-09-07.3"
 
 
 def _policy_block(profile: Profile) -> str:
@@ -19,10 +19,11 @@ Wants to learn / interests: {", ".join(profile.interests)}
 Working languages: {", ".join(profile.languages.ok)} (fluent). Weak: {", ".join(profile.languages.weak)} (basic, not usable as the main working language).
 
 WHAT COUNTS AS A MATCH
-- Seniority: internship, trainee, graduate, junior, or roles asking for up to {profile.seniority.max_years_keep} years of
-  experience. The candidate has ~2 years of intensive project-based coding (42-network school), so
-  roles asking "2-3 years" are borderline but possible. A university-degree requirement is NOT a
-  blocker: 42/Hive graduates are routinely accepted. 5+ years, senior, lead, architect: no.
+- Seniority: ONLY internship, trainee, graduate, junior, entry-level, or unlabelled roles asking for at
+  most {profile.seniority.max_years_keep} years of experience. Mid-level roles ("experienced", "medior",
+  "mid", 3+ years required) are out, as are senior/lead/architect: the candidate cannot apply everywhere
+  and wants the list limited to entry-level. A university-degree requirement is NOT a blocker: 42/Hive
+  graduates are routinely accepted.
 - Role: software development / IT in the broad sense (backend, frontend, full-stack, embedded,
   DevOps, QA automation, data engineering, game dev, systems, cloud). Programming-language mismatch is
   a minor issue: the candidate learns fast and is especially keen on Go and Rust.

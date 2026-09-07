@@ -27,6 +27,7 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(store_mod, "DATA_DIR", tmp_path)
     monkeypatch.setattr(report_mod, "DATA_DIR", tmp_path)
     monkeypatch.setattr(cli_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(report_mod, "RESULTS_DIR", tmp_path / "results")
     return tmp_path
 
 
@@ -90,7 +91,7 @@ def test_scrape_filter_report_pipeline(data_dir, fake_http):
     reported = runner.invoke(cli_mod.app, ["report"])
     assert reported.exit_code == 0, reported.output
 
-    reports = list((data_dir / "reports").glob("report-*.md"))
+    reports = list((data_dir / "results").glob("report-*.md"))  # reports live in results/, not data/
     assert len(reports) == 1
     assert "# Job report" in reports[0].read_text(encoding="utf-8")
 
