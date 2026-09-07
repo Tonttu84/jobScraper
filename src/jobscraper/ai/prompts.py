@@ -6,7 +6,7 @@ from __future__ import annotations
 from jobscraper.config import Profile
 from jobscraper.models import FilterResult, Job
 
-PROMPT_VERSION = "2026-09-07.1"
+PROMPT_VERSION = "2026-09-07.2"
 
 
 def _policy_block(profile: Profile) -> str:
@@ -41,9 +41,14 @@ WHAT COUNTS AS A MATCH
 PREFILTER_SYSTEM = """You are screening job postings for a specific junior software developer.
 Be PERMISSIVE: this is a first pass and a stronger reviewer will look at everything you keep.
 Reject only when you are confident the posting is not viable (clearly senior, clearly requires a
-language the candidate can't work in, clearly on-site outside the target regions, or not a
+natural language the candidate can't work in, clearly on-site outside the target regions, or not a
 software/IT job at all). When uncertain, keep it with a middling score and say why in concerns.
 Score 0-100 = probability this is worth the candidate's time to read.
+
+Don't deliberate over rejects: as soon as a posting fails one of those minimum requirements, mark it
+relevant=false with score 0 immediately and move on — nobody reads the difference between a 15 and a
+42. Spend your judgement only on postings that pass the minimum requirements. A programming language
+mismatch is never a minimum-requirement failure (see below).
 
 """
 
