@@ -1,19 +1,28 @@
 """thehub.io — Nordic startup/tech job platform (DK/SE/NO/FI), direct postings, no auth.
 
     GET https://thehub.io/api/v2/jobs?page=N&countryCode=FI&search=developer
-        -> {"docs": [...], "pages": N, "total": N, ...}   (15 docs per page, ?limit is ignored)
+        -> {"docs": [...], "pages": N, "total": N, "suggestions": {...}}  (15 docs/page, ?limit ignored)
     GET https://thehub.io/api/jobs/{id}
-        -> {"doc": {... full posting incl. description ...}}
+        -> {"doc": {... full posting ...}}
 
-The list envelope usually carries everything we need; when a doc has no ``description`` we
-hydrate it from the detail endpoint. Non-``ACTIVE`` docs (DRAFT/EXPIRED show up depending on
-cache state) are dropped. ``link`` is the employer's apply URL (often an ATS handoff) — we keep
-``https://thehub.io/jobs/{id}`` as the canonical URL and stash the apply URL in ``raw``.
+The list envelope is only a teaser: each doc carries company, id, isFeatured, isRemote,
+jobPositionTypes, key, location, saved, title and views — no dates, no country code, no
+description, no status. Everything else the pipeline needs comes from the detail endpoint,
+which is therefore called once per job (publishedAt/approvedAt/createdAt, countryCode,
+description, jobRoles, link, status). A detail failure is logged and the teaser is emitted
+as-is; a detail whose ``status`` is not ``ACTIVE`` drops the job.
+
+``jobRoles`` and ``jobPositionTypes`` arrive as Mongo ObjectIds with no lookup table in either
+payload (the list's ``suggestions`` block uses different, slug-style keys), so opaque ids are
+filtered out rather than surfaced as tags. ``link`` is the employer's apply URL (often an ATS
+handoff) — we keep ``https://thehub.io/jobs/{id}`` as the canonical URL and stash the apply
+URL in ``raw``.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -31,6 +40,8 @@ PER_PAGE = 15  # hard-coded by the API
 
 DEFAULT_COUNTRIES = ["FI", "SE", "NO", "DK"]
 DEFAULT_SEARCH = "developer"
+
+_OBJECT_ID_RE = re.compile(r"[0-9a-f]{24}")
 
 
 def _doc_id(rec: dict[str, Any]) -> str | None:
@@ -89,13 +100,23 @@ def _strings(value: Any) -> list[str]:
     return []
 
 
+def _labels(value: Any) -> list[str]:
+    """Like ``_strings`` but drops ObjectIds — thehub sends taxonomy ids, not names."""
+    return [s for s in _strings(value) if not _OBJECT_ID_RE.fullmatch(s.lower())]
+
+
+def _is_active(rec: dict[str, Any]) -> bool:
+    """Only the detail document has a ``status``; a missing one is not a reason to drop."""
+    status = rec.get("status")
+    return not (isinstance(status, str) and status.strip() and status.strip().upper() != "ACTIVE")
+
+
 def parse_record(rec: dict[str, Any], country_hint: str | None = None) -> Job | None:
     job_id = _doc_id(rec)
     title = rec.get("title")
     if not job_id or not isinstance(title, str) or not title.strip():
         return None
-    status = rec.get("status")
-    if isinstance(status, str) and status.strip() and status.strip().upper() != "ACTIVE":
+    if not _is_active(rec):
         return None
 
     company_obj = rec.get("company") if isinstance(rec.get("company"), dict) else {}
@@ -127,9 +148,9 @@ def parse_record(rec: dict[str, Any], country_hint: str | None = None) -> Job | 
         remote=guess_remote(
             location_raw, title, flag=is_remote if isinstance(is_remote, bool) else None
         ),
-        employment_type=", ".join(_strings(rec.get("jobPositionTypes"))) or None,
+        employment_type=", ".join(_labels(rec.get("jobPositionTypes"))) or None,
         salary_text=_salary_text(rec),
-        tags=_strings(rec.get("jobRoles")) + _strings(rec.get("tags")),
+        tags=_labels(rec.get("jobRoles")) + _labels(rec.get("tags")),
         posted_at=parse_date(
             rec.get("publishedAt") or rec.get("approvedAt") or rec.get("createdAt")
         ),
@@ -167,8 +188,8 @@ class TheHub:
                     if job.source_id in seen:
                         continue
                     seen.add(job.source_id)
-                    if not job.description:
-                        self._hydrate(ctx, job)
+                    if not self._hydrate(ctx, job):
+                        continue
                     yield job
                     emitted += 1
                     if ctx.limit and emitted >= ctx.limit:
@@ -179,25 +200,47 @@ class TheHub:
                 if len(docs) < PER_PAGE:
                     break
 
-    def _hydrate(self, ctx: SourceContext, job: Job) -> None:
-        """Fill in the description from the detail endpoint; a failure is logged, never raised."""
+    def _hydrate(self, ctx: SourceContext, job: Job) -> bool:
+        """Complete a list teaser from ``/api/jobs/{id}``.
+
+        Returns ``False`` when the detail says the posting is no longer ACTIVE, so the caller
+        drops it. A broken detail endpoint is logged and the teaser is kept as-is.
+        """
         try:
             payload = ctx.http.get_json(DETAIL_URL.format(id=job.source_id))
         except Exception as exc:
             log.warning("%s: detail %s failed (%s)", self.name, job.source_id, exc)
-            return
+            return True
         doc = payload.get("doc") if isinstance(payload, dict) else None
         if not isinstance(doc, dict):
             doc = payload if isinstance(payload, dict) else None
         if not isinstance(doc, dict):
-            return
-        job.description = strip_html(doc.get("description"))
-        if not job.company:
-            company = (doc.get("company") or {}).get("name") if isinstance(doc.get("company"), dict) else None
-            job.company = company.strip() if isinstance(company, str) and company.strip() else None
-        if not job.salary_text:
-            job.salary_text = _salary_text(doc)
+            return True
+        if not _is_active(doc):
+            log.debug("%s: %s is %s, skipping", self.name, job.source_id, doc.get("status"))
+            return False
+
+        # The detail document is a superset of the list doc, so normalize it the same way and
+        # let every non-empty field win over the teaser.
+        detail = parse_record(doc, country_hint=job.country)
+        if detail is None:
+            job.raw = {**job.raw, "detail": doc}
+            return True
+        for field in (
+            "description", "company", "location_raw", "country", "city",
+            "employment_type", "salary_text", "posted_at",
+        ):
+            value = getattr(detail, field)
+            if value:
+                setattr(job, field, value)
+        if detail.tags:
+            job.tags = detail.tags
+        if detail.remote != "unknown":
+            job.remote = detail.remote
         job.raw = {**job.raw, "detail": doc}
+        if "apply_url" in detail.raw:
+            job.raw["apply_url"] = detail.raw["apply_url"]
+        return True
 
 
 register(TheHub())
