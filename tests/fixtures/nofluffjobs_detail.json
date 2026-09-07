@@ -1,17 +1,140 @@
 {
-  "id": "abcd1234",
-  "title": "Junior Python Developer",
-  "specifics": {
+  "id": "privacy-data-governance-analyst-qvc-group-global-business-services-krakow",
+  "title": "Privacy & Data Governance Analyst",
+  "basics": {
+    "category": "security",
+    "seniority": [
+      "Junior"
+    ]
+  },
+  "company": {
+    "name": "QVC GROUP GLOBAL BUSINESS SERVICES",
+    "size": "1000+",
+    "url": ""
+  },
+  "details": {
+    "quote": "One team. Dedicated to our customers. Focused on our path forward.",
+    "position": "",
+    "description": "<h3><span>Currently, we are looking for: </span><br><span><span>Privacy &amp; Data Governance Analyst</span></span></h3><p><span><b>Your Opportunity, Your Team</b></span><br>Join QVC Group’s Information Governance team and help shape how personal data is managed across, US, Italy, <span>Germany, Japan, UK</span> and China.</p>"
+  },
+  "specs": {
+    "details": {
+      "custom": [],
+      "flexibleHours": true
+    },
+    "help4Ua": false,
     "dailyTasks": [
-      "Build REST endpoints with FastAPI",
-      "Write unit tests and review pull requests"
+      "Develop, update, and maintain company data maps covering systems and business processes involving personal data",
+      "Lead or support discussions with business stakeholders to collect, validate, and document data processing information"
     ],
-    "description": "<p>We are hiring a <strong>Junior Python Developer</strong> for our Warsaw team.</p>"
+    "referral": {
+      "allowed": false
+    }
   },
   "requirements": {
-    "musts": [{"value": "Python", "type": "main"}, {"value": "SQL"}],
-    "nices": [{"value": "Docker"}, {"value": "AWS"}],
-    "langs": [{"code": "en", "level": "B2"}]
+    "musts": [
+      {
+        "value": "Data management",
+        "type": "other"
+      },
+      {
+        "value": "Stakeholder management",
+        "type": "other"
+      },
+      {
+        "value": "Compliance",
+        "type": "main"
+      }
+    ],
+    "nices": [
+      {
+        "value": "TrustArc",
+        "type": "main"
+      },
+      {
+        "value": "Visio",
+        "type": "main"
+      }
+    ],
+    "description": "<p><span><b>What You'll Bring</b></span></p><ul><li>2+ years of experience in IT, Compliance, Data Management, Data Privacy, IT support, or a related field</li><li>Understanding of privacy principles, regulations, and good governance practices</li></ul>",
+    "languages": [
+      {
+        "type": "MUST",
+        "code": "en",
+        "level": "C1"
+      }
+    ]
   },
-  "details": {"description": "<p>English is the working language; Polish is a plus.</p>"}
+  "essentials": {
+    "contract": {
+      "start": "ASAP"
+    },
+    "originalSalary": {
+      "currency": "PLN",
+      "types": {
+        "permanent": {
+          "period": "Month",
+          "range": [
+            9000.0,
+            14000.0
+          ],
+          "paidHoliday": true
+        }
+      },
+      "bonus": {
+        "stock": {
+          "performance": true,
+          "dependent": false,
+          "percentage": "4"
+        },
+        "compensation": {
+          "performance": false,
+          "dependent": false
+        }
+      },
+      "disclosedAt": "VISIBLE",
+      "flexibleUpperBound": false
+    }
+  },
+  "location": {
+    "places": [
+      {
+        "country": {
+          "code": "pl",
+          "name": "Polish"
+        },
+        "city": "Kraków",
+        "street": "Wielicka 30",
+        "postalCode": "30-552",
+        "geoLocation": {
+          "latitude": 50.0394443,
+          "longitude": 19.9648914
+        },
+        "url": "privacy-data-governance-analyst-qvc-group-global-business-services-krakow"
+      }
+    ],
+    "remote": 4,
+    "multicityCount": 100,
+    "covidTimeRemotely": false,
+    "remoteFlexible": false,
+    "fieldwork": false,
+    "defaultIndex": 0,
+    "hybridDesc": ""
+  },
+  "benefits": {
+    "benefits": [
+      "Private medical care",
+      "Life insurance",
+      "Access to MyBenefit platform (Multisport included)"
+    ]
+  },
+  "posted": 1787735594863,
+  "postedOrRenewedDaysAgo": 0,
+  "expiresAt": "2026-09-25T23:59:59",
+  "status": "PUBLISHED",
+  "postingUrl": "privacy-data-governance-analyst-qvc-group-global-business-services-krakow",
+  "regions": [
+    "pl"
+  ],
+  "reference": "AE8GPZPY"
 }

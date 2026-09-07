@@ -3,13 +3,36 @@
 Search: POST https://nofluffjobs.com/api/search/posting
         ?pageTo=N&pageSize=20&salaryCurrency=EUR&salaryPeriod=month&region=<region>
         &language=en-GB&sort=newest
-        header ``Content-Type: application/infiniteSearch+json`` (falls back to
-        ``application/json`` when the API answers 415/400), body
-        ``{"criteriaSearch": {"seniority": [...]}, "pageSize": 20, "withSalaryMatch": true}``
-        → ``{"postings": [...], "totalCount": N, "totalPages": N}``
+        header ``Content-Type: application/infiniteSearch+json`` (accepted as-is on
+        2026-09-07; the ``application/json`` retry below is a guard, not a needed step),
+        body ``{"criteriaSearch": {"seniority": [...]}, "pageSize": 20, "withSalaryMatch": true}``
+        → ``{"postings": [...], "totalCount": N, "totalPages": N, "exactMatchesPages": N}``
 Detail: GET https://nofluffjobs.com/api/posting/{id} → requirements + description blocks.
 
-Postings are per-region views of one catalogue, so ids are deduped across regions.
+Posting (observed 2026-09-07; ``tests/fixtures/nofluffjobs.json`` is a trimmed real page):
+    ``id`` (slug, may carry the diacritic city: ``…-Kraków``), ``url`` (lower-case slug used
+    for the public link), ``title``, ``name`` (company), ``reference`` (short posting code,
+    always present), ``category`` (always) and ``technology`` (only ~1 posting in 4),
+    ``seniority`` as ``["Junior"]``, ``salary`` ``{from, to, currency,
+    type: b2b|permanent|zlecenie|intern, period: "Month", disclosedAt}``,
+    ``posted`` (always) and ``renewed`` (often absent) as epoch **milliseconds**, and
+    ``location`` ``{"places": [...], "fullyRemote": bool}``. A place is
+    ``{"country": {"code", "name"}, "city", …}`` where ``code`` is 2-letter (``"pl"``) or
+    3-letter (``"POL"``); a fully-remote posting prepends a country-less pseudo-place
+    ``{"city": "Remote"}``, and province-wide entries (``provinceOnly``) carry no city.
+    The top-level ``fullyRemote`` is always false — ``location.fullyRemote`` is the real flag.
+
+``pageSize`` counts postings, not records: one posting is repeated once **per place**, each
+copy carrying its own ``id`` (``…-Remote``, ``…-Warszawa``, ``…-silesian``, …), the same
+``reference`` and the same full ``places`` list rotated so its own place comes first. The
+2026-09-07 ``pageSize=20`` page held 133 records for 20 postings, so ``fetch`` dedupes on
+``reference`` — which also collapses the per-region views of one catalogue.
+
+Detail (``tests/fixtures/nofluffjobs_detail.json``): the prose lives in
+    ``details.description`` and ``requirements.description`` (HTML), the bullet list in
+    ``specs.dailyTasks`` (plain strings), and the skills in ``requirements.musts``/``nices``
+    as ``[{"value": …, "type": …}]``. There is no ``specifics`` block. The endpoint takes the
+    posting ``id`` as-is, diacritics and all.
 """
 
 from __future__ import annotations
@@ -59,7 +82,7 @@ def _amount(value: Any) -> str | None:
 
 
 def salary_text(salary: Any) -> str | None:
-    """``{"from": 8000, "to": 12000, "currency": "PLN", "type": "b2b"}`` → readable text."""
+    """``{"from": 2084, "to": 3242, "currency": "EUR", "type": "permanent"}`` → readable text."""
     if not isinstance(salary, dict):
         return None
     low, high = _amount(salary.get("from")), _amount(salary.get("to"))
@@ -94,8 +117,11 @@ def parse_posting(rec: dict[str, Any], *, region: str) -> Job | None:
     slug = str(rec.get("url") or posting_id).strip("/")
     location = rec.get("location") if isinstance(rec.get("location"), dict) else {}
     places = [p for p in (location.get("places") or []) if isinstance(p, dict)]
-    fully_remote = bool(location.get("fullyRemote") or rec.get("fullyRemote"))
-    cities = [str(p.get("city")).strip() for p in places if p.get("city")]
+    # A fully-remote posting gets a pseudo-place ``{"city": "Remote"}`` in front of its real
+    # offices, and province-wide entries carry no city at all.
+    named = [str(p.get("city")).strip() for p in places if p.get("city")]
+    cities = [c for c in named if c.casefold() != "remote"]
+    fully_remote = bool(location.get("fullyRemote") or rec.get("fullyRemote") or len(cities) < len(named))
     parts = (["Remote"] if fully_remote else []) + cities
     location_raw = ", ".join(dict.fromkeys(parts)) or None
     country = next((c for c in (_place_country(p) for p in places) if c), None)
@@ -128,11 +154,11 @@ def build_description(detail: Any) -> str | None:
         value = detail.get(key)
         return value if isinstance(value, dict) else {}
 
-    specifics, details, requirements = block("specifics"), block("details"), block("requirements")
+    specs, details, requirements = block("specs"), block("details"), block("requirements")
     parts: list[str] = []
-    for holder in (specifics, details, detail):
+    for holder in (details, requirements, specs, detail):
         parts.extend(_texts(holder.get("description")))
-    tasks = _texts(specifics.get("dailyTasks")) or _texts(detail.get("dailyTasks"))
+    tasks = _texts(specs.get("dailyTasks")) or _texts(detail.get("dailyTasks"))
     if tasks:
         parts.append("Daily tasks:\n" + "\n".join(f"- {t}" for t in tasks))
     musts = _texts(requirements.get("musts")) or _texts(detail.get("musts"))
@@ -216,9 +242,12 @@ class NoFluffJobs:
                 if not postings:
                     break
                 for job in safe_records(postings, partial(parse_posting, region=region), self.name):
-                    if job.source_id in seen:
+                    # One posting comes back once per place, each copy with its own ``id``;
+                    # ``reference`` is the same for every copy (and across regions).
+                    key = str(job.raw.get("reference") or job.source_id)
+                    if key in seen:
                         continue
-                    seen.add(job.source_id)
+                    seen.add(key)
                     if fetch_details and details < max_details:
                         details += 1
                         hydrate(ctx, job)
