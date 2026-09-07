@@ -59,7 +59,7 @@ def test_scrape_filter_report_pipeline(data_dir, fake_http):
     store = store_mod.Store()
     try:
         jobs = store.jobs()
-        assert len(jobs) == 2  # the third fixture record is broken and skipped
+        assert len(jobs) == 2  # --limit 2 stops after the first two fixture records
         assert {j.source for j in jobs} == {"arbeitnow"}
         runs = list(store.conn.execute("SELECT source, fetched, new FROM runs"))
         assert [tuple(r) for r in runs] == [("arbeitnow", 2, 2)]
@@ -82,8 +82,8 @@ def test_scrape_filter_report_pipeline(data_dir, fake_http):
         assert len(results) == 2
         by_title = {j.id: j.title for j in store.jobs()}
         statuses = {by_title[jid]: r.status for jid, r in results.items()}
-        assert statuses["Junior Software Developer (m/w/d)"] == "keep"
-        assert statuses["Senior Java Architect"] == "drop"
+        assert statuses["DevOps Engineer (m/w/d)"] == "keep"
+        assert statuses["Senior Python Engineer, Platform Libraries (m/f/d)"] == "drop"
     finally:
         store.close()
 
@@ -99,7 +99,7 @@ def test_scrape_filter_report_pipeline(data_dir, fake_http):
     lines = export.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1  # only the non-dropped job is exported
     rec = json.loads(lines[0])
-    assert rec["title"] == "Junior Software Developer (m/w/d)"
+    assert rec["title"] == "DevOps Engineer (m/w/d)"
     assert rec["filter"]["status"] == "keep"
     assert rec["verdict"] is None
 
