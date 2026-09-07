@@ -1,42 +1,97 @@
 {
-  "0-legal-notice": "Remotive API — data is 24h delayed, max ~4 requests per day.",
-  "job-count": 3,
-  "jobs": [
-    {
-      "id": 1948321,
-      "url": "https://remotive.com/remote-jobs/software-dev/junior-backend-engineer-1948321",
-      "title": "Junior Backend Engineer (Python)",
-      "company_name": "Sunrise Labs",
-      "company_logo": "https://remotive.com/job/1948321/logo",
-      "category": "Software Development",
-      "tags": ["python", "django", "postgresql", "junior"],
-      "job_type": "full_time",
-      "publication_date": "2026-08-28T09:15:11",
-      "candidate_required_location": "Europe",
-      "salary": "€45,000 - €58,000",
-      "description": "<p>We are hiring a <strong>Junior Backend Engineer</strong> to work on our Python/Django API.</p><ul><li>0-2 years of experience</li><li>English working language</li></ul>"
-    },
-    {
-      "id": 1948400,
-      "url": "https://remotive.com/remote-jobs/software-dev/senior-platform-engineer-1948400",
-      "title": "Senior Platform Engineer",
-      "company_name": "Northwind Systems",
-      "category": "Software Development",
-      "tags": ["kubernetes", "go"],
-      "job_type": "contract",
-      "publication_date": "2026-08-27T18:02:00",
-      "candidate_required_location": "USA Only",
-      "salary": "",
-      "description": "<p>8+ years running production Kubernetes. US-based candidates only.</p>"
-    },
-    {
-      "id": null,
-      "url": null,
-      "title": null,
-      "company_name": null,
-      "candidate_required_location": "Anywhere in the World",
-      "description": null,
-      "publication_date": null
-    }
-  ]
+ "00-warning": "Remotive main domain moved to remotive.com ! Please make your API calls on remotive.com/api/remote-jobs instead of remotive.io now ;) Legacy endpoint remotive.io/api/remote-jobs will be terminated in June 2022. Thank you!",
+ "0-legal-notice": "Legal warning - Hey, thanks for using Remotive's API, we appreciate it! Please note that API documentation and access is granted so that developers can share our jobs further. Please do not submit Remotive jobs to third Party websites, including but not limited to: Jooble, Neuvoo, Google Jobs, LinkedIn Jobs. Please link back to the URL found on Remotive AND mention Remotive as a source in order to Remotive to get traffic from your listing. If you don't do that, we'll terminate your API access, sorry! Jobs displayed are delayed by 24 hours, the goal being that jobs are attributed to Remotive on various platforms. Displaying our jobs in order to collect signups/email addresses to show a listing constitutes a breach of our terms of services. We offer a private, paid-for API, please email us at hello(at)remotive(dot)io for more information (starting budget is $5k/mo). Please find out terms of services on https://remotive.com/api-documentation. Please note that there is absolutely no need to request Remotive Job data too frequently. Typically, you only need to GET Remotive job data through this API a couple of times a day (we advise max. 4 times a day). Our data is not changing much faster than that anyway. Note that excessive requests will be blocked. Many thanks (Rodolphe & the Remotive team!)",
+ "job-count": 4,
+ "total-job-count": 4,
+ "jobs": [
+  {
+   "id": 2091101,
+   "url": "https://remotive.com/remote-jobs/software-development/senior-react-full-stack-developer-2091101",
+   "title": "Senior React Full-stack Developer",
+   "company_name": "Lemon.io",
+   "company_logo": "https://remotive.com/job/2091101/logo",
+   "category": "Software Development",
+   "tags": [
+    ".Net",
+    "android",
+    "AWS",
+    "backend",
+    "C",
+    "C#",
+    "C++",
+    "data science",
+    "fullstack",
+    "golang"
+   ],
+   "job_type": "full_time",
+   "publication_date": "2026-08-27T14:36:09",
+   "candidate_required_location": "LATAM, Europe, USA, Canada, APAC",
+   "salary": "",
+   "description": "<p>Are you a talented Senior Developer looking for a remote job that lets you show your skills and get decent compensation? Look no further than <a href=\"https://lemon.io/for-developers/\" rel=\"nofollow\" target=\"_self\">Lemon.io</a> — the marketplace that connects you with hand-picked startups in the US and Europe.</p>\n<p><strong>Requirements:</strong></p>\n<ul>\n<li>3+ years of experience with React and Node.js</li>\n<li>Good command of English, both written and spoken</li>\n</ul>\n<img src=\"https://remotive.com/job/track/2091101/blank.gif?source=public_api\" alt=\"\"/>",
+   "company_logo_url": "https://remotive.com/job/2091101/logo"
+  },
+  {
+   "id": 2069746,
+   "url": "https://remotive.com/remote-jobs/software-development/tech-lead-full-stack-rails-engineer-2069746",
+   "title": "Tech Lead Full-Stack Rails Engineer",
+   "company_name": "Mitre Media",
+   "company_logo": "https://remotive.com/job/2069746/logo",
+   "category": "Software Development",
+   "tags": [
+    "api",
+    "CSS",
+    "docker",
+    "elasticsearch",
+    "fullstack",
+    "html",
+    "javascript",
+    "kubernetes",
+    "postgresql",
+    "react"
+   ],
+   "job_type": "full_time",
+   "publication_date": "2026-08-14T20:33:39",
+   "candidate_required_location": "USA, Canada, USA timezones",
+   "salary": "$170k - $200k",
+   "description": "<p class=\"h1\" dir=\"ltr\"><span style=\"font-weight: bold;\">About Mitre Media</span></p>\n<p dir=\"ltr\"><span>Mitre Media is redefining financial media with data-driven products.</span></p>\n<p dir=\"ltr\"><span>We are looking for a Tech Lead to own our Rails monolith, our React front end and the AWS infrastructure they run on.</span></p>\n<img src=\"https://remotive.com/job/track/2069746/blank.gif?source=public_api\" alt=\"\"/>",
+   "company_logo_url": "https://remotive.com/job/2069746/logo"
+  },
+  {
+   "id": 2091105,
+   "url": "https://remotive.com/remote-jobs/all-others/content-reviewer-english-us-2091105",
+   "title": "Content Reviewer - English US",
+   "company_name": "TELUS Digital",
+   "company_logo": "https://remotive.com/job/2091105/logo",
+   "category": "All others",
+   "tags": [
+    "android",
+    "ios",
+    "social media",
+    "AI/ML"
+   ],
+   "job_type": "part_time",
+   "publication_date": "2026-08-21T05:54:39",
+   "candidate_required_location": "USA",
+   "salary": "$14/hour",
+   "description": "<p><strong>Content Reviewer – English (US)</strong></p>\n<p>Join our team to review and rate online content in English for the US market. This is a part-time, work-from-home role with a flexible schedule.</p>\n<img src=\"https://remotive.com/job/track/2091105/blank.gif?source=public_api\" alt=\"\"/>",
+   "company_logo_url": "https://remotive.com/job/2091105/logo"
+  },
+  {
+   "id": null,
+   "url": null,
+   "title": "Senior Platform Engineer",
+   "company_name": "Broken Feed Ltd",
+   "company_logo": "",
+   "category": "Software Development",
+   "tags": [
+    "python"
+   ],
+   "job_type": "full_time",
+   "publication_date": "2026-09-01T00:00:00",
+   "candidate_required_location": "Worldwide",
+   "salary": "",
+   "description": "<p>A record with neither id nor url; the parser must skip it.</p>",
+   "company_logo_url": ""
+  }
+ ]
 }

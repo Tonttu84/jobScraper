@@ -1,12 +1,23 @@
 """remotive.com — remote-only job board with a free public API (worldwide, tech-heavy).
 
 GET https://remotive.com/api/remote-jobs?category=software-dev → {"jobs": [...], "job-count": N}
-The feed carries the full description inline, so there is no detail call.
+plus two prose keys ("00-warning", "0-legal-notice"). The feed carries the full description
+inline, so there is no detail call.
 
 The API is rate limited (the provider asks for ~4 requests a day and serves 24h-delayed data),
 so this adapter makes **exactly one request per run** — no pagination, no per-query loops.
+
+Checked against the live response on 2026-09-07: the free API **ignores both ``category`` and
+``limit``** and answers every call with the same ~18-posting teaser feed, categories mixed
+(Sales, Writing, "All others"). The documented parameters are still sent in case that changes,
+but the same choice is applied client-side — see ``DEFAULT_CATEGORIES`` and the ``categories``
+option; ``ctx.limit`` is likewise honoured on our side.
+
 Every posting here is remote; ``candidate_required_location`` says who may apply and goes to
-``Job.remote_region`` for the location filter to classify ("Europe", "USA Only", "Anywhere").
+``Job.remote_region`` for the location filter to classify ("Europe", "USA", "Worldwide").
+``category`` is prepended to ``Job.tags``, ``job_type`` ("full_time", "contract", "freelance",
+"part_time") is the employment type, ``salary`` is free text ("$170k - $200k", "$14/hour",
+"" when unpublished) and ``publication_date`` is a naive ISO timestamp read as UTC.
 """
 
 from __future__ import annotations
@@ -21,6 +32,16 @@ from jobscraper.sources._common import guess_country, parse_date
 from jobscraper.sources.base import SourceContext, register, safe_records, take
 
 API = "https://remotive.com/api/remote-jobs"
+DEFAULT_CATEGORY = "software-dev"
+# Category *names* as the payload spells them (the query parameter takes slugs, the records
+# carry display names). Substring match, so "Data" also keeps "Data Science".
+DEFAULT_CATEGORIES = [
+    "software development",
+    "devops",
+    "quality assurance",
+    "information technology",
+    "data",
+]
 
 _ANYWHERE_RE = re.compile(
     r"\b(anywhere|worldwide|world ?wide|global|any location)\b", re.IGNORECASE
@@ -39,6 +60,16 @@ def region_country(region: str | None) -> str | None:
     codes = {guess_country(part) for part in _REGION_SPLIT_RE.split(region) if part.strip()}
     codes.discard(None)
     return codes.pop() if len(codes) == 1 else None
+
+
+def matches_category(rec: dict[str, Any], wanted: list[str]) -> bool:
+    """Permissive: an unstated category is kept, the AI stages get the last word."""
+    if not wanted:
+        return True
+    category = str(rec.get("category") or "").lower()
+    if not category:
+        return True
+    return any(w.lower() in category for w in wanted if w)
 
 
 def parse_record(rec: dict[str, Any]) -> Job | None:
@@ -79,7 +110,7 @@ class Remotive:
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]:
         params: dict[str, Any] = {}
-        category = ctx.opt("category", "software-dev")
+        category = ctx.opt("category", DEFAULT_CATEGORY)
         if category:
             params["category"] = str(category)
         search = ctx.opt("search")
@@ -89,6 +120,9 @@ class Remotive:
             params["limit"] = int(ctx.limit)
         payload = ctx.http.get_json(API, params=params)
         records = (payload or {}).get("jobs") or []
+        # The API ignores ?category=, so keep only the categories we asked for.
+        wanted = [str(c) for c in (ctx.opt("categories", DEFAULT_CATEGORIES) or []) if c]
+        records = [r for r in records if isinstance(r, dict) and matches_category(r, wanted)]
         yield from take(safe_records(records, parse_record, self.name), ctx.limit)
 
 
