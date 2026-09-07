@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -46,7 +46,7 @@ class Job(BaseModel):
     salary_text: str | None = None
     tags: list[str] = Field(default_factory=list)
     posted_at: datetime | None = None
-    fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     raw: dict[str, Any] = Field(default_factory=dict)
 
     @property
@@ -59,7 +59,7 @@ class Job(BaseModel):
         """Title + description, used by every text-based rule."""
         return "\n".join(p for p in (self.title, self.description) if p)
 
-    def model_post_init(self, __context: Any) -> None:  # noqa: D401
+    def model_post_init(self, __context: Any) -> None:
         self.title = _clean(self.title) or self.title
         self.description = _clean(self.description)
         self.company = _clean(self.company)
@@ -96,5 +96,5 @@ class AIVerdict(BaseModel):
     summary: str
     concerns: list[str] = Field(default_factory=list)
     why_apply: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     usage: dict[str, int] = Field(default_factory=dict)

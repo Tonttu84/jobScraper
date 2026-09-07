@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -62,7 +61,7 @@ def sources() -> None:
 
 
 @app.command()
-def probe(names: Optional[list[str]] = typer.Argument(None), limit: int = 5, verbose: bool = False) -> None:
+def probe(names: list[str] | None = typer.Argument(None), limit: int = 5, verbose: bool = False) -> None:
     """Fetch a handful of jobs from each source and show what came back. Run this first on your machine."""
     _setup_logging(verbose)
     settings = load_settings()
@@ -75,7 +74,7 @@ def probe(names: Optional[list[str]] = typer.Argument(None), limit: int = 5, ver
         t0 = time.monotonic()
         try:
             jobs = list(take(src.fetch(ctx), limit))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             failed.append((name, f"{type(exc).__name__}: {exc}"))
             console.print(f"[red]✗ {name}[/red]: {type(exc).__name__}: {exc}")
             continue
@@ -95,7 +94,7 @@ def probe(names: Optional[list[str]] = typer.Argument(None), limit: int = 5, ver
 
 
 @app.command()
-def scrape(names: Optional[list[str]] = typer.Argument(None), verbose: bool = False, limit: Optional[int] = None) -> None:
+def scrape(names: list[str] | None = typer.Argument(None), verbose: bool = False, limit: int | None = None) -> None:
     """Fetch jobs from enabled sources into the database."""
     _setup_logging(verbose)
     settings = load_settings()
@@ -108,7 +107,7 @@ def scrape(names: Optional[list[str]] = typer.Argument(None), verbose: bool = Fa
         t0 = time.monotonic()
         try:
             jobs = list(take(src.fetch(ctx), limit))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             console.print(f"[red]✗ {name}[/red]: {type(exc).__name__}: {exc}")
             store.log_run(name, 0, 0, f"{type(exc).__name__}: {exc}")
             continue
@@ -153,7 +152,7 @@ def _load_state(store: Store, days: int) -> tuple[list[Job], dict]:
 
 
 @app.command()
-def prefilter(days: int = 30, force: bool = False, model: Optional[str] = None, verbose: bool = False, max_jobs: Optional[int] = None) -> None:
+def prefilter(days: int = 30, force: bool = False, model: str | None = None, verbose: bool = False, max_jobs: int | None = None) -> None:
     """Sonnet pass over rule-filter survivors (keep + review)."""
     _setup_logging(verbose)
     from jobscraper.ai.client import AIStage, estimate_cost
@@ -171,7 +170,7 @@ def prefilter(days: int = 30, force: bool = False, model: Optional[str] = None, 
 
 
 @app.command()
-def rank(days: int = 30, top: Optional[int] = None, force: bool = False, model: Optional[str] = None, verbose: bool = False) -> None:
+def rank(days: int = 30, top: int | None = None, force: bool = False, model: str | None = None, verbose: bool = False) -> None:
     """Opus pass over the best prefilter survivors."""
     _setup_logging(verbose)
     from jobscraper.ai.client import AIStage, estimate_cost
@@ -192,7 +191,7 @@ def rank(days: int = 30, top: Optional[int] = None, force: bool = False, model: 
 
 
 @app.command()
-def report(days: int = 30, out: Optional[Path] = None) -> None:
+def report(days: int = 30, out: Path | None = None) -> None:
     """Write the markdown report and a JSONL export."""
     from jobscraper.ai.client import estimate_cost
     from jobscraper.ai.prompts import PROMPT_VERSION

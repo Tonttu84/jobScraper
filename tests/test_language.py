@@ -51,11 +51,6 @@ SAMPLE_PARAGRAPHS: dict[str, str] = {
 }
 
 
-@pytest.mark.xfail(
-    reason="BUG: language._DETECT_LANGS contains 'no', but lingua's IsoCode639_1 only has NB/NN. "
-    "_detector() raises AttributeError, which detect_language() swallows, so language "
-    "detection is dead and every posting returns (None, 0.0).",
-)
 @pytest.mark.parametrize("code", sorted(SAMPLE_PARAGRAPHS))
 def test_detect_language_identifies_realistic_paragraphs(code: str) -> None:
     text = SAMPLE_PARAGRAPHS[code]
@@ -126,22 +121,12 @@ def test_programming_languages_are_not_natural_languages() -> None:
     assert req.optional == set()
 
 
-@pytest.mark.xfail(
-    reason="BUG: _SENTENCE_SPLIT does not split on ';', so 'Fluent English required; Finnish is "
-    "a plus' is scanned as one sentence. _OPTIONAL_WORDS matches ('plus'), which cancels the "
-    "required verdict for the whole sentence, and both languages end up optional.",
-)
 def test_required_and_optional_in_one_line_are_separated() -> None:
     req = find_language_requirements("Fluent English required; Finnish is a plus.")
     assert req.required == {"en"}
     assert req.optional == {"fi"}
 
 
-@pytest.mark.xfail(
-    reason="BUG: _REQUIRED_WORDS wraps its whole alternation in \\b(...)\\b, so the Polish stems "
-    "'wymagan' and 'biegł' never match the inflected forms 'Wymagana'/'biegła' that actually "
-    "appear in ads. The requirement is misfiled as optional.",
-)
 def test_polish_requirement_is_required() -> None:
     req = find_language_requirements("Wymagana biegła znajomość języka polskiego.")
     assert req.required == {"pl"}

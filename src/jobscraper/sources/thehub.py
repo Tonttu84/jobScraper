@@ -183,7 +183,7 @@ class TheHub:
         """Fill in the description from the detail endpoint; a failure is logged, never raised."""
         try:
             payload = ctx.http.get_json(DETAIL_URL.format(id=job.source_id))
-        except Exception as exc:  # noqa: BLE001 - one bad detail must not abort the fetch
+        except Exception as exc:
             log.warning("%s: detail %s failed (%s)", self.name, job.source_id, exc)
             return
         doc = payload.get("doc") if isinstance(payload, dict) else None

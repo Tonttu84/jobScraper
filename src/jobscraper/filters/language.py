@@ -52,7 +52,7 @@ _REQUIRED_WORDS = re.compile(
     r"proficien|excellent|business[- ]level|c1|c2|working language|"
     r"vaaditaan|edellyt|välttämät|sujuva|erinomai|äidinkiel|työkieli|"
     r"erforderlich|voraussetzung|vorausgesetzt|zwingend|fließend|fliessend|verhandlungssicher|muttersprach|sehr gut|"
-    r"krävs|flytande|obligatorisk|wymagan|biegł|płynn|vereist|vloeiend|requis|courant|imprescindible|obligatorio)\b",
+    r"krävs|flytande|obligatorisk|wymagan|biegł|płynn|vereist|vloeiend|requis|courant|imprescindible|obligatorio)",
     re.I,
 )
 _OPTIONAL_WORDS = re.compile(
@@ -69,9 +69,10 @@ _NOT_NEEDED = re.compile(
     re.I,
 )
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?•\n])\s+|\s*[•·▪▸►]\s*|\n+")
+_CLAUSE_SPLIT = re.compile(r"\s*[;,()/]\s*|\s+[-–—]\s+")
 
 # lingua is slow to build; restrict to languages that actually show up in EU tech ads.
-_DETECT_LANGS = ["en", "fi", "de", "sv", "no", "da", "et", "pl", "nl", "fr", "es", "pt", "it", "cs", "sk",
+_DETECT_LANGS = ["en", "fi", "de", "sv", "nb", "da", "et", "pl", "nl", "fr", "es", "pt", "it", "cs", "sk",
                  "hu", "ro", "bg", "hr", "sl", "lt", "lv", "ru", "uk", "tr", "el"]
 
 
@@ -90,12 +91,14 @@ def detect_language(text: str | None, min_confidence: float = 0.75) -> tuple[str
     sample = text[:4000]
     try:
         values = _detector().compute_language_confidence_values(sample)
-    except Exception:  # noqa: BLE001 — lingua missing or model failed; never block the pipeline
+    except Exception:
         return None, 0.0
     if not values:
         return None, 0.0
     best = values[0]
     code = best.language.iso_code_639_1.name.lower()
+    if code in ("nb", "nn"):  # lingua has no generic "no"; our policy lists use it
+        code = "no"
     return (code, best.value) if best.value >= min_confidence else (None, best.value)
 
 
@@ -117,22 +120,32 @@ def find_language_requirements(text: str | None) -> LanguageRequirements:
         if not s or len(s) > 600:
             continue
         low = s.lower()
-        # Skip programming-language false positives: "Go", "Rust" don't collide, but
-        # "Swift"/"Ruby" don't either; only natural-language names are in the table.
-        hits = {code for code, names in LANGUAGE_NAMES.items() if any(n in low for n in names)}
-        if not hits:
+        # Only natural-language names are in the table, so "Go"/"Rust"/"Swift" never collide.
+        if not any(n in low for names in LANGUAGE_NAMES.values() for n in names):
             continue
-        out.mentioned |= hits
-        if _NOT_NEEDED.search(low):
-            out.optional |= hits
-            continue
-        required = bool(_REQUIRED_WORDS.search(low)) and not _OPTIONAL_WORDS.search(low)
-        for code in hits:
-            if required:
-                out.required.add(code)
-                out.evidence.setdefault(code, s[:200])
+        sentence_required = bool(_REQUIRED_WORDS.search(low)) and not _OPTIONAL_WORDS.search(low)
+        sentence_negated = bool(_NOT_NEEDED.search(low))
+        # Classify per clause so "Fluent English required; Finnish is a plus" splits correctly;
+        # a clause without any keyword inherits the sentence-level verdict.
+        for clause in _CLAUSE_SPLIT.split(low):
+            hits = {code for code, names in LANGUAGE_NAMES.items() if any(n in clause for n in names)}
+            if not hits:
+                continue
+            out.mentioned |= hits
+            has_req, has_opt, has_neg = _REQUIRED_WORDS.search(clause), _OPTIONAL_WORDS.search(clause), _NOT_NEEDED.search(clause)
+            if has_neg or (not has_req and not has_opt and sentence_negated):
+                out.optional |= hits
+                continue
+            if has_req or has_opt:
+                required = bool(has_req) and not has_opt
             else:
-                out.optional.add(code)
+                required = sentence_required
+            for code in hits:
+                if required:
+                    out.required.add(code)
+                    out.evidence.setdefault(code, s[:200])
+                else:
+                    out.optional.add(code)
     # A language that is required in one sentence and optional in another counts as required,
     # except when explicitly negated; keep it simple.
     out.optional -= out.required

@@ -154,7 +154,7 @@ class LinkedIn:
                         description_format="markdown",
                         verbose=0,
                     )
-                except Exception as exc:  # noqa: BLE001 - one blocked query must not kill the run
+                except Exception as exc:
                     failures += 1
                     log.warning("%s: %r @ %r failed: %s", self.name, query, location, exc)
                     continue

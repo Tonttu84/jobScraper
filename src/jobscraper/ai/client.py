@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Iterable
 
 import anthropic
 

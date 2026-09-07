@@ -168,7 +168,7 @@ class Bayt:
 
         try:  # cookie handshake; the shared client keeps the jar for the search pages
             ctx.http.get(HOME)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("bayt: cookie handshake failed (%s), trying the search pages anyway", exc)
 
         seen: set[str] = set()
@@ -199,7 +199,7 @@ class Bayt:
                 job.description = description_of(resp.text)
         except SourceHTTPError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("bayt: detail fetch failed for %s (%s)", job.url, exc)
 
 

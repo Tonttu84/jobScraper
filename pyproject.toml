@@ -51,3 +51,8 @@ show_missing = true
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# Explicit rule set so results don't change with ruff's defaults.
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501", "RUF001", "RUF002", "RUF003", "SIM108", "B905", "B008"]  # B008: typer.Argument defaults are idiomatic

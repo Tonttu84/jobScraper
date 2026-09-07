@@ -59,7 +59,7 @@ def credentials(ctx: SourceContext) -> tuple[str, str]:
         if app.isalnum() and 6 <= len(app) <= 16 and 16 <= len(key) <= 500:
             return app, key
         log.warning("wttj: /api/env gave an unexpected credential shape, using the built-in keys")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.warning("wttj: /api/env failed (%s), using the built-in keys", exc)
     return APP_ID, API_KEY
 

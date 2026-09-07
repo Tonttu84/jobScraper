@@ -193,7 +193,7 @@ class Tyomarkkinatori:
                 return None, True
             log.warning("%s: detail %s failed (%s); ingesting list-only", self.name, job_id, exc)
             return None, False
-        except Exception as exc:  # noqa: BLE001 - one bad detail must not abort the fetch
+        except Exception as exc:
             log.warning("%s: detail %s failed (%s); ingesting list-only", self.name, job_id, exc)
             return None, False
         return (payload if isinstance(payload, dict) else None), False

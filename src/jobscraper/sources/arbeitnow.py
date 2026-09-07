@@ -6,7 +6,8 @@ GET https://www.arbeitnow.com/api/job-board-api?page=N → {"data": [...], "link
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from jobscraper.http import strip_html
 from jobscraper.models import Job

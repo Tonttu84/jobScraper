@@ -60,12 +60,6 @@ def test_junior_in_helsinki_is_kept(settings):
     assert res.signals["seniority"] == "entry_by_title"
 
 
-@pytest.mark.xfail(
-    reason="BUG: rules._compile_terms wraps every plain term in \\b...\\b, so the prefix term "
-    "'develop' from profile.role.title_terms cannot match 'Developer'. A plain "
-    "'Junior Developer' title fails the role gate and is only rescued to 'review' by the "
-    "description; with no software word in the description it would be dropped outright.",
-)
 def test_bare_junior_developer_title_passes_role_gate(settings):
     job = make_job(title="Junior Developer", location_raw="Helsinki, Finland", country="FI")
     res = evaluate(job, settings.profile)
@@ -111,12 +105,6 @@ def test_six_years_experience_is_dropped(settings):
 # ------------------------------------------------------------------ language
 
 
-@pytest.mark.xfail(
-    reason="BUG: language._DETECT_LANGS contains 'no', which lingua's IsoCode639_1 does not "
-    "define (it has NB/NN). Building the detector raises AttributeError, detect_language() "
-    "swallows it, and no posting is ever assigned a language — so drop_if_written_in never "
-    "fires and a fully Polish ad is kept.",
-)
 def test_posting_written_in_polish_is_dropped(settings):
     assert len(POLISH_DESC) >= 300
     job = make_job(title="Junior Software Developer", description=POLISH_DESC,
@@ -223,12 +211,6 @@ def test_data_engineer_passes_the_role_gate(settings):
     assert not any("software/IT role" in r for r in res.reasons)
 
 
-@pytest.mark.xfail(
-    reason="BUG: rules._compile_terms wraps plain terms in \\b...\\b, so the compound-friendly "
-    "prefixes 'softwareentwick' and 'ohjelmisto' never match the German/Finnish compound titles "
-    "they were written for ('Softwareentwicklung', 'ohjelmistokehitys'). These entry-level "
-    "software titles fail the role gate and are demoted to 'review'.",
-)
 @pytest.mark.parametrize(
     "title,country",
     [("Werkstudent Softwareentwicklung", "DE"), ("Harjoittelija, ohjelmistokehitys", "FI")],

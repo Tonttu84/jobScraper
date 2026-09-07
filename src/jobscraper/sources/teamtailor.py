@@ -216,7 +216,7 @@ class Teamtailor:
         for slug in tenants:
             try:
                 jobs = fetch_tenant(ctx, slug)
-            except Exception as exc:  # noqa: BLE001 - one dead tenant must not kill the run
+            except Exception as exc:
                 failures.append(slug)
                 log.warning("%s: tenant %s failed: %s", self.name, slug, exc)
                 continue

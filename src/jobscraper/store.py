@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 from jobscraper.config import DATA_DIR
 from jobscraper.models import AIVerdict, FilterResult, Job
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS runs (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class Store:
@@ -109,13 +109,16 @@ class Store:
         sql, args = "SELECT data FROM jobs", []
         clauses = []
         if source:
-            clauses.append("source=?"); args.append(source)
+            clauses.append("source=?")
+            args.append(source)
         if seen_within_days is not None:
-            clauses.append("julianday('now') - julianday(last_seen) <= ?"); args.append(seen_within_days)
+            clauses.append("julianday('now') - julianday(last_seen) <= ?")
+            args.append(seen_within_days)
         if ids is not None:
             if not ids:
                 return []
-            clauses.append(f"id IN ({','.join('?' * len(ids))})"); args.extend(ids)
+            clauses.append(f"id IN ({','.join('?' * len(ids))})")
+            args.extend(ids)
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         return [Job.model_validate_json(r["data"]) for r in self.conn.execute(sql, args)]
@@ -137,7 +140,8 @@ class Store:
         sql, args = "SELECT data FROM filter_results", []
         if status:
             statuses = [status] if isinstance(status, str) else status
-            sql += f" WHERE status IN ({','.join('?' * len(statuses))})"; args.extend(statuses)
+            sql += f" WHERE status IN ({','.join('?' * len(statuses))})"
+            args.extend(statuses)
         return {r.job_id: r for r in (FilterResult.model_validate_json(row["data"]) for row in self.conn.execute(sql, args))}
 
     # ------------------------------------------------------------- AI verdicts
@@ -151,7 +155,8 @@ class Store:
     def verdicts(self, stage: str, prompt_version: str | None = None) -> dict[str, AIVerdict]:
         sql, args = "SELECT data FROM ai_verdicts WHERE stage=?", [stage]
         if prompt_version:
-            sql += " AND prompt_version=?"; args.append(prompt_version)
+            sql += " AND prompt_version=?"
+            args.append(prompt_version)
         out: dict[str, AIVerdict] = {}
         for row in self.conn.execute(sql + " ORDER BY created_at", args):
             v = AIVerdict.model_validate_json(row["data"])

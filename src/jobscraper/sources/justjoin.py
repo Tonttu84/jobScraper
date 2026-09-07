@@ -118,7 +118,7 @@ def hydrate(ctx: SourceContext, job: Job, slug: str) -> None:
     """Add the posting body the list endpoint omits; a failed detail never drops a job."""
     try:
         detail = ctx.http.get_json(DETAIL_API.format(slug=slug))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.warning("justjoin: detail %s failed: %s", slug, exc)
         return
     if not isinstance(detail, dict):

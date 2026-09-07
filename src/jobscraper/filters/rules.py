@@ -38,7 +38,9 @@ _REMOTE_WORLD = re.compile(r"\b(worldwide|anywhere|global(ly)?|any location|all 
 def _compile_terms(terms: list[str]) -> re.Pattern[str] | None:
     if not terms:
         return None
-    return re.compile("|".join(f"(?:\\b{t}\\b)" if re.fullmatch(r"[\w\\. ]+", t) else f"(?:{t})" for t in terms), re.I)
+    # Plain terms match at a word start only ("develop" → Developer/Development, "lead" → Lead Developer);
+    # anything with regex syntax is used verbatim so the profile can demand exact boundaries.
+    return re.compile("|".join(f"(?:\\b{t})" if re.fullmatch(r"[\w\\. ]+", t) else f"(?:{t})" for t in terms), re.I)
 
 
 def _years_required(text: str) -> int | None:

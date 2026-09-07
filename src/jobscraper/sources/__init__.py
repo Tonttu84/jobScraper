@@ -20,5 +20,5 @@ def _load_all() -> None:
             continue
         try:
             importlib.import_module(f"{__name__}.{mod.name}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("source module %s failed to import: %s", mod.name, exc)

@@ -112,7 +112,7 @@ class ATSBoards:
                     url, timeout=timeout, include_descriptions=include_descriptions
                 )
                 ats_jobs = scraper.fetch()
-            except Exception as exc:  # noqa: BLE001 - one dead board must not kill the run
+            except Exception as exc:
                 failures.append(url)
                 log.warning("%s: board %s failed: %s", self.name, url, exc)
                 continue

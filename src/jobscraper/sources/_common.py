@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -84,18 +84,18 @@ def parse_date(value: Any) -> datetime | None:
     if value in (None, ""):
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, (int, float)):
         ts = float(value)
         if ts > 1e12:
             ts /= 1000.0
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
+        return datetime.fromtimestamp(ts, tz=UTC)
     s = str(value).strip()
     if re.fullmatch(r"\d{9,13}", s):
         return parse_date(int(s))
     try:
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     except ValueError:
         pass
     try:
@@ -104,7 +104,7 @@ def parse_date(value: Any) -> datetime | None:
         pass
     for fmt in ("%d.%m.%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
-            return datetime.strptime(s[:19], fmt).replace(tzinfo=timezone.utc)
+            return datetime.strptime(s[:19], fmt).replace(tzinfo=UTC)
         except ValueError:
             continue
     return None

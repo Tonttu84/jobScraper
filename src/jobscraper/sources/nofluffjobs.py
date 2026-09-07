@@ -149,7 +149,7 @@ def hydrate(ctx: SourceContext, job: Job) -> None:
     """Add the description from the posting endpoint; a failed detail never drops a job."""
     try:
         detail = ctx.http.get_json(POSTING_API.format(id=job.source_id))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.warning("nofluffjobs: detail %s failed: %s", job.source_id, exc)
         return
     if not isinstance(detail, dict):

@@ -174,7 +174,7 @@ class Indeed:
                         description_format="markdown",
                         verbose=0,
                     )
-                except Exception as exc:  # noqa: BLE001 - one bad country must not kill the run
+                except Exception as exc:
                     failures += 1
                     log.warning("%s: %r in %r failed: %s", self.name, query, country, exc)
                     continue

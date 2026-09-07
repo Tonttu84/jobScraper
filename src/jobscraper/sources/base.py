@@ -8,8 +8,9 @@ when the *endpoint* is broken, so ``jobscraper probe`` can report "this site cha
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Protocol
+from typing import Any, Protocol
 
 from jobscraper.config import Profile
 from jobscraper.http import Http
@@ -36,7 +37,7 @@ class Source(Protocol):
     def fetch(self, ctx: SourceContext) -> Iterable[Job]: ...
 
 
-_REGISTRY: dict[str, "Source"] = {}
+_REGISTRY: dict[str, Source] = {}
 
 
 def register(source: Source) -> Source:
@@ -46,7 +47,7 @@ def register(source: Source) -> Source:
 
 def all_sources() -> dict[str, Source]:
     # Import adapters lazily so a broken optional dependency doesn't kill the CLI.
-    from jobscraper.sources import _load_all  # noqa: F401
+    from jobscraper.sources import _load_all
 
     _load_all()
     return dict(_REGISTRY)
@@ -74,7 +75,7 @@ def safe_records(records: Iterable[Any], convert: Callable[[Any], Job | None], s
     for rec in records:
         try:
             job = convert(rec)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("%s: skipping record (%s): %r", source, exc, str(rec)[:200])
             continue
         if job is not None:

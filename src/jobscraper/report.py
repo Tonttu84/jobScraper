@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from jobscraper.config import DATA_DIR
@@ -16,11 +16,11 @@ def _tier_label(t: int | None) -> str:
 
 def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
                  ranked: dict[str, AIVerdict], path: Path | None = None, cost: dict | None = None) -> Path:
-    path = path or DATA_DIR / "reports" / f"report-{datetime.now(timezone.utc):%Y-%m-%d}.md"
+    path = path or DATA_DIR / "reports" / f"report-{datetime.now(UTC):%Y-%m-%d}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     by_id = {j.id: j for j in jobs}
 
-    lines = [f"# Job report {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC", ""]
+    lines = [f"# Job report {datetime.now(UTC):%Y-%m-%d %H:%M} UTC", ""]
     lines.append(f"Jobs in DB: {len(jobs)} · rule-kept: {sum(f.status == 'keep' for f in filters.values())} · "
                  f"review: {sum(f.status == 'review' for f in filters.values())} · dropped: {sum(f.status == 'drop' for f in filters.values())} · "
                  f"prefiltered: {len(prefilter)} · ranked: {len(ranked)}")
