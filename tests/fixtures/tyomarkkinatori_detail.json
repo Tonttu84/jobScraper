@@ -1,12 +1,133 @@
 {
+  "languages": [
+    "fi"
+  ],
   "descriptionsContentType": "plain",
+  "metadata": {
+    "externalId": "4adc9851-ac18-4456-911b-21c0ad61bfac",
+    "status": "4",
+    "created": "2026-09-07T02:08:24.442548Z",
+    "createdSource": "API",
+    "lastModified": "2026-09-07T02:08:24.442548Z",
+    "lastModifiedSource": "API",
+    "etag": "137bfb52-e384-4dbb-a3d6-e9e64243d684"
+  },
+  "client": {
+    "companyVisible": false
+  },
   "position": {
-    "title": {"en": "Software Developer (Python)", "fi": "Ohjelmistokehittäjä (Python)"},
+    "employmentRelationship": "01",
+    "continuityOfWork": [
+      "01"
+    ],
+    "wagePrinciple": "0101",
+    "workLanguages": [
+      "fi"
+    ],
+    "workTime": "01",
+    "workTimeDetails": [],
+    "criminalRecordVerification": [],
+    "drivingLicenses": [],
+    "permitCards": [],
+    "mainOccupation": "http://data.europa.eu/esco/occupation/f2b15a0e-e65a-438a-affb-29b9d50b77d1",
+    "occupations": [
+      {
+        "uri": "http://data.europa.eu/esco/occupation/f2b15a0e-e65a-438a-affb-29b9d50b77d1",
+        "prefLabel": {
+          "en": "software developer",
+          "fi": "ohjelmistokehittäjä",
+          "sv": "programvaruutvecklare"
+        },
+        "altLabel": {
+          "en": [
+            "application developer",
+            "application programmer"
+          ],
+          "fi": [
+            "akkuohjelmiston kehittäjä",
+            "koodaaja"
+          ],
+          "sv": [
+            "applikationsingenjör",
+            "applikationsprogrammerare"
+          ]
+        }
+      }
+    ],
+    "skills": [
+      {
+        "uri": "http://data.europa.eu/esco/skill/f5308e60-d763-4ead-be95-88c96fb3e02b",
+        "prefLabel": {
+          "en": "adapt to changes in technological development plans",
+          "fi": "sopeutua teknisten kehityssuunnitelmien muutoksiin",
+          "sv": "anpassa sig till ändringar i planerna för teknisk utveckling"
+        },
+        "altLabel": {
+          "en": [
+            "adapt development activities of technological projects",
+            "adapt the design of technological projects"
+          ],
+          "fi": [],
+          "sv": []
+        }
+      }
+    ],
+    "title": {
+      "fi": "Ohjelmistoasiantuntija Tietohallinto"
+    },
     "jobDescription": {
-      "fi": "Etsimme ohjelmistokehittäjää.",
-      "en": "We are looking for a <b>Software Developer</b> to join our platform team.\nPython, FastAPI, PostgreSQL."
+      "fi": "Haluatko olla mukana kehittämässä Suomen suurimman terveydenhuoltoalan toimijan strategista IT-osaamista? Haemme nyt HUSin Tietohallintoon ohjelmistoasiantuntijaa vakituiseen työsuhteeseen!\n\nHUSin Tietohallinto on aktiivinen toimija, joka kehittää ja ottaa käyttöön uusia innovaatioita terveydenhuollon toimialalla. Tietohallinto on HUSin tulosyksikkö ja se toimittaa tietojärjestelmä-, tietotekniikka- ja viestintätekniikkapalveluita sekä tietotekniikan laitevuokrausta pääsääntöisesti HUS-yhtymälle, yhtymän yhteistyökumppaneille sekä tytär- ja osakkuusyhteisöille."
+    },
+    "wagePrincipleInfo": {
+      "fi": ""
+    },
+    "partTimeInfo": {
+      "fi": ""
+    },
+    "marketingDescription": {
+      "fi": ""
+    },
+    "permitCardsDescription": {
+      "fi": ""
     }
   },
-  "owner": {"company": {"fi": "Esimerkkiyritys Oy", "en": "Example Company Ltd"}},
-  "application": {"published": "2026-09-02T06:00:00Z"}
+  "owner": {
+    "employerType": "Organization",
+    "businessId": "1567535-0",
+    "company": {
+      "fi": "HUS Helsingin yliopistollinen sairaala"
+    },
+    "reference": "16431"
+  },
+  "location": {
+    "countries": [
+      "FI"
+    ],
+    "regions": [
+      "01"
+    ],
+    "municipalities": [
+      "091"
+    ],
+    "requiresTravelling": false,
+    "workplacePostOffice": "Helsinki",
+    "workplaceName": {
+      "fi": "HUS Helsingin yliopistollinen sairaala"
+    }
+  },
+  "application": {
+    "extraVisibility": [
+      "EURES_TRANSFER"
+    ],
+    "published": "2026-09-07T02:08:24.444416Z",
+    "expires": "2026-09-21T20:59:59Z",
+    "openPositions": 1,
+    "helpText": {
+      "fi": ""
+    },
+    "url": {
+      "fi": "https://ars2.equest.com/?response_id=ee780d97ea48a071ed18ae6bee5f7809"
+    }
+  },
+  "externalLinks": []
 }

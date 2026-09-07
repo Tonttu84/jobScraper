@@ -1,46 +1,272 @@
 {
+  "pageSize": 90,
+  "totalElements": 4,
+  "lastPage": 1,
   "content": [
     {
-      "id": "TE-1234567",
-      "title": {"fi": "Ohjelmistokehittäjä", "sv": "Programvaruutvecklare", "en": "Software Developer"},
+      "id": "4adc9851-ac18-4456-911b-21c0ad61bfac",
       "employer": {
-        "ownerName": {"fi": "Esimerkkiyritys Oy", "en": "Example Company Ltd"},
-        "ownerOfficeName": "Helsingin toimisto"
+        "businessId": [
+          "1567535-0"
+        ],
+        "name": "",
+        "reference": "16431",
+        "ownerName": {
+          "fi": "HUS Helsingin yliopistollinen sairaala"
+        },
+        "ownerOfficeName": "",
+        "ownerOfficeCode": ""
       },
+      "title": {
+        "fi": "Ohjelmistoasiantuntija Tietohallinto"
+      },
+      "applicationPeriodEndDate": "2026-09-21T20:59:59Z",
+      "applicationUrl": {
+        "values": {
+          "fi": "https://ars2.equest.com/?response_id=ee780d97ea48a071ed18ae6bee5f7809"
+        }
+      },
+      "continuityOfWork": [
+        "01"
+      ],
+      "created": "2026-09-07T02:08:24.442Z",
+      "createdSource": "API",
+      "employerType": "Organization",
+      "employmentRelationships": "01",
+      "lastModified": "2026-09-07T02:08:24.442Z",
+      "lastModifiedSource": "API",
       "location": {
         "foreignCountry": false,
+        "countries": [
+          {
+            "value": "FI",
+            "label": {
+              "fi": "Suomi",
+              "sv": "Finland",
+              "en": "Finland"
+            }
+          }
+        ],
+        "regions": [
+          {
+            "value": "01",
+            "label": {
+              "fi": "Uusimaa",
+              "sv": "Nyland",
+              "en": "Uusimaa"
+            },
+            "country": "FI"
+          }
+        ],
         "municipalities": [
-          {"label": {"fi": "Helsinki", "sv": "Helsingfors", "en": "Helsinki"}},
-          {"label": {"fi": "Espoo"}}
-        ]
+          {
+            "value": "091",
+            "label": {
+              "fi": "Helsinki",
+              "sv": "Helsingfors",
+              "en": "Helsinki"
+            },
+            "region": "01"
+          }
+        ],
+        "address": {
+          "streetAddress": "",
+          "postalCode": "",
+          "postOffice": "Helsinki"
+        }
       },
-      "publishDate": "2026-09-02T06:00:00Z"
+      "officialMunicipality": "",
+      "ownerOfficeCode": "",
+      "ownerOfficeName": "",
+      "publishDate": "2026-09-07T02:08:24.444Z",
+      "sort": [
+        1788746904444,
+        "4adc9851-ac18-4456-911b-21c0ad61bfac"
+      ],
+      "tags": [],
+      "workTime": "01"
     },
     {
-      "id": "TE-7654321",
-      "title": {"fi": "Junior-kehittäjä (etätyö)"},
-      "employer": {"ownerName": "Kotikonttori Oy", "ownerOfficeName": ""},
-      "location": {"foreignCountry": false, "municipalities": []},
-      "publishDate": "2026-09-01T10:30:00Z"
-    },
-    {
-      "id": "TE-9999999",
-      "title": {"en": "Backend Developer"},
-      "employer": {"ownerName": {}, "ownerOfficeName": "Tallinn branch"},
+      "id": "697e796b-ee8a-4cdc-aadd-0aede9620cb8",
+      "employer": {
+        "businessId": [
+          "DK000138608"
+        ],
+        "name": "",
+        "reference": "",
+        "ownerName": {
+          "en": "Syddansk Universitet"
+        },
+        "ownerOfficeName": "Syddansk Universitet, Odense M",
+        "ownerOfficeCode": "DK000138608-1"
+      },
+      "title": {
+        "en": "PhD position in 3D Concrete Printing for Low-Carbon Buildings"
+      },
+      "applicationPeriodEndDate": "2026-09-15T20:59:00Z",
+      "applicationUrl": {
+        "values": {}
+      },
+      "continuityOfWork": [
+        "02"
+      ],
+      "created": "2026-08-21T09:46:47.674Z",
+      "createdSource": "ATMT",
+      "employerType": "International",
+      "employmentRelationships": "01",
+      "lastModified": "2026-08-21T09:52:33.857Z",
+      "lastModifiedSource": "ATMT",
       "location": {
         "foreignCountry": true,
-        "municipalities": [{"label": {"en": "Tallinn, Estonia"}}]
+        "countries": [
+          {
+            "value": "DK",
+            "label": {
+              "fi": "Tanska",
+              "sv": "Danmark",
+              "en": "Denmark"
+            }
+          }
+        ],
+        "regions": [],
+        "municipalities": [],
+        "address": {
+          "streetAddress": "",
+          "postalCode": "",
+          "postOffice": ""
+        }
       },
-      "publishDate": "2026-08-30T08:00:00Z"
+      "officialMunicipality": "200",
+      "ownerOfficeCode": "DK000138608-1",
+      "ownerOfficeName": "Syddansk Universitet, Odense M",
+      "publishDate": "2026-08-21T09:46:47.812Z",
+      "sort": [
+        1787305607812,
+        "697e796b-ee8a-4cdc-aadd-0aede9620cb8"
+      ],
+      "tags": [],
+      "workTime": "01"
+    },
+    {
+      "id": "3f26eeaa-8926-4b11-a15e-1e87600e2130",
+      "employer": {
+        "businessId": [
+          "3110461-1"
+        ],
+        "name": "",
+        "reference": "",
+        "ownerName": {
+          "sv": "School of Gaming Galactic Oy",
+          "fi": "School of Gaming Galactic Oy",
+          "en": "School of Gaming Galactic Oy"
+        },
+        "ownerOfficeName": "School of Gaming Galactic Oy, Oulu",
+        "ownerOfficeCode": "3110461-1-1"
+      },
+      "title": {
+        "sv": "Ledare för programmerings- och speldesignsklubben",
+        "fi": "Ohjelmointi- ja pelisuunnittelukerhon ohjaaja",
+        "en": "Programming and game design club instructor"
+      },
+      "applicationPeriodEndDate": "2026-12-31T21:59:00Z",
+      "applicationUrl": {
+        "values": {
+          "sv": "https://www.geduacademy.com",
+          "fi": "https://www.geduacademy.com",
+          "en": "https://www.geduacademy.com"
+        }
+      },
+      "continuityOfWork": [
+        "02",
+        "0201"
+      ],
+      "created": "2026-09-04T20:17:20.78Z",
+      "createdSource": "TMT",
+      "employerType": "Organization",
+      "employmentRelationships": "04",
+      "industryCode": "85510",
+      "lastModified": "2026-09-04T20:20:23.311Z",
+      "lastModifiedSource": "TMT",
+      "location": {
+        "foreignCountry": false,
+        "countries": [],
+        "regions": [],
+        "municipalities": [
+          {
+            "value": "049",
+            "label": {
+              "fi": "Espoo",
+              "sv": "Esbo",
+              "en": "Espoo"
+            },
+            "region": "01"
+          },
+          {
+            "value": "091",
+            "label": {
+              "fi": "Helsinki",
+              "sv": "Helsingfors",
+              "en": "Helsinki"
+            },
+            "region": "01"
+          },
+          {
+            "value": "092",
+            "label": {
+              "fi": "Vantaa",
+              "sv": "Vanda",
+              "en": "Vantaa"
+            },
+            "region": "01"
+          }
+        ],
+        "address": {
+          "streetAddress": "",
+          "postalCode": "",
+          "postOffice": ""
+        }
+      },
+      "officialMunicipality": "",
+      "ownerOfficeCode": "3110461-1-1",
+      "ownerOfficeName": "School of Gaming Galactic Oy, Oulu",
+      "publishDate": "2026-09-04T20:20:23.582Z",
+      "sort": [
+        1788553223582,
+        "3f26eeaa-8926-4b11-a15e-1e87600e2130"
+      ],
+      "tags": [],
+      "workTime": "02"
     },
     {
       "id": "",
-      "title": null,
       "employer": null,
+      "title": {},
+      "applicationPeriodEndDate": "2026-09-21T20:59:59Z",
+      "applicationUrl": {
+        "values": {
+          "fi": "https://ars2.equest.com/?response_id=ee780d97ea48a071ed18ae6bee5f7809"
+        }
+      },
+      "continuityOfWork": [
+        "01"
+      ],
+      "created": "2026-09-07T02:08:24.442Z",
+      "createdSource": "API",
+      "employerType": "Organization",
+      "employmentRelationships": "01",
+      "lastModified": "2026-09-07T02:08:24.442Z",
+      "lastModifiedSource": "API",
       "location": null,
-      "publishDate": null
+      "officialMunicipality": "",
+      "ownerOfficeCode": "",
+      "ownerOfficeName": "",
+      "publishDate": null,
+      "sort": [
+        1788746904444,
+        "4adc9851-ac18-4456-911b-21c0ad61bfac"
+      ],
+      "tags": [],
+      "workTime": "01"
     }
-  ],
-  "lastPage": true,
-  "totalElements": 3
+  ]
 }
