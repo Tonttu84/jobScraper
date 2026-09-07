@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from datetime import UTC, datetime
 
 from jobscraper.config import Profile
 from jobscraper.filters.language import detect_language, find_language_requirements
 from jobscraper.models import FilterResult, Job
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-09-07.3"
+RULES_VERSION = "2026-09-07.4"
 
 _YEARS_RE = re.compile(
     r"(?:(?:at least|minimum|min\.?|minimum of|over|more than|vähintään|yli|mindestens|mind\.|über|"
@@ -185,6 +186,14 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
             review.append("on-site with unknown country")
     if tier == 3 and job.country in profile.location.notes:
         signals["work_rights_note"] = profile.location.notes[job.country]
+
+    # ------------------------------------------------------------- staleness
+    if job.posted_at is not None:
+        posted = job.posted_at if job.posted_at.tzinfo else job.posted_at.replace(tzinfo=UTC)
+        age_days = (datetime.now(UTC) - posted).days
+        signals["age_days"] = age_days
+        if age_days > profile.max_age_days:
+            reasons.append(f"posting is {age_days} days old (max {profile.max_age_days})")
 
     status = "drop" if reasons else ("review" if review else "keep")
     return FilterResult(job_id=job.id, status=status, reasons=reasons + review, signals=signals, location_tier=tier)

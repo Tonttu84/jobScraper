@@ -65,6 +65,7 @@ class Profile(BaseModel):
     location: LocationPolicy = Field(default_factory=LocationPolicy)
     role: RolePolicy = Field(default_factory=RolePolicy)
     ai: AIPolicy = Field(default_factory=AIPolicy)
+    max_age_days: int = 45  # postings older than this are dropped by the rule filter (unknown dates stay)
 
 
 class SourceConfig(BaseModel):

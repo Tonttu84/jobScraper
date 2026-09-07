@@ -301,3 +301,27 @@ def test_remote_restricted_to_a_target_country_is_kept(settings):
               remote_region="FI only")
     res = evaluate(job, settings.profile)
     assert res.status == "keep"
+
+
+def test_stale_postings_are_dropped(settings):
+    """Owner: kill anything too old before the AI passes. Unknown dates stay (permissive)."""
+    from datetime import UTC, datetime, timedelta
+
+    old = make_job(posted_at=datetime.now(UTC) - timedelta(days=settings.profile.max_age_days + 5))
+    res = evaluate(old, settings.profile)
+    assert res.status == "drop"
+    assert any("days old" in r for r in res.reasons)
+
+    fresh = make_job(posted_at=datetime.now(UTC) - timedelta(days=3))
+    assert evaluate(fresh, settings.profile).status != "drop"
+
+    undated = make_job(posted_at=None)
+    assert evaluate(undated, settings.profile).status != "drop"
+
+
+def test_stale_check_accepts_naive_datetimes(settings):
+    """SQLite hands back naive datetimes; the age check must not raise on them."""
+    from datetime import datetime, timedelta
+
+    old = make_job(posted_at=datetime.now() - timedelta(days=200))  # naive on purpose
+    assert evaluate(old, settings.profile).status == "drop"
