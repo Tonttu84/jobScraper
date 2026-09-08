@@ -1,8 +1,14 @@
 """Run the AI stages without the API: export prompt batches for subagents, import their verdicts.
 
-    python scripts/ai_batches.py export prefilter [--chunk 100] [--max-chars 1500]
-    python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60]
+    python scripts/ai_batches.py hydrate linkedin [--top 120] [--max-fetch 120]
+    python scripts/ai_batches.py export prefilter [--chunk 100] [--max-chars 1500] [--all]
     python scripts/ai_batches.py import prefilter|rank
+    python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60]
+    python scripts/ai_batches.py boost
+
+Intended sequence for one round:
+``hydrate linkedin`` → ``export prefilter`` → (Sonnet subagent) → ``import prefilter`` →
+``export rank`` → (Opus subagent) → ``import rank`` → ``boost`` → ``jobscraper report``.
 
 Export writes ``data/exports/ai/<stage>/system.txt`` (the stage's system prompt) and
 ``chunk-NN.json`` (a JSON list of ``{"job_id", "prompt"}`` built with the pipeline's own
@@ -10,9 +16,18 @@ Export writes ``data/exports/ai/<stage>/system.txt`` (the stage's system prompt)
 job with the ``Screening``/``Ranking`` fields plus ``job_id``). Import validates those against the
 schemas and stores them as ``AIVerdict`` rows, so ``jobscraper report`` renders them like API runs.
 
-``export rank`` also tops up missing LinkedIn descriptions: the scrape leaves those rows
-title-only (per-job fetches are slow and rate-limited), but ranking only ever looks at a few
-dozen jobs, so fetching just those is cheap and materially improves the verdicts.
+``export prefilter`` is refill-aware: it skips jobs that already carry a prefilter verdict under
+the current prompt version, so after a hydration round only the cleared rows go back to Sonnet
+(``--all`` forces the old export-everything behaviour).
+
+Descriptions: the scrape leaves LinkedIn rows title-only (per-job fetches are slow and
+rate-limited). ``export rank`` tops up the few dozen jobs it is about to rank. ``hydrate
+linkedin`` goes wider and earlier: it walks the best ``--top`` prefilter survivors, fetches the
+title-only LinkedIn rows among them, and deletes their prefilter *and* rank verdicts so the next
+passes re-judge them with the description in hand — a title-only row was screened on its title
+alone, so a description can move it up as well as down. Every hydrated job is logged to
+``data/exports/ai/hydration.jsonl`` with the position and scores it had before, and ``boost``
+reads that log back to show what the descriptions changed and how deep ``--top`` needed to be.
 """
 
 from __future__ import annotations
@@ -20,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -42,6 +58,109 @@ def _out_dir(stage: str) -> Path:
     d = DATA_DIR / "exports" / "ai" / stage
     (d / "verdicts").mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _hydration_log() -> Path:
+    path = DATA_DIR / "exports" / "ai" / "hydration.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _survivors(store: Store, settings, filters: dict) -> list[AIVerdict]:
+    """Prefilter survivors under the current prompt version that the rule filter still keeps.
+
+    Best score first; the job id breaks ties so a position is the same on every run.
+    """
+    pre = store.verdicts("prefilter", PROMPT_VERSION)
+    min_score = settings.profile.ai.prefilter_min_score
+    alive = {jid for jid, f in filters.items() if f.status != "drop"}
+    return sorted((v for v in pre.values() if v.relevant and v.score >= min_score and v.job_id in alive),
+                  key=lambda v: (-v.score, v.job_id))
+
+
+def hydrate_top_linkedin(top: int, max_fetch: int) -> None:
+    """Fetch descriptions for the title-only LinkedIn rows among the top ``top`` survivors.
+
+    Those rows were screened from their title alone, so the description can move them up as well
+    as down: every job that gets one loses its prefilter *and* rank verdicts and goes back through
+    both passes. ``hydration.jsonl`` keeps the before picture (position and scores) so ``boost``
+    can report afterwards how deep ``--top`` actually needed to reach.
+    """
+    settings = load_settings()
+    store = Store()
+    jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
+    survivors = _survivors(store, settings, store.filter_results())
+    ranks = store.verdicts("rank", PROMPT_VERSION)
+    log = _hydration_log()
+    http = Http()
+    hydrated: list[str] = []
+    tried = 0
+    try:
+        for position, v in enumerate(survivors[:top], start=1):
+            if tried >= max_fetch:
+                break
+            job = jobs.get(v.job_id)
+            if job is None or job.source != linkedin.NAME or job.description:
+                continue
+            tried += 1
+            text = fetch_description(http, job.url)
+            if not text:  # rate-limited, walled off, gone: leave the verdicts alone
+                continue
+            job.description = text
+            store.upsert_jobs([job])
+            rank_before = ranks.get(job.id)
+            with log.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"job_id": job.id, "title": job.title, "source": job.source,
+                                     "when": datetime.now(UTC).isoformat(), "position_before": position,
+                                     "prefilter_score_before": v.score,
+                                     "rank_score_before": rank_before.score if rank_before else None},
+                                    ensure_ascii=False) + "\n")
+            hydrated.append(job.id)
+    finally:
+        http.close()
+    cleared = store.delete_verdicts(hydrated)
+    print(f"hydrated {len(hydrated)}/{tried} linkedin descriptions; {cleared} verdicts cleared")
+
+
+def boost() -> None:
+    """Show what the hydrated descriptions did to the scores, and how deep ``--top`` had to go."""
+    log = _hydration_log()
+    entries = {}
+    if log.exists():
+        for line in log.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                entries[rec["job_id"]] = rec  # a job hydrated twice counts once, latest wins
+    if not entries:
+        print(f"no hydration log yet ({log}); run `hydrate linkedin` first")
+        return
+    store = Store()
+    pre = store.verdicts("prefilter", PROMPT_VERSION)
+    ranks = store.verdicts("rank", PROMPT_VERSION)
+    rows = sorted(entries.values(), key=lambda r: r["position_before"])
+
+    def cell(before, after) -> str:
+        if before is None and after is None:
+            return " " * 9
+        return f"{before if before is not None else '-':>3} → {after if after is not None else '-':<3}"
+
+    print(f"{'title':<40}  {'pos':>4}  {'prefilter':<9}  {'rank':<9}  ranked")
+    rose = fell = 0
+    for r in rows:
+        after = pre[r["job_id"]].score if r["job_id"] in pre else None
+        ranked = ranks.get(r["job_id"])
+        if after is not None and after > r["prefilter_score_before"]:
+            rose += 1
+        elif after is not None and after < r["prefilter_score_before"]:
+            fell += 1
+        print(f"{r['title'][:40]:<40}  {r['position_before']:>4}  "
+              f"{cell(r['prefilter_score_before'], after)}  "
+              f"{cell(r['rank_score_before'], ranked.score if ranked else None)}  "
+              f"{'yes' if ranked else 'no'}")
+    made_it = [r["position_before"] for r in rows if r["job_id"] in ranks]
+    deepest = max(made_it) if made_it else "none"
+    print(f"\nhydrated: {len(rows)}; prefilter score rose: {rose}, fell: {fell}; now ranked: {len(made_it)}")
+    print(f"deepest position_before that made the final ranked list: {deepest}")
 
 
 def hydrate_linkedin(store: Store, todo: list[Job], max_fetch: int) -> None:
@@ -69,23 +188,23 @@ def hydrate_linkedin(store: Store, todo: list[Job], max_fetch: int) -> None:
     print(f"hydrated {hydrated}/{len(batch)} linkedin descriptions")
 
 
-def export(stage: str, chunk: int, max_chars: int, top: int, max_fetch: int = 0) -> None:
+def export(stage: str, chunk: int, max_chars: int, top: int, max_fetch: int = 0, export_all: bool = False) -> None:
     settings = load_settings()
     store = Store()
     jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
     filters = store.filter_results()
     if stage == "prefilter":
-        todo = [j for j in jobs.values() if filters.get(j.id) and filters[j.id].status in ("keep", "review")]
+        # Refill semantics: rule-filter survivors that don't already carry a prefilter verdict under
+        # the current prompt version, so a hydration round only re-screens the jobs it cleared.
+        already = set() if export_all else set(store.verdicts("prefilter", PROMPT_VERSION))
+        todo = [j for j in jobs.values()
+                if filters.get(j.id) and filters[j.id].status in ("keep", "review") and j.id not in already]
         todo.sort(key=lambda j: (j.source, j.title.lower()))
     else:
-        pre = store.verdicts("prefilter", PROMPT_VERSION)
-        min_score = settings.profile.ai.prefilter_min_score
         # Refill semantics: the best `top` prefilter survivors that the rule filter still keeps, minus
         # the ones that already carry a rank verdict under the current prompt version.
-        alive = {jid for jid, f in filters.items() if f.status != "drop"}
         already = set(store.verdicts("rank", PROMPT_VERSION))
-        ranked = sorted((v for v in pre.values() if v.relevant and v.score >= min_score and v.job_id in alive),
-                        key=lambda v: -v.score)
+        ranked = _survivors(store, settings, filters)
         todo = [jobs[v.job_id] for v in ranked[:top] if v.job_id in jobs and v.job_id not in already]
         hydrate_linkedin(store, todo, max_fetch)
     out = _out_dir(stage)
@@ -143,18 +262,31 @@ def import_verdicts(stage: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=["export", "import"])
-    ap.add_argument("stage", choices=["prefilter", "rank"])
+    ap.add_argument("action", choices=["export", "import", "hydrate", "boost"])
+    ap.add_argument("stage", nargs="?", choices=["prefilter", "rank", "linkedin"], default=None,
+                    help="stage for export/import, 'linkedin' for hydrate; ignored by boost")
     ap.add_argument("--chunk", type=int, default=None)
     ap.add_argument("--max-chars", type=int, default=None)
-    ap.add_argument("--top", type=int, default=60)
-    ap.add_argument("--max-fetch", type=int, default=60,
-                    help="rank only: how many missing LinkedIn descriptions to fetch (0 disables)")
+    ap.add_argument("--all", action="store_true",
+                    help="export prefilter only: export every survivor, not just the unscreened ones")
+    ap.add_argument("--top", type=int, default=None, help="export rank: 60; hydrate linkedin: 120")
+    ap.add_argument("--max-fetch", type=int, default=None,
+                    help="how many missing LinkedIn descriptions to fetch (0 disables); rank: 60, hydrate: 120")
     a = ap.parse_args()
+    if a.action == "boost":
+        boost()
+        return
+    if a.action == "hydrate":
+        if a.stage not in (None, "linkedin"):
+            ap.error("hydrate only knows the 'linkedin' stage")
+        hydrate_top_linkedin(a.top or 120, 120 if a.max_fetch is None else a.max_fetch)
+        return
+    if a.stage not in ("prefilter", "rank"):
+        ap.error(f"{a.action} needs a stage: prefilter or rank")
     if a.action == "export":
         chunk = a.chunk or (100 if a.stage == "prefilter" else 15)
         max_chars = a.max_chars or (1500 if a.stage == "prefilter" else 6000)
-        export(a.stage, chunk, max_chars, a.top, a.max_fetch)
+        export(a.stage, chunk, max_chars, a.top or 60, 60 if a.max_fetch is None else a.max_fetch, a.all)
     else:
         import_verdicts(a.stage)
 

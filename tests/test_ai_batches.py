@@ -351,3 +351,177 @@ def test_export_prefilter_never_fetches_descriptions(data_dir, monkeypatch, caps
     _run(monkeypatch, "export", "prefilter")
 
     assert "1 jobs" in capsys.readouterr().out
+
+
+# ------------------------------------------------- wide hydration, refill export and `boost`
+# `hydrate linkedin` fetches descriptions for the title-only linkedin rows among the best `--top`
+# prefilter survivors and clears their verdicts, so the next prefilter pass re-screens them with
+# the description in hand. hydration.jsonl records where each job stood before that, so the owner
+# can see from real data how deep `--top` has to go.
+
+
+def _rank_scores(jobs: list[Job], scores: list[int]) -> None:
+    store = store_mod.Store()
+    try:
+        for job, score in zip(jobs, scores):
+            store.save_verdict(AIVerdict(job_id=job.id, stage="rank", model="claude-opus-5 (subagent)",
+                                         prompt_version=PROMPT_VERSION, relevant=True, score=score,
+                                         language_ok=True, seniority_ok=True, location_ok=True,
+                                         summary=f"ranked {score}"))
+    finally:
+        store.close()
+
+
+def _stored_verdicts(stage: str) -> dict:
+    store = store_mod.Store()
+    try:
+        return store.verdicts(stage, PROMPT_VERSION)
+    finally:
+        store.close()
+
+
+def _hydration_log(data_dir: Path) -> list[dict]:
+    path = data_dir / "exports" / "ai" / "hydration.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_hydrate_linkedin_logs_the_before_picture_and_clears_the_verdicts(data_dir, monkeypatch, capsys):
+    inside = _bare("linkedin", 51, "https://www.linkedin.com/jobs/view/51")
+    other = _bare("duunitori", 52, "https://duunitori.fi/tyopaikat/tyo/52")
+    outside = _bare("linkedin", 53, "https://www.linkedin.com/jobs/view/53")
+    _seed([inside, other, outside], ["keep", "keep", "keep"])
+    _prefilter_scores([inside, other, outside], [90, 80, 70])
+    _rank_scores([inside], [55])
+
+    fetched: list[str] = []
+
+    def fake_fetch(http, url):
+        fetched.append(url)
+        return "Go and Kubernetes, English-speaking team."
+
+    monkeypatch.setattr(ai_batches, "fetch_description", fake_fetch)
+
+    _run(monkeypatch, "hydrate", "linkedin", "--top", "2")
+
+    assert fetched == [inside.url]  # linkedin only, and only inside the top 2
+
+    (line,) = _hydration_log(data_dir)
+    assert line["job_id"] == inside.id
+    assert line["title"] == inside.title and line["source"] == "linkedin"
+    assert line["position_before"] == 1  # 1-based rank among the prefilter survivors
+    assert line["prefilter_score_before"] == 90
+    assert line["rank_score_before"] == 55
+    assert line["when"].endswith("+00:00")
+
+    stored = _stored_jobs()
+    assert stored[inside.id].description.startswith("Go and Kubernetes")
+    assert stored[outside.id].description is None and stored[other.id].description is None
+
+    pre, ranks = _stored_verdicts("prefilter"), _stored_verdicts("rank")
+    assert set(pre) == {other.id, outside.id}  # the hydrated job is queued for re-screening
+    assert ranks == {}
+    assert "hydrated 1/1 linkedin descriptions; 2 verdicts cleared" in capsys.readouterr().out
+
+
+def test_hydrate_linkedin_keeps_the_verdicts_when_the_fetch_comes_back_empty(data_dir, monkeypatch, capsys):
+    li = _bare("linkedin", 61, "https://www.linkedin.com/jobs/view/61")
+    _seed([li], ["keep"])
+    _prefilter_scores([li], [90])
+    monkeypatch.setattr(ai_batches, "fetch_description", lambda http, url: None)
+
+    _run(monkeypatch, "hydrate", "linkedin")
+
+    assert _hydration_log(data_dir) == []
+    assert set(_stored_verdicts("prefilter")) == {li.id}  # nothing changed, nothing to re-screen
+    assert "hydrated 0/1 linkedin descriptions; 0 verdicts cleared" in capsys.readouterr().out
+
+
+def test_hydrate_linkedin_honours_max_fetch_and_the_rule_filter(data_dir, monkeypatch, capsys):
+    jobs = [_bare("linkedin", n, f"https://www.linkedin.com/jobs/view/{n}") for n in (71, 72, 73)]
+    dropped = _bare("linkedin", 74, "https://www.linkedin.com/jobs/view/74")
+    _seed(jobs, ["keep"] * 3)
+    _seed([dropped], ["drop"])
+    _prefilter_scores(jobs, [90, 80, 70])
+    _prefilter_scores([dropped], [95])
+
+    fetched: list[str] = []
+
+    def fake_fetch(http, url):
+        fetched.append(url)
+        return "Fetched description text."
+
+    monkeypatch.setattr(ai_batches, "fetch_description", fake_fetch)
+
+    _run(monkeypatch, "hydrate", "linkedin", "--top", "10", "--max-fetch", "2")
+
+    assert fetched == [jobs[0].url, jobs[1].url]  # best prefilter scores first, dropped job skipped
+    assert _stored_jobs()[jobs[2].id].description is None
+    assert [line["position_before"] for line in _hydration_log(data_dir)] == [1, 2]
+    assert "hydrated 2/2 linkedin descriptions; 2 verdicts cleared" in capsys.readouterr().out
+
+
+def test_export_prefilter_only_exports_jobs_without_a_verdict_unless_all(data_dir, monkeypatch, capsys):
+    """Refill semantics: after hydration only the cleared rows go back to the Sonnet pass."""
+    jobs = [_job(1, "Junior Go Developer"), _job(2, "Graduate Backend Engineer"),
+            _job(3, "Trainee QA Automation")]
+    _seed(jobs, ["keep", "keep", "review"])
+    _prefilter_scores(jobs[:2], [90, 80])
+
+    _run(monkeypatch, "export", "prefilter")
+
+    out = data_dir / "exports" / "ai" / "prefilter"
+    assert [e["job_id"] for e in _chunk_entries(out)] == [jobs[2].id]
+    assert "1 jobs" in capsys.readouterr().out
+
+    _run(monkeypatch, "export", "prefilter", "--all")
+
+    assert {e["job_id"] for e in _chunk_entries(out)} == {j.id for j in jobs}
+    assert "3 jobs" in capsys.readouterr().out
+
+
+def _hydrate_two(data_dir, monkeypatch) -> list[Job]:
+    """Hydrate two linkedin jobs (prefilter 90 and 80) and return them."""
+    jobs = [_bare("linkedin", n, f"https://www.linkedin.com/jobs/view/{n}") for n in (81, 82)]
+    _seed(jobs, ["keep", "keep"])
+    _prefilter_scores(jobs, [90, 80])
+    monkeypatch.setattr(ai_batches, "fetch_description", lambda http, url: "Go, Kubernetes, English.")
+    _run(monkeypatch, "hydrate", "linkedin")
+    return jobs
+
+
+def test_boost_shows_the_score_moves_and_the_deepest_useful_position(data_dir, monkeypatch, capsys):
+    risen, fallen = _hydrate_two(data_dir, monkeypatch)
+    capsys.readouterr()
+    _prefilter_scores([risen, fallen], [95, 40])  # re-screened with the description in hand
+    _rank_scores([risen], [88])
+
+    _run(monkeypatch, "boost")
+
+    out = capsys.readouterr().out
+    assert risen.title[:40] in out and fallen.title[:40] in out
+    assert "90 → 95" in out and "80 → 40" in out
+    assert "88" in out
+    assert "hydrated: 2" in out
+    assert "rose: 1" in out and "fell: 1" in out
+    assert "now ranked: 1" in out
+    assert "deepest position_before that made the final ranked list: 1" in out
+
+
+def test_boost_without_a_single_ranked_job(data_dir, monkeypatch, capsys):
+    jobs = _hydrate_two(data_dir, monkeypatch)
+    capsys.readouterr()
+    _prefilter_scores(jobs, [90, 80])  # same scores back, nothing ranked yet
+
+    _run(monkeypatch, "boost")
+
+    out = capsys.readouterr().out
+    assert "now ranked: 0" in out
+    assert "rose: 0" in out and "fell: 0" in out
+    assert "deepest position_before that made the final ranked list: none" in out
+
+
+def test_boost_without_a_hydration_log(data_dir, monkeypatch, capsys):
+    _run(monkeypatch, "boost")
+    assert "no hydration" in capsys.readouterr().out.lower()
