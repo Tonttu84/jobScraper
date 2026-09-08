@@ -1,10 +1,18 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
+from jobscraper.filters.language import find_language_requirements
 from jobscraper.http import SourceHTTPError
-from jobscraper.sources.justjoin import JustJoin, parse_offer, salary_text
+from jobscraper.sources.justjoin import (
+    JustJoin,
+    hydrate,
+    languages_line,
+    parse_offer,
+    salary_text,
+)
 
 # The detail route must be listed first: its key is a substring-of-URL match and the list URL
 # (".../offers?...") does not contain the trailing slash, so the two never collide.
@@ -128,7 +136,9 @@ def test_justjoin_max_details_caps_detail_requests(make_ctx):
     ctx = make_ctx(ROUTES, options={"max_pages": 1, "max_details": 1})
     jobs = list(JustJoin().fetch(ctx))
     assert sum("/candidate-api/offers/" in str(c.url) for c in ctx.http.calls) == 1
-    assert jobs[0].description and jobs[1].description is None
+    # The un-hydrated job keeps the language line built from the list record, but no body.
+    assert "Craftware is a technology company" in jobs[0].description
+    assert jobs[1].description == "Required languages: English (B1), Spanish (B1)."
 
 
 def test_justjoin_detail_failure_keeps_the_job(make_ctx):
@@ -179,3 +189,58 @@ def test_justjoin_salary_text_tolerates_junk():
                          "currencySource": "original"}]) == "9,000 PLN"
     # nothing marked original (old payload shape) → fall back to every row
     assert salary_text([{"from": 100, "currency": "usd"}]) == "100 USD"
+
+
+def _lang_rec(languages):
+    rec = _rec("lang", "lang-slug", "Warszawa", "remote")
+    if languages is not None:
+        rec["languages"] = languages
+    return rec
+
+
+def test_justjoin_prepends_required_languages_line():
+    job = parse_offer(_lang_rec([{"code": "pl", "level": "C1"}, {"code": "en", "level": "B2"}]))
+    assert job.description.startswith("Required languages: Polish (C1), English (B2).")
+    assert job.raw["languages"][0] == {"code": "pl", "level": "C1"}
+
+
+def test_justjoin_language_line_absent_without_the_field():
+    assert parse_offer(_lang_rec(None)).description is None
+    assert parse_offer(_lang_rec([])).description is None
+
+
+def test_justjoin_language_line_is_seen_by_the_rule_filter():
+    job = parse_offer(_lang_rec([{"code": "pl", "level": "C1"}, {"code": "en", "level": "C1"}]))
+    found = find_language_requirements(job.description)
+    assert "pl" in found.required and "en" in found.required
+
+
+def test_justjoin_language_line_tolerates_junk_and_unknown_codes():
+    assert languages_line(None) is None
+    assert languages_line("broken") is None
+    assert languages_line([{"level": "C1"}, "x", {"code": "  "}]) is None
+    assert languages_line([{"code": "zz"}]) == "Required languages: ZZ."
+    assert languages_line([{"code": "de"}]) == "Required languages: German."
+
+
+def test_justjoin_hydrate_keeps_the_language_line_in_front_of_the_body(make_ctx):
+    # The list record carries languages; the detail fixture's own field is empty, so the list
+    # value survives hydration and stays ahead of the posting body.
+    ctx = make_ctx(ROUTES, options={"max_pages": 1})
+    job = list(JustJoin().fetch(ctx))[1]
+    assert job.description.startswith("Required languages: English (B1), Spanish (B1).\n\n")
+    assert "Craftware is a technology company" in job.description
+
+
+def test_justjoin_detail_languages_win_over_the_list_record():
+    job = parse_offer(_lang_rec([{"code": "en", "level": "B1"}]))
+    detail = {"slug": "lang-slug", "body": "<p>Body text</p>",
+              "languages": [{"code": "pl", "level": "C1"}]}
+
+    class _Http:
+        def get_json(self, url, **kwargs):
+            return detail
+
+    hydrate(SimpleNamespace(http=_Http()), job, "lang-slug")
+    assert job.description.startswith("Required languages: Polish (C1).\n\n")
+    assert "Body text" in job.description

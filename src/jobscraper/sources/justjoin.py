@@ -24,6 +24,13 @@ The list records carry no country and no description: the country is taken from 
 (default PL) and corrected from the detail's ``countryCode``, the body comes from the detail
 call. Neither response has an apply link worth linking to, so the canonical URL is built from
 the slug: ``https://justjoin.it/job-offer/{slug}``.
+
+Language requirements live in a structured ``languages`` field on both records
+(``[{"code": "pl", "level": "C1"}, ...]``) and never in the body text, so nothing downstream
+would see them. They are rendered into a ``Required languages: Polish (C1), English (C1).``
+line that is prepended to the description — present even when the body is missing — which is
+what the rule filter's language detector scans. justjoin draws no required/nice-to-have
+distinction here; the site shows every entry as a requirement, and so do we.
 """
 
 from __future__ import annotations
@@ -45,6 +52,15 @@ JOB_URL = "https://justjoin.it/job-offer/{slug}"
 DEFAULT_COUNTRY = "PL"
 DEFAULT_ITEMS_COUNT = 100
 JSON_HEADERS = {"Accept": "application/json"}
+
+# ISO-639-1 → English name, for the codes justjoin actually serves; anything else falls back
+# to the upper-cased code so an unknown language is still visible in the text.
+LANGUAGE_NAMES = {
+    "pl": "Polish", "en": "English", "de": "German", "fr": "French", "es": "Spanish",
+    "it": "Italian", "nl": "Dutch", "cs": "Czech", "sk": "Slovak", "uk": "Ukrainian",
+    "ru": "Russian", "pt": "Portuguese", "sv": "Swedish", "no": "Norwegian",
+    "da": "Danish", "fi": "Finnish", "hu": "Hungarian", "ro": "Romanian",
+}
 
 WORKPLACE_REMOTE = {
     "remote": "remote",
@@ -127,6 +143,33 @@ def salary_text(employment_types: Any) -> str | None:
     return "; ".join(dict.fromkeys(parts)) or None
 
 
+def languages_line(languages: Any) -> str | None:
+    """``[{"code": "pl", "level": "C1"}]`` → ``Required languages: Polish (C1).``
+
+    The wording matters: the rule filter keys on a requirement word next to a language *name*,
+    so both have to be spelled out.
+    """
+    parts: list[str] = []
+    for entry in languages or []:
+        if not isinstance(entry, dict):
+            continue
+        code = entry.get("code")
+        if not isinstance(code, str) or not code.strip():
+            continue
+        name = LANGUAGE_NAMES.get(code.strip().lower(), code.strip().upper())
+        level = entry.get("level")
+        if isinstance(level, str) and level.strip():
+            name = f"{name} ({level.strip().upper()})"
+        parts.append(name)
+    return "Required languages: " + ", ".join(dict.fromkeys(parts)) + "." if parts else None
+
+
+def _describe(line: str | None, body: str | None) -> str | None:
+    if not line:
+        return body
+    return f"{line}\n\n{body}" if body else line
+
+
 def parse_offer(rec: dict[str, Any]) -> Job | None:
     if not isinstance(rec, dict):
         return None
@@ -150,6 +193,7 @@ def parse_offer(rec: dict[str, Any]) -> Job | None:
         url=JOB_URL.format(slug=slug),
         title=str(title),
         company=rec.get("companyName") or None,
+        description=languages_line(rec.get("languages")),
         location_raw=", ".join(p for p in (city, country) if p) or None,
         country=country,
         city=city,
@@ -172,7 +216,10 @@ def hydrate(ctx: SourceContext, job: Job, slug: str) -> None:
         return
     if not isinstance(detail, dict):
         return
-    job.description = strip_html(detail.get("body"))
+    # The detail repeats ``languages``; prefer it, but never lose the list record's line when
+    # the detail's copy is empty.
+    line = languages_line(detail.get("languages")) or languages_line(job.raw.get("languages"))
+    job.description = _describe(line, strip_html(detail.get("body")))
     skills = [*_names(detail.get("requiredSkills")), *_names(detail.get("niceToHaveSkills"))]
     if skills:
         job.tags = list(dict.fromkeys([*job.tags, *skills]))
