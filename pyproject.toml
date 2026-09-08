@@ -18,6 +18,8 @@ dependencies = [
     "python-jobspy",
     "feedparser>=6",
     "pandas>=2",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.optional-dependencies]
