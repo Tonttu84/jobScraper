@@ -99,7 +99,9 @@ sources:
   remoteok:
     enabled: true
   weworkremotely:
-    enabled: true
+    # Disabled 2026-09-08 (owner): the site makes job seekers buy a 12-month subscription to apply,
+    # which no legitimate board does — they charge the hiring companies, not the applicants.
+    enabled: false
 
   # ---------------------------------------------------------------- Dubai
   bayt:
