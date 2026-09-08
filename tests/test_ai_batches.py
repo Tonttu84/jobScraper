@@ -205,3 +205,23 @@ def test_import_rank_keeps_why_apply(ranked, data_dir, monkeypatch, capsys):
     assert v.why_apply == ["42/Hive projects in C and Go", "English-only team"]
     assert v.concerns == ["no Kubernetes experience"] and v.score == 88
     assert "imported 1 verdicts, 0 bad lines, 0 missing" in capsys.readouterr().out
+
+
+def test_export_rank_skips_dropped_and_already_ranked_jobs(ranked, data_dir, monkeypatch, capsys):
+    """Refill semantics: a job the rule filter now drops is out even with a high prefilter score, and a
+    job that already has a rank verdict under the current prompt version is not exported again."""
+    dropped = _job(3, "Junior Polish-only Developer", LONG_DESCRIPTION)
+    _seed([dropped], ["drop"])
+    store = store_mod.Store()
+    try:
+        store.save_verdict(AIVerdict(job_id=dropped.id, stage="prefilter", model="claude-sonnet-5 (subagent)",
+                                     prompt_version=PROMPT_VERSION, relevant=True, score=95,
+                                     language_ok=True, seniority_ok=True, location_ok=True, summary="high but dropped"))
+        store.save_verdict(AIVerdict(job_id=ranked[0].id, stage="rank", model="claude-opus-5 (subagent)",
+                                     prompt_version=PROMPT_VERSION, relevant=True, score=88,
+                                     language_ok=True, seniority_ok=True, location_ok=True, summary="already ranked"))
+    finally:
+        store.close()
+    _run(monkeypatch, "export", "rank", "--top", "5")
+    assert _chunk_entries(data_dir / "exports" / "ai" / "rank") == []
+    assert "0 jobs" in capsys.readouterr().out

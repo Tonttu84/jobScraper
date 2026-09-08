@@ -46,8 +46,13 @@ def export(stage: str, chunk: int, max_chars: int, top: int) -> None:
     else:
         pre = store.verdicts("prefilter", PROMPT_VERSION)
         min_score = settings.profile.ai.prefilter_min_score
-        ranked = sorted((v for v in pre.values() if v.relevant and v.score >= min_score), key=lambda v: -v.score)
-        todo = [jobs[v.job_id] for v in ranked[:top] if v.job_id in jobs]
+        # Refill semantics: the best `top` prefilter survivors that the rule filter still keeps, minus
+        # the ones that already carry a rank verdict under the current prompt version.
+        alive = {jid for jid, f in filters.items() if f.status != "drop"}
+        already = set(store.verdicts("rank", PROMPT_VERSION))
+        ranked = sorted((v for v in pre.values() if v.relevant and v.score >= min_score and v.job_id in alive),
+                        key=lambda v: -v.score)
+        todo = [jobs[v.job_id] for v in ranked[:top] if v.job_id in jobs and v.job_id not in already]
     out = _out_dir(stage)
     for old in out.glob("chunk-*.json"):
         old.unlink()

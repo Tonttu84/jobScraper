@@ -145,3 +145,14 @@ def test_export_jsonl_has_one_line_per_job(tmp_path, state):
     assert by_id[pre_job.id]["verdict"]["stage"] == "prefilter"
     assert by_id[review_job.id]["verdict"] is None
     assert by_id[review_job.id]["filter"]["status"] == "review"
+
+
+def test_write_report_hides_jobs_the_rule_filter_now_drops(tmp_path, state):
+    """Rules tighten between runs (max age, seniority, language); stale verdicts must not resurrect a drop."""
+    jobs, filters, prefilter, ranked = state
+    ranked_job, pre_job, _ = jobs
+    filters[ranked_job.id] = FilterResult(job_id=ranked_job.id, status="drop", reasons=["requires pl: 'Polish C1'"])
+    filters[pre_job.id] = FilterResult(job_id=pre_job.id, status="drop", reasons=["posting is 40 days old (max 20)"])
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Junior Backend Developer" not in text
+    assert "Junior Platform Engineer" not in text

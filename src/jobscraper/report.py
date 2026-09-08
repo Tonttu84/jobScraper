@@ -19,6 +19,10 @@ def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: d
     path = path or RESULTS_DIR / f"report-{datetime.now(UTC):%Y-%m-%d}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     by_id = {j.id: j for j in jobs}
+    # Rules tighten between runs (max age, seniority, language); a stale verdict must not resurrect a drop.
+    dropped = {f.job_id for f in filters.values() if f.status == "drop"}
+    prefilter = {k: v for k, v in prefilter.items() if k not in dropped}
+    ranked = {k: v for k, v in ranked.items() if k not in dropped}
 
     lines = [f"# Job report {datetime.now(UTC):%Y-%m-%d %H:%M} UTC", ""]
     lines.append(f"Jobs in DB: {len(jobs)} · rule-kept: {sum(f.status == 'keep' for f in filters.values())} · "
