@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import httpx
 
+from jobscraper.filters.language import find_language_requirements
 from jobscraper.sources.nofluffjobs import NoFluffJobs, build_description, salary_text
 from tests.conftest import fixture_json, fixture_text
 
@@ -42,6 +43,7 @@ def test_nofluffjobs_parses_fixture(make_ctx):
 def test_nofluffjobs_description_from_real_detail_blocks(make_ctx):
     ctx = make_ctx(ROUTES, options={"regions": ["pl"], "max_pages": 1})
     desc = next(iter(NoFluffJobs().fetch(ctx))).description
+    assert desc.startswith("Required languages: English (C1).")  # requirements.languages
     assert "Information Governance team" in desc  # details.description
     assert "What You'll Bring" in desc  # requirements.description
     assert "- Develop, update, and maintain company data maps" in desc  # specs.dailyTasks
@@ -126,3 +128,65 @@ def test_nofluffjobs_helpers_tolerate_junk():
     assert build_description({}) is None
     assert build_description("nope") is None
     assert "Nice to have: TrustArc, Visio" in build_description(fixture_json("nofluffjobs_detail.json"))
+
+
+def test_nofluffjobs_language_requirements_become_text():
+    """``requirements.languages`` is structured, so the prose never names the language."""
+    detail = {
+        "requirements": {
+            "description": "<p>Some prose.</p>",
+            "languages": [
+                {"type": "MUST", "code": "pl", "level": "C2"},
+                {"type": "MUST", "code": "en", "level": "B2"},
+                {"type": "NICE", "code": "de", "level": "B1"},
+            ],
+        }
+    }
+    desc = build_description(detail)
+    # First, so it survives any downstream truncation of the description.
+    assert desc.startswith("Required languages: Polish (C2), English (B2).")
+    assert "Nice-to-have languages: German (B1)." in desc
+    assert "Some prose." in desc
+
+
+def test_nofluffjobs_language_levels_and_unknown_codes():
+    detail = {
+        "requirements": {
+            "languages": [
+                {"type": "MUST", "code": "pl", "level": "NATIVE"},
+                {"type": "MUST", "code": "en", "level": None},
+                {"type": "MUST", "code": "zz", "level": "A1"},
+                {"type": "NICE", "code": "", "level": "B2"},  # skipped: no code
+                "junk",
+            ]
+        }
+    }
+    assert build_description(detail).strip() == "Required languages: Polish (native), English, ZZ (A1)."
+
+
+def test_nofluffjobs_without_languages_says_nothing_about_them():
+    detail = {"requirements": {"description": "<p>Some prose.</p>", "languages": None}}
+    desc = build_description(detail)
+    assert "Required languages" not in desc and "Nice-to-have languages" not in desc
+    assert build_description({"details": {"description": "Hi there, this is the job."}}).strip() == (
+        "Hi there, this is the job."
+    )
+
+
+def test_nofluffjobs_language_block_feeds_the_rule_filter(make_ctx):
+    """End to end: the hydrated description makes the language detector fire."""
+    detail = fixture_json("nofluffjobs_detail.json")
+    detail["requirements"]["languages"] = [
+        {"type": "MUST", "code": "pl", "level": "C2"},
+        {"type": "MUST", "code": "en", "level": "B2"},
+        {"type": "NICE", "code": "de", "level": "B1"},
+        # "Germany" in the prose already trips the "de" name, so assert on a language the
+        # fixture never mentions as well.
+        {"type": "NICE", "code": "cs", "level": None},
+    ]
+    routes = {**ROUTES, ("GET", "/api/posting/"): detail}
+    ctx = make_ctx(routes, options={"regions": ["pl"], "max_pages": 1})
+    job = next(iter(NoFluffJobs().fetch(ctx)))
+    found = find_language_requirements(job.description)
+    assert "pl" in found.required and "en" in found.required
+    assert "de" in found.optional and "cs" in found.optional

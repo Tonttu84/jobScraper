@@ -33,6 +33,14 @@ Detail (``tests/fixtures/nofluffjobs_detail.json``): the prose lives in
     ``specs.dailyTasks`` (plain strings), and the skills in ``requirements.musts``/``nices``
     as ``[{"value": …, "type": …}]``. There is no ``specifics`` block. The endpoint takes the
     posting ``id`` as-is, diacritics and all.
+
+Language requirements are *structured*, not prose: ``requirements.languages`` holds
+    ``[{"type": "MUST"|"NICE", "code": "pl", "level": "C2"|"NATIVE"|null}]``. 36 of the 124 live
+    postings on 2026-09-07 never wrote "Polish" anywhere in their text, so
+    ``build_description`` renders the field into a leading "Required languages: …" /
+    "Nice-to-have languages: …" block. The wording is load-bearing: it is what
+    ``jobscraper.filters.language.find_language_requirements`` keys on, and the block goes
+    first so it survives truncation downstream.
 """
 
 from __future__ import annotations
@@ -54,6 +62,14 @@ POSTING_API = "https://nofluffjobs.com/api/posting/{id}"
 JOB_URL = "https://nofluffjobs.com/{region}/job/{slug}"
 INFINITE_SEARCH_CT = "application/infiniteSearch+json"
 PAGE_SIZE = 20
+
+# ISO-639-1 codes seen in ``requirements.languages`` → the English name the rule filter knows.
+ISO_LANGUAGE_NAMES = {
+    "pl": "Polish", "en": "English", "de": "German", "fr": "French", "es": "Spanish",
+    "it": "Italian", "nl": "Dutch", "cs": "Czech", "sk": "Slovak", "uk": "Ukrainian",
+    "ru": "Russian", "pt": "Portuguese", "sv": "Swedish", "no": "Norwegian",
+    "da": "Danish", "fi": "Finnish", "hu": "Hungarian", "ro": "Romanian",
+}
 
 
 def _texts(value: Any) -> list[str]:
@@ -145,6 +161,46 @@ def parse_posting(rec: dict[str, Any], *, region: str) -> Job | None:
     )
 
 
+def _language_name(entry: dict[str, Any]) -> str | None:
+    """``{"code": "pl", "level": "C2"}`` → ``"Polish (C2)"``; unknown codes stay as ``"ZZ"``."""
+    code = str(entry.get("code") or "").strip()
+    if not code:
+        return None
+    name = ISO_LANGUAGE_NAMES.get(code.lower(), code.upper())
+    level = entry.get("level")
+    level = str(level).strip() if isinstance(level, str) else ""
+    if not level:
+        return name
+    return f"{name} ({'native' if level.upper() == 'NATIVE' else level})"
+
+
+def language_lines(holder: Any) -> list[str]:
+    """Render ``requirements.languages`` as sentences the language rule filter can read.
+
+    The "Required" / "Nice-to-have" wording is what ``filters.language`` classifies on, so it
+    is deliberate — do not reword it without a matching change there.
+    """
+    entries = holder.get("languages") if isinstance(holder, dict) else None
+    if not isinstance(entries, list):
+        return []
+    musts: list[str] = []
+    nices: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = _language_name(entry)
+        if not name:
+            continue
+        bucket = nices if str(entry.get("type") or "").strip().upper() == "NICE" else musts
+        bucket.append(name)
+    lines = []
+    if musts:
+        lines.append("Required languages: " + ", ".join(dict.fromkeys(musts)) + ".")
+    if nices:
+        lines.append("Nice-to-have languages: " + ", ".join(dict.fromkeys(nices)) + ".")
+    return lines
+
+
 def build_description(detail: Any) -> str | None:
     """Assemble a description out of whichever detail blocks this posting carries."""
     if not isinstance(detail, dict):
@@ -155,7 +211,8 @@ def build_description(detail: Any) -> str | None:
         return value if isinstance(value, dict) else {}
 
     specs, details, requirements = block("specs"), block("details"), block("requirements")
-    parts: list[str] = []
+    # First: the structured language requirements are the one block that must survive truncation.
+    parts: list[str] = language_lines(requirements) or language_lines(detail)
     for holder in (details, requirements, specs, detail):
         parts.extend(_texts(holder.get("description")))
     tasks = _texts(specs.get("dailyTasks")) or _texts(detail.get("dailyTasks"))
