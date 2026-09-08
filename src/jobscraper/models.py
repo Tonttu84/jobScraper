@@ -98,3 +98,59 @@ class AIVerdict(BaseModel):
     why_apply: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     usage: dict[str, int] = Field(default_factory=dict)
+
+
+DecisionStatus = Literal["interested", "applied", "skipped", "interview", "rejected", "offer"]
+
+
+class Decision(BaseModel):
+    """What one user decided about one job (the clickable state in the web UI)."""
+
+    job_id: str
+    user: str = Field(description="Free-form handle chosen in the UI; several students can share one DB")
+    status: DecisionStatus
+    note: str | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+ReportSection = Literal["ranked", "prefilter", "review"]
+
+
+class ReportItem(BaseModel):
+    job_id: str
+    section: ReportSection
+    position: int = Field(description="1-based order within the section")
+    score: int | None = Field(None, description="rank score for 'ranked', prefilter score for 'prefilter', None for 'review'")
+
+
+class ReportSnapshot(BaseModel):
+    """The structured form of one `jobscraper report` run."""
+
+    id: int | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    days: int
+    prompt_version: str
+    counts: dict[str, int] = Field(default_factory=dict)   # jobs, keep, review, drop, prefiltered, ranked
+    cost: dict[str, float] = Field(default_factory=dict)
+    path: str | None = Field(None, description="Markdown file written alongside, if any")
+    items: list[ReportItem] = Field(default_factory=list)
+
+
+class JobFacets(BaseModel):
+    """Deterministic, filterable attributes derived from the posting text and filter signals."""
+
+    job_id: str
+    facets_version: str
+    posting_language: str | None = Field(None, description="ISO-639-1 the posting is written in")
+    languages_required: list[str] = Field(default_factory=list, description="ISO-639-1 codes explicitly required")
+    languages_optional: list[str] = Field(default_factory=list, description="ISO-639-1 codes mentioned as a plus")
+    stacks: list[str] = Field(default_factory=list, description="Sorted stack tags, see facets.STACKS")
+    web_dev: bool = Field(False, description="True when the stack overlaps Full Stack Open (React/Node/TS web work)")
+
+    def language_ok(self, spoken: set[str] | list[str]) -> bool:
+        """True when someone who speaks ``spoken`` can work this job: the posting language (if
+        known) and every explicitly required language are in ``spoken``."""
+        have = {code.lower() for code in spoken}
+        if self.posting_language and self.posting_language.lower() not in have:
+            return False
+        return all(code.lower() in have for code in self.languages_required)

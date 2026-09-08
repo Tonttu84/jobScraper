@@ -10,7 +10,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jobscraper.config import DATA_DIR
-from jobscraper.models import AIVerdict, FilterResult, Job
+from jobscraper.models import (
+    AIVerdict,
+    Decision,
+    FilterResult,
+    Job,
+    JobFacets,
+    ReportItem,
+    ReportSnapshot,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -60,6 +68,44 @@ CREATE TABLE IF NOT EXISTS runs (
     new INTEGER NOT NULL,
     error TEXT
 );
+
+CREATE TABLE IF NOT EXISTS job_facets (
+    job_id TEXT PRIMARY KEY,
+    facets_version TEXT NOT NULL,
+    posting_language TEXT,
+    web_dev INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS decisions (
+    job_id TEXT NOT NULL,
+    user TEXT NOT NULL,
+    status TEXT NOT NULL,
+    note TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (job_id, user)
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    days INTEGER NOT NULL,
+    prompt_version TEXT NOT NULL,
+    counts TEXT NOT NULL,
+    cost TEXT NOT NULL,
+    path TEXT
+);
+
+CREATE TABLE IF NOT EXISTS report_items (
+    report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL,
+    section TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    score INTEGER,
+    PRIMARY KEY (report_id, job_id)
+);
+CREATE INDEX IF NOT EXISTS report_items_report ON report_items(report_id, section, position);
 """
 
 
@@ -73,6 +119,7 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
 
     @contextmanager
@@ -163,6 +210,102 @@ class Store:
             out[v.job_id] = v  # latest wins
         return out
 
+    # ----------------------------------------------------------------- facets
+    def save_facets(self, facets: list[JobFacets]) -> None:
+        """Store one row per job; re-running the facet stage replaces the old row."""
+        now = _now()
+        with self.tx() as c:
+            c.executemany(
+                "INSERT OR REPLACE INTO job_facets (job_id, facets_version, posting_language, web_dev, updated_at, data) VALUES (?,?,?,?,?,?)",
+                [(f.job_id, f.facets_version, f.posting_language, int(f.web_dev), now, f.model_dump_json()) for f in facets],
+            )
+
+    def facets(self, ids: list[str] | None = None) -> dict[str, JobFacets]:
+        sql, args = "SELECT data FROM job_facets", []
+        if ids is not None:
+            if not ids:
+                return {}
+            sql += f" WHERE job_id IN ({','.join('?' * len(ids))})"
+            args.extend(ids)
+        return {f.job_id: f for f in (JobFacets.model_validate_json(r["data"]) for r in self.conn.execute(sql, args))}
+
+    # -------------------------------------------------------------- decisions
+    def save_decision(self, d: Decision) -> Decision:
+        """Insert or replace one user's decision about one job, stamped now."""
+        stored = d.model_copy(update={"updated_at": datetime.now(UTC)})
+        with self.tx() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO decisions (job_id, user, status, note, updated_at) VALUES (?,?,?,?,?)",
+                (stored.job_id, stored.user, stored.status, stored.note, stored.updated_at.isoformat()),
+            )
+        return stored
+
+    def delete_decision(self, job_id: str, user: str) -> bool:
+        """Drop one decision. True when a row was actually removed."""
+        with self.tx() as c:
+            cur = c.execute("DELETE FROM decisions WHERE job_id=? AND user=?", (job_id, user))
+        return cur.rowcount > 0
+
+    def decisions(self, user: str | None = None) -> list[Decision]:
+        sql, args = "SELECT job_id, user, status, note, updated_at FROM decisions", []
+        if user is not None:
+            sql += " WHERE user=?"
+            args.append(user)
+        sql += " ORDER BY updated_at DESC, job_id"
+        return [Decision(**dict(row)) for row in self.conn.execute(sql, args)]
+
+    def decision_users(self) -> list[str]:
+        return [r["user"] for r in self.conn.execute("SELECT DISTINCT user FROM decisions ORDER BY user")]
+
+    # ---------------------------------------------------------------- reports
+    @staticmethod
+    def _snapshot(row: sqlite3.Row, items: list[ReportItem] | None = None) -> ReportSnapshot:
+        return ReportSnapshot(
+            id=row["id"],
+            created_at=row["created_at"],
+            days=row["days"],
+            prompt_version=row["prompt_version"],
+            counts=json.loads(row["counts"]),
+            cost=json.loads(row["cost"]),
+            path=row["path"],
+            items=items or [],
+        )
+
+    def save_report(self, snap: ReportSnapshot) -> ReportSnapshot:
+        """Insert the report row and its items in one transaction; returns a copy with the id."""
+        with self.tx() as c:
+            cur = c.execute(
+                "INSERT INTO reports (created_at, days, prompt_version, counts, cost, path) VALUES (?,?,?,?,?,?)",
+                (snap.created_at.isoformat(), snap.days, snap.prompt_version, dumps(snap.counts), dumps(snap.cost), snap.path),
+            )
+            report_id = cur.lastrowid
+            c.executemany(
+                "INSERT OR REPLACE INTO report_items (report_id, job_id, section, position, score) VALUES (?,?,?,?,?)",
+                [(report_id, i.job_id, i.section, i.position, i.score) for i in snap.items],
+            )
+        return snap.model_copy(update={"id": report_id})
+
+    def reports(self) -> list[ReportSnapshot]:
+        """Newest first, without items — cheap listing for the web UI."""
+        return [self._snapshot(row) for row in self.conn.execute("SELECT * FROM reports ORDER BY id DESC")]
+
+    def report(self, report_id: int | None = None) -> ReportSnapshot | None:
+        """One report with its items, the latest when no id is given."""
+        if report_id is None:
+            row = self.conn.execute("SELECT * FROM reports ORDER BY id DESC LIMIT 1").fetchone()
+        else:
+            row = self.conn.execute("SELECT * FROM reports WHERE id=?", (report_id,)).fetchone()
+        if row is None:
+            return None
+        items = [
+            ReportItem(job_id=r["job_id"], section=r["section"], position=r["position"], score=r["score"])
+            for r in self.conn.execute(
+                "SELECT job_id, section, position, score FROM report_items WHERE report_id=? ORDER BY section, position",
+                (row["id"],),
+            )
+        ]
+        return self._snapshot(row, items)
+
     # ------------------------------------------------------------------- runs
     def log_run(self, source: str, fetched: int, new: int, error: str | None = None) -> None:
         with self.tx() as c:
@@ -172,7 +315,10 @@ class Store:
         per_source = {r["source"]: r["n"] for r in self.conn.execute("SELECT source, COUNT(*) n FROM jobs GROUP BY source")}
         per_status = {r["status"]: r["n"] for r in self.conn.execute("SELECT status, COUNT(*) n FROM filter_results GROUP BY status")}
         per_stage = {r["stage"]: r["n"] for r in self.conn.execute("SELECT stage, COUNT(*) n FROM ai_verdicts GROUP BY stage")}
-        return {"jobs_per_source": per_source, "filter": per_status, "ai": per_stage}
+        per_decision = {r["status"]: r["n"] for r in self.conn.execute("SELECT status, COUNT(*) n FROM decisions GROUP BY status")}
+        reports = self.conn.execute("SELECT COUNT(*) n FROM reports").fetchone()["n"]
+        return {"jobs_per_source": per_source, "filter": per_status, "ai": per_stage,
+                "decisions": per_decision, "reports": reports}
 
     def close(self) -> None:
         self.conn.close()

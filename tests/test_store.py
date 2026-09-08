@@ -6,7 +6,15 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from jobscraper.models import AIVerdict, FilterResult, Job
+from jobscraper.models import (
+    AIVerdict,
+    Decision,
+    FilterResult,
+    Job,
+    JobFacets,
+    ReportItem,
+    ReportSnapshot,
+)
 from jobscraper.store import Store
 
 
@@ -174,6 +182,222 @@ def test_store_creates_parent_directories(tmp_path):
     s = Store(tmp_path / "nested" / "deeper" / "jobs.db")
     try:
         assert s.path.exists()
-        assert s.stats() == {"jobs_per_source": {}, "filter": {}, "ai": {}}
+        assert s.stats() == {"jobs_per_source": {}, "filter": {}, "ai": {},
+                             "decisions": {}, "reports": 0}
     finally:
         s.close()
+
+
+# --------------------------------------------------------------------- facets
+
+
+def make_facets(job_id: str, **kw) -> JobFacets:
+    base = {
+        "job_id": job_id,
+        "facets_version": "v1",
+        "posting_language": "en",
+        "languages_required": ["en"],
+        "languages_optional": ["fi"],
+        "stacks": ["python", "go"],
+        "web_dev": True,
+    }
+    base.update(kw)
+    return JobFacets(**base)
+
+
+def test_facets_round_trip_and_id_filter(store):
+    a = make_facets("a")
+    b = make_facets("b", posting_language="fi", stacks=["react"], web_dev=False,
+                    languages_required=["fi"], languages_optional=[])
+    store.save_facets([a, b])
+
+    everything = store.facets()
+    assert set(everything) == {"a", "b"}
+    assert everything["a"].stacks == ["python", "go"]
+    assert everything["a"].languages_optional == ["fi"]
+    assert everything["a"].web_dev is True
+    assert everything["b"].web_dev is False
+    assert everything["b"].posting_language == "fi"
+
+    assert set(store.facets(ids=["b"])) == {"b"}
+    assert store.facets(ids=[]) == {}
+    assert store.facets(ids=["nope"]) == {}
+
+
+def test_save_facets_replaces_existing_row(store):
+    store.save_facets([make_facets("a", stacks=["python"])])
+    store.save_facets([make_facets("a", stacks=["rust"], facets_version="v2")])
+    facets = store.facets()
+    assert len(facets) == 1
+    assert facets["a"].stacks == ["rust"]
+    assert facets["a"].facets_version == "v2"
+
+
+def test_save_facets_with_empty_list_is_a_no_op(store):
+    store.save_facets([])
+    assert store.facets() == {}
+
+
+# ------------------------------------------------------------------ decisions
+
+
+def test_save_decision_round_trip_and_replace(store):
+    stored = store.save_decision(Decision(job_id="a", user="tont", status="interested"))
+    assert stored.job_id == "a"
+    assert stored.status == "interested"
+    assert stored.updated_at.tzinfo is not None
+
+    (only,) = store.decisions()
+    assert only.status == "interested"
+    assert only.note is None
+
+    later = store.save_decision(Decision(job_id="a", user="tont", status="applied",
+                                         note="sent CV"))
+    decisions = store.decisions()
+    assert len(decisions) == 1
+    assert decisions[0].status == "applied"
+    assert decisions[0].note == "sent CV"
+    assert later.updated_at >= stored.updated_at
+
+
+def test_save_decision_stamps_updated_at_now(store):
+    stale = datetime(2020, 1, 1, tzinfo=UTC)
+    stored = store.save_decision(Decision(job_id="a", user="tont", status="skipped",
+                                          updated_at=stale))
+    assert stored.updated_at > stale
+    assert store.decisions()[0].updated_at > stale
+
+
+def test_decisions_are_per_user(store):
+    store.save_decision(Decision(job_id="a", user="tont", status="applied"))
+    store.save_decision(Decision(job_id="a", user="mira", status="skipped"))
+    store.save_decision(Decision(job_id="b", user="mira", status="interview"))
+
+    assert len(store.decisions()) == 3
+    assert {d.job_id for d in store.decisions(user="mira")} == {"a", "b"}
+    assert [d.status for d in store.decisions(user="tont")] == ["applied"]
+    assert store.decisions(user="nobody") == []
+    assert store.decision_users() == ["mira", "tont"]
+
+
+def test_decisions_are_newest_first(store):
+    store.save_decision(Decision(job_id="a", user="tont", status="interested"))
+    store.save_decision(Decision(job_id="b", user="tont", status="applied"))
+    store.save_decision(Decision(job_id="c", user="tont", status="rejected"))
+    updated = [d.updated_at for d in store.decisions()]
+    assert updated == sorted(updated, reverse=True)
+
+
+def test_delete_decision(store):
+    store.save_decision(Decision(job_id="a", user="tont", status="applied"))
+    store.save_decision(Decision(job_id="a", user="mira", status="skipped"))
+
+    assert store.delete_decision("a", "tont") is True
+    assert store.delete_decision("a", "tont") is False
+    assert store.delete_decision("nope", "tont") is False
+    assert [d.user for d in store.decisions()] == ["mira"]
+
+
+def test_decision_users_is_empty_without_decisions(store):
+    assert store.decision_users() == []
+
+
+# -------------------------------------------------------------------- reports
+
+
+def make_snapshot(**kw) -> ReportSnapshot:
+    base = {
+        "days": 7,
+        "prompt_version": "v1",
+        "counts": {"jobs": 3, "keep": 2, "review": 1, "drop": 0, "prefiltered": 2, "ranked": 1},
+        "cost": {"total": 1.25},
+        "path": "/tmp/report.md",
+        "items": [
+            ReportItem(job_id="a", section="ranked", position=1, score=91),
+            ReportItem(job_id="b", section="prefilter", position=1, score=55),
+            ReportItem(job_id="c", section="review", position=1, score=None),
+        ],
+    }
+    base.update(kw)
+    return ReportSnapshot(**base)
+
+
+def test_save_report_returns_a_copy_with_an_id(store):
+    snap = make_snapshot()
+    saved = store.save_report(snap)
+    assert saved.id is not None
+    assert snap.id is None  # the argument is not mutated
+    assert saved.days == 7
+    assert len(saved.items) == 3
+
+
+def test_report_returns_the_latest_with_items_in_order(store):
+    store.save_report(make_snapshot(prompt_version="old"))
+    second = store.save_report(make_snapshot(prompt_version="new", days=14))
+
+    latest = store.report()
+    assert latest is not None
+    assert latest.id == second.id
+    assert latest.prompt_version == "new"
+    assert latest.days == 14
+    assert latest.counts == {"jobs": 3, "keep": 2, "review": 1, "drop": 0, "prefiltered": 2,
+                             "ranked": 1}
+    assert latest.cost == {"total": 1.25}
+    assert latest.path == "/tmp/report.md"
+    assert [(i.section, i.position, i.job_id, i.score) for i in latest.items] == [
+        ("prefilter", 1, "b", 55),
+        ("ranked", 1, "a", 91),
+        ("review", 1, "c", None),
+    ]
+
+
+def test_report_by_id_and_item_position_order(store):
+    first = store.save_report(make_snapshot(items=[
+        ReportItem(job_id="z", section="ranked", position=2, score=10),
+        ReportItem(job_id="y", section="ranked", position=1, score=80),
+    ]))
+    store.save_report(make_snapshot(prompt_version="newer"))
+
+    fetched = store.report(first.id)
+    assert fetched is not None
+    assert fetched.id == first.id
+    assert [i.job_id for i in fetched.items] == ["y", "z"]
+    assert [i.position for i in fetched.items] == [1, 2]
+    assert store.report(9999) is None
+
+
+def test_reports_lists_newest_first_without_items(store):
+    store.save_report(make_snapshot(prompt_version="old"))
+    newest = store.save_report(make_snapshot(prompt_version="new"))
+
+    listing = store.reports()
+    assert [r.id for r in listing] == [newest.id, newest.id - 1]
+    assert [r.prompt_version for r in listing] == ["new", "old"]
+    assert all(r.items == [] for r in listing)
+    assert listing[0].counts["jobs"] == 3
+
+
+def test_report_on_an_empty_database_is_none(store):
+    assert store.report() is None
+    assert store.reports() == []
+
+
+def test_deleting_a_report_cascades_to_its_items(store):
+    saved = store.save_report(make_snapshot())
+    assert store.conn.execute("SELECT COUNT(*) FROM report_items").fetchone()[0] == 3
+
+    with store.tx() as c:
+        c.execute("DELETE FROM reports WHERE id=?", (saved.id,))
+    assert store.conn.execute("SELECT COUNT(*) FROM report_items").fetchone()[0] == 0
+    assert store.report() is None
+
+
+def test_stats_includes_decisions_and_reports(store):
+    store.save_decision(Decision(job_id="a", user="tont", status="applied"))
+    store.save_decision(Decision(job_id="b", user="tont", status="applied"))
+    store.save_decision(Decision(job_id="c", user="mira", status="skipped"))
+    store.save_report(make_snapshot())
+
+    stats = store.stats()
+    assert stats["decisions"] == {"applied": 2, "skipped": 1}
+    assert stats["reports"] == 1

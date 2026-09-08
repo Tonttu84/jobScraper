@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jobscraper.config import DATA_DIR
-from jobscraper.models import AIVerdict, FilterResult, Job
+from jobscraper.models import AIVerdict, FilterResult, Job, ReportItem, ReportSnapshot
 
 
 def _tier_label(t: int | None) -> str:
@@ -68,6 +68,46 @@ def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: d
 
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
+                   ranked: dict[str, AIVerdict], *, days: int, cost: dict | None = None,
+                   path: Path | None = None, prompt_version: str) -> ReportSnapshot:
+    """The same content as :func:`write_report`, in structured form for the DB and the web UI.
+
+    Sections and their ordering mirror the markdown exactly: ranked by rank score desc,
+    then the relevant prefilter survivors that were not ranked, then the rule-filter
+    ``review`` leftovers that never reached the AI (capped at 300, as in the markdown).
+    """
+    by_id = {j.id: j for j in jobs}
+    items: list[ReportItem] = []
+
+    for v in sorted(ranked.values(), key=lambda v: -v.score):
+        if v.job_id in by_id:
+            items.append(ReportItem(job_id=v.job_id, section="ranked", position=len(items) + 1, score=v.score))
+
+    rest = [v for v in prefilter.values() if v.job_id not in ranked]
+    start = len(items)
+    for v in sorted(rest, key=lambda v: -v.score):
+        if v.job_id in by_id and v.relevant:
+            items.append(ReportItem(job_id=v.job_id, section="prefilter", position=len(items) - start + 1, score=v.score))
+
+    review = [f for f in filters.values() if f.status == "review" and f.job_id not in prefilter]
+    start = len(items)
+    for f in review[:300]:
+        if f.job_id in by_id:
+            items.append(ReportItem(job_id=f.job_id, section="review", position=len(items) - start + 1, score=None))
+
+    counts = {
+        "jobs": len(jobs),
+        "keep": sum(f.status == "keep" for f in filters.values()),
+        "review": sum(f.status == "review" for f in filters.values()),
+        "drop": sum(f.status == "drop" for f in filters.values()),
+        "prefiltered": len(prefilter),
+        "ranked": len(ranked),
+    }
+    return ReportSnapshot(days=days, prompt_version=prompt_version, counts=counts,
+                          cost=dict(cost or {}), path=str(path) if path else None, items=items)
 
 
 def export_jsonl(jobs: list[Job], filters: dict[str, FilterResult], verdicts: dict[str, AIVerdict], path: Path) -> Path:

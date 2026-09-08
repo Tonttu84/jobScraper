@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from jobscraper.models import AIVerdict, FilterResult, Job
-from jobscraper.report import export_jsonl, write_report
+from jobscraper.report import build_snapshot, export_jsonl, write_report
 
 
 def make_job(source_id: str, title: str, **kw) -> Job:
@@ -145,3 +145,117 @@ def test_export_jsonl_has_one_line_per_job(tmp_path, state):
     assert by_id[pre_job.id]["verdict"]["stage"] == "prefilter"
     assert by_id[review_job.id]["verdict"] is None
     assert by_id[review_job.id]["filter"]["status"] == "review"
+
+
+# ------------------------------------------------------------ build_snapshot
+
+
+def test_build_snapshot_sections_positions_and_scores(state):
+    jobs, filters, prefilter, ranked = state
+    ranked_job, pre_job, review_job = jobs
+
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1")
+
+    assert snap.id is None
+    assert snap.days == 7
+    assert snap.prompt_version == "v1"
+
+    by_section = {}
+    for item in snap.items:
+        by_section.setdefault(item.section, []).append(item)
+
+    assert [(i.job_id, i.position, i.score) for i in by_section["ranked"]] == [
+        (ranked_job.id, 1, 91)
+    ]
+    assert [(i.job_id, i.position, i.score) for i in by_section["prefilter"]] == [
+        (pre_job.id, 1, 55)
+    ]
+    assert [(i.job_id, i.position, i.score) for i in by_section["review"]] == [
+        (review_job.id, 1, None)
+    ]
+
+    # the ranked job is never repeated in the prefilter section
+    assert ranked_job.id not in {i.job_id for i in by_section["prefilter"]}
+
+
+def test_build_snapshot_counts_match_the_markdown_header(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=3, prompt_version="v1")
+    assert snap.counts == {"jobs": 3, "keep": 2, "review": 1, "drop": 0,
+                           "prefiltered": 2, "ranked": 1}
+
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text("utf-8")
+    assert f"Jobs in DB: {snap.counts['jobs']}" in text
+    assert f"rule-kept: {snap.counts['keep']}" in text
+    assert f"review: {snap.counts['review']}" in text
+    assert f"dropped: {snap.counts['drop']}" in text
+    assert f"prefiltered: {snap.counts['prefiltered']}" in text
+    assert f"ranked: {snap.counts['ranked']}" in text
+
+
+def test_build_snapshot_cost_and_path(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    md = tmp_path / "report.md"
+
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7,
+                          cost={"total": 2.5, "claude-opus-5": 2.5}, path=md,
+                          prompt_version="v2")
+    assert snap.cost == {"total": 2.5, "claude-opus-5": 2.5}
+    assert snap.path == str(md)
+
+    bare = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v2")
+    assert bare.cost == {}
+    assert bare.path is None
+
+
+def test_build_snapshot_orders_sections_by_score_desc(state):
+    jobs, filters, prefilter, ranked = state
+    ranked_job, pre_job, _review_job = jobs
+    extra = make_job("rank-2", "Junior Data Engineer")
+    extra_low = make_job("pre-2", "Junior QA Engineer")
+    jobs = [*jobs, extra, extra_low]
+    filters = {**filters,
+               extra.id: FilterResult(job_id=extra.id, status="keep", location_tier=1),
+               extra_low.id: FilterResult(job_id=extra_low.id, status="keep", location_tier=1)}
+    ranked = {**ranked, extra.id: make_verdict(extra.id, "rank", 95)}
+    prefilter = {**prefilter,
+                 extra.id: make_verdict(extra.id, "prefilter", 60),
+                 extra_low.id: make_verdict(extra_low.id, "prefilter", 70)}
+
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1")
+    ranked_items = [i for i in snap.items if i.section == "ranked"]
+    pre_items = [i for i in snap.items if i.section == "prefilter"]
+
+    assert [(i.job_id, i.position, i.score) for i in ranked_items] == [
+        (extra.id, 1, 95), (ranked_job.id, 2, 91)]
+    assert [(i.job_id, i.position, i.score) for i in pre_items] == [
+        (extra_low.id, 1, 70), (pre_job.id, 2, 55)]
+
+
+def test_build_snapshot_skips_unknown_jobs_and_irrelevant_prefilter(state):
+    jobs, filters, prefilter, ranked = state
+    ranked = {**ranked, "ghost": make_verdict("ghost", "rank", 99)}
+    prefilter = {**prefilter,
+                 "ghost2": make_verdict("ghost2", "prefilter", 88),
+                 jobs[2].id: make_verdict(jobs[2].id, "prefilter", 20, relevant=False)}
+
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1")
+    ids = {i.job_id for i in snap.items}
+    assert "ghost" not in ids
+    assert "ghost2" not in ids
+    # the irrelevant prefilter verdict is not listed, and its job left the review section
+    assert jobs[2].id not in ids
+    assert snap.counts["prefiltered"] == 4
+
+
+def test_build_snapshot_caps_the_review_section_at_300(state):
+    jobs, filters, _prefilter, _ranked = state
+    many = [make_job(f"rev-{n}", f"Developer {n}") for n in range(400)]
+    filters = {**filters,
+               **{j.id: FilterResult(job_id=j.id, status="review", reasons=["x"]) for j in many}}
+    snap = build_snapshot([*jobs, *many], filters, {}, {}, days=7, prompt_version="v1")
+
+    review = [i for i in snap.items if i.section == "review"]
+    assert len(review) == 300
+    assert [i.position for i in review[:3]] == [1, 2, 3]
+    assert all(i.score is None for i in review)
