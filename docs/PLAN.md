@@ -77,4 +77,6 @@ the first real run; expect a few to need small parser fixes.
 - Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.
 - Message Batches API for the prefilter (50% cheaper, async).
 - Headless-browser fallback (Playwright is already a skill of yours) for Cloudflare sites.
-- Track applications (applied / rejected / interview) in the same DB.
+- ~~Track applications (applied / rejected / interview) in the same DB.~~ Done: `jobscraper serve`
+  is a small FastAPI UI over the stored reports with per-user decisions and facet filters
+  (languages, stack, "benefits from Full Stack Open") — see docs/WEB.md.

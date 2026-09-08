@@ -5,8 +5,10 @@
     jobscraper filter               # rule filter over jobs seen in the last N days
     jobscraper prefilter            # Sonnet pass over rule survivors
     jobscraper rank                 # Opus pass over the best prefilter survivors
-    jobscraper report               # markdown report + JSONL export
+    jobscraper report               # markdown report + JSONL export, stored in the DB
     jobscraper run                  # scrape → filter → prefilter → rank → report
+    jobscraper facets               # recompute the deterministic facets (backfill an old DB)
+    jobscraper serve                # web UI over data/jobs.db
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from rich.console import Console
 from rich.table import Table
 
 from jobscraper.config import DATA_DIR, load_settings
+from jobscraper.facets import compute_all
 from jobscraper.filters import RULES_VERSION, apply_rules, dedupe
 from jobscraper.http import Http
 from jobscraper.models import Job
@@ -132,8 +135,11 @@ def filter_cmd(days: int = 30, verbose: bool = False) -> None:
         for d in others:
             dup_results.append(FilterResult(job_id=d, status="drop", reasons=[f"duplicate of {kept}"], signals={"duplicate_of": kept}))
     store.save_filter_results(results + dup_results, RULES_VERSION)
+    facets = compute_all(unique, {r.job_id: r for r in results})
+    store.save_facets(facets)
     counts = {s: sum(r.status == s for r in results) for s in ("keep", "review", "drop")}
     console.print(f"{len(jobs)} jobs, {len(dups)} duplicate groups → {counts}")
+    console.print(f"facets: {len(facets)} jobs, {sum(f.web_dev for f in facets)} web-dev")
     reasons: dict[str, int] = {}
     for r in results:
         if r.status == "drop":
@@ -192,10 +198,10 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
 
 @app.command()
 def report(days: int = 30, out: Path | None = None) -> None:
-    """Write the markdown report and a JSONL export."""
+    """Write the markdown report and a JSONL export, and store the report in the database."""
     from jobscraper.ai.client import estimate_cost
     from jobscraper.ai.prompts import PROMPT_VERSION
-    from jobscraper.report import export_jsonl, write_report
+    from jobscraper.report import build_snapshot, export_jsonl, write_report
 
     store = Store()
     jobs, filters = _load_state(store, days)
@@ -205,7 +211,57 @@ def report(days: int = 30, out: Path | None = None) -> None:
     path = write_report(jobs, filters, pre, ranked, out, cost)
     jsonl = export_jsonl([j for j in jobs if filters.get(j.id) and filters[j.id].status != "drop"], filters, {**pre, **ranked},
                          DATA_DIR / "exports" / "filtered.jsonl")
+    snap = store.save_report(build_snapshot(jobs, filters, pre, ranked, days=days, cost=cost, path=path, prompt_version=PROMPT_VERSION))
+
+    # The web UI needs facets for everything it shows; fill in whatever `filter` never saw.
+    item_ids = list(dict.fromkeys(i.job_id for i in snap.items))
+    known = store.facets(item_ids)
+    by_id = {j.id: j for j in jobs}
+    missing = [by_id[jid] for jid in item_ids if jid not in known and jid in by_id]
+    if missing:
+        store.save_facets(compute_all(missing, filters))
+
+    sections = {s: sum(i.section == s for i in snap.items) for s in ("ranked", "prefilter", "review")}
     console.print(f"report: {path}\nexport: {jsonl}")
+    console.print(f"report #{snap.id}: {sections['ranked']} ranked, {sections['prefilter']} prefilter, "
+                  f"{sections['review']} review → {path}")
+
+
+@app.command("facets")
+def facets_cmd(days: int = 30, verbose: bool = False) -> None:
+    """Recompute the deterministic facets (languages, stack tags, web_dev) for recent jobs.
+
+    `filter` already does this; run it to backfill a database that predates the facet stage,
+    or after bumping FACETS_VERSION, without paying for the AI stages again.
+    """
+    _setup_logging(verbose)
+    store = Store()
+    jobs = store.jobs(seen_within_days=days)
+    computed = compute_all(jobs, store.filter_results())
+    store.save_facets(computed)
+    console.print(f"facets: {len(computed)} jobs, {sum(f.web_dev for f in computed)} web-dev")
+    counts: dict[str, int] = {}
+    for f in computed:
+        for tag in f.stacks:
+            counts[tag] = counts.get(tag, 0) + 1
+    table = Table("stack", "jobs")
+    for tag, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:15]:
+        table.add_row(tag, str(n))
+    console.print(table)
+
+
+@app.command()
+def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None:
+    """Run the web UI (latest report + per-user decisions) over data/jobs.db."""
+    import uvicorn
+
+    from jobscraper.web.app import create_app
+
+    console.print(f"jobscraper web UI on http://{host}:{port} — no auth, keep it local or behind a proxy")
+    if reload:
+        uvicorn.run("jobscraper.web.app:create_app", host=host, port=port, reload=True, factory=True)
+    else:
+        uvicorn.run(create_app(), host=host, port=port)
 
 
 @app.command()

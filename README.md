@@ -4,8 +4,8 @@ Finds junior / intern software jobs across Finland, Estonia, the EU + Norway, Du
 boards; auto-filters them with cheap rules; then lets Claude screen and rank what is left.
 
 ```
-scrape  →  filter (rules)  →  prefilter (Sonnet 5, permissive)  →  rank (Opus 5, top N)  →  report
- 21 sources    SQLite            structured JSON verdicts             markdown + JSONL
+scrape → filter (rules) → prefilter (Sonnet 5, permissive) → rank (Opus 5, top N) → report (markdown + DB) → serve (web UI)
+ 21 sources   SQLite         structured JSON verdicts          top N explained        data/reports + jobs.db    FastAPI on localhost
 ```
 
 See `docs/PLAN.md` for the design, the source list, and the decisions behind it.
@@ -50,12 +50,28 @@ uv run jobscraper prefilter --max-jobs 50     # try the Sonnet pass on a sample 
 uv run jobscraper rank --top 30
 uv run jobscraper report
 uv run jobscraper stats
+uv run jobscraper facets                # backfill the filter facets of an existing DB, no AI re-runs
+uv run jobscraper serve                 # web UI → http://127.0.0.1:8000
 ```
 
 Outputs: `data/jobs.db` (everything), `data/reports/report-YYYY-MM-DD.md` (ranked list),
 `data/exports/filtered.jsonl` (rule survivors with verdicts, for review in Claude Code or a
-spreadsheet). AI verdicts are cached per job, model and prompt version, so re-runs only pay for
-new jobs. Change `PROMPT_VERSION` in `src/jobscraper/ai/prompts.py` when you edit the prompts.
+spreadsheet). Each `report` run is also stored *in* `data/jobs.db` — the run and its counts in
+`reports`, its ordered sections in `report_items` — which is what `serve` reads; your
+applied/skipped/interview marks live in `decisions`. AI verdicts are cached per job, model and
+prompt version, so re-runs only pay for new jobs. Change `PROMPT_VERSION` in
+`src/jobscraper/ai/prompts.py` when you edit the prompts.
+
+### Sharing with other students
+
+`jobscraper serve` is meant to be usable by more than one person: everyone types a handle into
+the page, and decisions (applied / skipped / interested / interview / rejected / offer) are
+stored per handle, so you each keep your own list over the same jobs. The filters are built for
+that too — tick the languages you actually speak (a posting drops out when it is written in, or
+requires, a language you did not tick) and flip on "Benefits from Full Stack Open" to see only
+the React/Node/TypeScript-ish roles. There is **no authentication**: keep it on localhost, or
+put it behind a tunnel (`cloudflared`, `tailscale funnel`) or a reverse proxy with basic auth
+before sharing the URL. See [docs/WEB.md](docs/WEB.md) for the API and the data model.
 
 ## Tuning
 

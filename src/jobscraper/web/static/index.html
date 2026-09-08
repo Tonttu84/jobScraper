@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jobscraper</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232563eb'/%3E%3Ctext x='8' y='12' font-size='11' font-family='sans-serif' text-anchor='middle' fill='white'%3Ej%3C/text%3E%3C/svg%3E">
+<style>
+  [hidden] { display: none !important; }
+  :root {
+    --bg: #f6f7f9; --card: #fff; --ink: #1b1f24; --muted: #6b7280; --line: #e3e6ea;
+    --accent: #2563eb; --good: #16a34a; --mid: #d97706; --low: #9ca3af;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  a { color: var(--accent); }
+  header {
+    background: var(--card); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 5;
+  }
+  .bar {
+    max-width: 1100px; margin: 0 auto; padding: 10px 16px;
+    display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  }
+  .bar h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
+  .bar .spacer { flex: 1; }
+  #report-info { color: var(--muted); font-size: 13px; }
+  input, select, button, textarea { font: inherit; color: inherit; }
+  input[type=text], input[type=number], select {
+    border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; background: #fff;
+  }
+  input:focus, select:focus { outline: 2px solid #bfdbfe; outline-offset: 0; }
+  .layout { max-width: 1100px; margin: 0 auto; padding: 16px; display: flex; gap: 16px; align-items: flex-start; }
+  aside {
+    width: 250px; flex: none; background: var(--card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px; position: sticky; top: 60px;
+    max-height: calc(100vh - 76px); overflow: auto;
+  }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 14px 0 6px; }
+  aside h2:first-child { margin-top: 0; }
+  aside label { display: block; font-size: 14px; }
+  aside select[multiple] { width: 100%; height: 92px; }
+  aside input[type=text], aside input[type=number], aside select:not([multiple]) { width: 100%; }
+  main { flex: 1; min-width: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    border: 1px solid var(--line); background: #fff; border-radius: 999px;
+    padding: 2px 9px; font-size: 12px; cursor: pointer; color: var(--muted);
+  }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tag {
+    display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 0 8px; font-size: 11px; color: var(--muted); background: #fbfbfc;
+  }
+  .tag.req { border-color: #fca5a5; color: #b91c1c; background: #fef2f2; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 10px;
+  }
+  .card-main { cursor: pointer; display: flex; gap: 12px; }
+  .score {
+    flex: none; width: 44px; height: 44px; border-radius: 8px; color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 600;
+    background: var(--low);
+  }
+  .score.hi { background: var(--good); } .score.mid { background: var(--mid); }
+  .card h3 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+  .actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .actions button {
+    border: 1px solid var(--line); background: #fff; border-radius: 6px;
+    padding: 3px 9px; font-size: 13px; cursor: pointer;
+  }
+  .actions button:hover { border-color: var(--accent); color: var(--accent); }
+  .actions button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .actions input.note { flex: 1; min-width: 160px; }
+  .badge {
+    font-size: 11px; border-radius: 999px; padding: 1px 8px;
+    background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe;
+  }
+  .detail { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; font-size: 14px; }
+  .detail h4 { margin: 10px 0 3px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+  .detail .desc { white-space: pre-wrap; max-height: 380px; overflow: auto; background: #fbfbfc; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+  .muted { color: var(--muted); }
+  .hint { color: #b91c1c; font-size: 13px; }
+  #more { display: block; width: 100%; padding: 8px; border: 1px solid var(--line); background: #fff; border-radius: 8px; cursor: pointer; }
+  #count { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>jobscraper</h1>
+    <label class="muted">You are:
+      <input type="text" id="user" placeholder="handle" size="12" autocomplete="off">
+    </label>
+    <span id="hint" class="hint"></span>
+    <span class="spacer"></span>
+    <span id="report-info">loading…</span>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <h2>Languages you speak</h2>
+    <div id="f-langs"></div>
+
+    <h2>Stack</h2>
+    <label><input type="checkbox" id="f-webdev"> Benefits from Full Stack Open</label>
+    <div class="chips" id="f-stacks" style="margin-top:6px"></div>
+
+    <h2>Section</h2>
+    <div id="f-sections"></div>
+
+    <h2>Country</h2>
+    <select id="f-country" multiple></select>
+
+    <h2>Remote</h2>
+    <select id="f-remote" multiple></select>
+
+    <h2>Min score</h2>
+    <input type="number" id="f-score" min="0" max="100" step="5" placeholder="any">
+
+    <h2>Decision</h2>
+    <select id="f-decision"><option value="">all</option><option value="none">no decision</option></select>
+
+    <h2>Search</h2>
+    <input type="text" id="f-q" placeholder="title or company">
+
+    <p><a href="#" id="reset">Reset filters</a></p>
+  </aside>
+
+  <main>
+    <div id="count"></div>
+    <div id="list"></div>
+    <button id="more" hidden>Load more</button>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+var STATE = { offset: 0, total: 0, shown: 0 };
+var LIMIT = 50;
+
+function esc(value) {
+  return String(value === null || value === undefined ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function $(id) { return document.getElementById(id); }
+function store(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* private mode */ } }
+function stored(key, fallback) {
+  try { var v = localStorage.getItem(key); return v === null ? fallback : v; } catch (e) { return fallback; }
+}
+function handle() { return $("user").value.trim(); }
+
+function needHandle() {
+  if (handle()) { $("hint").textContent = ""; return true; }
+  $("hint").textContent = "pick a handle first";
+  $("user").focus();
+  return false;
+}
+
+function checkedValues(container) {
+  var out = [];
+  var boxes = container.querySelectorAll("input[type=checkbox]");
+  for (var i = 0; i < boxes.length; i++) { if (boxes[i].checked) out.push(boxes[i].value); }
+  return out;
+}
+function selectedValues(select) {
+  var out = [];
+  for (var i = 0; i < select.options.length; i++) { if (select.options[i].selected) out.push(select.options[i].value); }
+  return out;
+}
+
+function query(extra) {
+  var p = new URLSearchParams();
+  var langs = checkedValues($("f-langs"));
+  if (langs.length) { p.set("langs", langs.join(",")); }
+  if ($("f-webdev").checked) { p.set("web_dev", "true"); }
+  var stacks = [];
+  var chips = $("f-stacks").querySelectorAll(".chip.on");
+  for (var i = 0; i < chips.length; i++) { stacks.push(chips[i].dataset.value); }
+  if (stacks.length) { p.set("stack", stacks.join(",")); }
+  var sections = checkedValues($("f-sections"));
+  if (sections.length) { p.set("section", sections.join(",")); }
+  var countries = selectedValues($("f-country"));
+  if (countries.length) { p.set("country", countries.join(",")); }
+  var remotes = selectedValues($("f-remote"));
+  if (remotes.length) { p.set("remote", remotes.join(",")); }
+  if ($("f-score").value !== "") { p.set("min_score", $("f-score").value); }
+  if ($("f-q").value.trim()) { p.set("q", $("f-q").value.trim()); }
+  if (handle()) { p.set("user", handle()); }
+  if ($("f-decision").value && handle()) { p.set("decision", $("f-decision").value); }
+  for (var key in (extra || {})) { p.set(key, extra[key]); }
+  return p.toString();
+}
+
+function scoreClass(score) {
+  if (score === null || score === undefined) { return ""; }
+  if (score >= 80) { return " hi"; }
+  if (score >= 50) { return " mid"; }
+  return "";
+}
+
+function dateText(value) { return value ? String(value).slice(0, 10) : "?"; }
+
+function cardHtml(job) {
+  var facets = job.facets || {};
+  var tags = "";
+  var stacks = facets.stacks || [];
+  for (var i = 0; i < stacks.length; i++) { tags += '<span class="tag">' + esc(stacks[i]) + "</span>"; }
+  var required = facets.languages_required || [];
+  if (facets.posting_language && required.indexOf(facets.posting_language) < 0) {
+    tags += '<span class="tag">' + esc(facets.posting_language) + "</span>";
+  }
+  for (var j = 0; j < required.length; j++) {
+    tags += '<span class="tag req">' + esc(required[j]) + " required</span>";
+  }
+  var line = [job.company, job.location_raw, job.remote, job.source, "posted " + dateText(job.posted_at)]
+    .filter(function (part) { return part; }).map(esc).join(" · ");
+  var decision = job.decision
+    ? '<span class="badge">' + esc(job.decision.status) + "</span>" : "";
+  var score = (job.score === null || job.score === undefined) ? "–" : job.score;
+
+  var buttons = ["applied", "skipped", "interested", "interview", "rejected", "offer"];
+  var actions = "";
+  for (var b = 0; b < buttons.length; b++) {
+    var on = job.decision && job.decision.status === buttons[b] ? " on" : "";
+    actions += '<button class="act' + on + '" data-status="' + buttons[b] + '">' + esc(buttons[b]) + "</button>";
+  }
+  actions += '<button class="act" data-status="">clear</button>';
+  actions += '<input class="note" type="text" placeholder="note" value="' +
+    esc(job.decision && job.decision.note ? job.decision.note : "") + '">';
+
+  return '<div class="card-main">' +
+      '<div class="score' + scoreClass(job.score) + '">' + esc(score) + "</div>" +
+      "<div>" +
+        '<h3><a href="' + esc(job.url) + '" target="_blank" rel="noopener">' + esc(job.title) + "</a></h3>" +
+        '<div class="meta">' + line + "</div>" +
+        '<div class="row">' + tags +
+          '<span class="tag">' + esc(job.section || "—") + "</span>" + decision +
+        "</div>" +
+      "</div>" +
+    "</div>" +
+    '<div class="actions">' + actions + "</div>" +
+    '<div class="detail" hidden></div>';
+}
+
+function detailHtml(job) {
+  var parts = [];
+  if (job.rank) {
+    parts.push("<h4>Rank</h4><div>" + esc(job.rank.summary) + "</div>");
+    if (job.rank.why_apply && job.rank.why_apply.length) {
+      parts.push("<h4>Why apply</h4><div>" + esc(job.rank.why_apply.join("; ")) + "</div>");
+    }
+    if (job.rank.concerns && job.rank.concerns.length) {
+      parts.push("<h4>Concerns</h4><div>" + esc(job.rank.concerns.join("; ")) + "</div>");
+    }
+  }
+  if (job.prefilter) {
+    parts.push("<h4>Prefilter</h4><div>" + esc(job.prefilter.summary) + "</div>");
+  }
+  if (job.filter && job.filter.reasons && job.filter.reasons.length) {
+    parts.push("<h4>Filter reasons</h4><div>" + esc(job.filter.reasons.join("; ")) + "</div>");
+  }
+  var note = job.filter && job.filter.signals ? job.filter.signals.work_rights_note : null;
+  if (note) { parts.push("<h4>Work rights</h4><div>" + esc(note) + "</div>"); }
+  parts.push("<h4>Description</h4><div class=\"desc\">" +
+    esc(job.description || "(no description)") + "</div>");
+  return parts.join("");
+}
+
+function saveDecision(card, status, note) {
+  if (!needHandle()) { return; }
+  var id = card.dataset.id;
+  var url = "/api/jobs/" + encodeURIComponent(id) + "/decision";
+  var request;
+  if (status) {
+    request = fetch(url, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user: handle(), status: status, note: note || null })
+    });
+  } else {
+    request = fetch(url + "?user=" + encodeURIComponent(handle()), { method: "DELETE" });
+  }
+  return request.then(function (resp) {
+    if (!resp.ok && resp.status !== 404) { throw new Error("decision failed: " + resp.status); }
+    return refreshCard(card, id);
+  }).catch(function (err) { $("hint").textContent = String(err.message || err); });
+}
+
+function refreshCard(card, id) {
+  var suffix = handle() ? "?user=" + encodeURIComponent(handle()) : "";
+  return fetch("/api/jobs/" + encodeURIComponent(id) + suffix)
+    .then(function (resp) { return resp.json(); })
+    .then(function (job) {
+      var open = !card.querySelector(".detail").hidden;
+      card.innerHTML = cardHtml(job);
+      if (open) {
+        var detail = card.querySelector(".detail");
+        detail.innerHTML = detailHtml(job);
+        detail.hidden = false;
+      }
+    });
+}
+
+function toggleDetail(card) {
+  var detail = card.querySelector(".detail");
+  if (!detail.hidden) { detail.hidden = true; return; }
+  detail.hidden = false;
+  if (detail.dataset.loaded === "1") { return; }
+  detail.innerHTML = '<span class="muted">loading…</span>';
+  var suffix = handle() ? "?user=" + encodeURIComponent(handle()) : "";
+  fetch("/api/jobs/" + encodeURIComponent(card.dataset.id) + suffix)
+    .then(function (resp) { return resp.json(); })
+    .then(function (job) { detail.innerHTML = detailHtml(job); detail.dataset.loaded = "1"; })
+    .catch(function () { detail.innerHTML = '<span class="hint">could not load</span>'; });
+}
+
+function render(payload, append) {
+  var list = $("list");
+  if (!append) { list.innerHTML = ""; STATE.shown = 0; }
+  for (var i = 0; i < payload.items.length; i++) {
+    var job = payload.items[i];
+    var card = document.createElement("div");
+    card.className = "card";
+    card.dataset.id = job.id;
+    card.innerHTML = cardHtml(job);
+    list.appendChild(card);
+    STATE.shown += 1;
+  }
+  STATE.total = payload.total;
+  $("count").textContent = STATE.shown + " of " + payload.total;
+  $("more").hidden = STATE.shown >= payload.total;
+  if (!payload.items.length && !append) {
+    list.innerHTML = '<p class="muted">Nothing matches these filters.</p>';
+  }
+}
+
+function load(append) {
+  if (!append) { STATE.offset = 0; }
+  var extra = { limit: LIMIT, offset: STATE.offset };
+  fetch("/api/jobs?" + query(extra))
+    .then(function (resp) {
+      if (!resp.ok) { throw new Error("jobs request failed: " + resp.status); }
+      return resp.json();
+    })
+    .then(function (payload) { render(payload, append); })
+    .catch(function (err) { $("hint").textContent = String(err.message || err); });
+}
+
+var timer = null;
+function reload() {
+  if (timer) { clearTimeout(timer); }
+  timer = setTimeout(function () { timer = null; load(false); }, 250);
+}
+
+function checkboxes(container, values, checked) {
+  container.innerHTML = "";
+  values.forEach(function (value) {
+    var label = document.createElement("label");
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = value;
+    box.checked = checked.indexOf(value) >= 0;
+    box.addEventListener("change", reload);
+    label.appendChild(box);
+    label.appendChild(document.createTextNode(" " + value));
+    container.appendChild(label);
+  });
+}
+
+function options(select, values) {
+  select.innerHTML = "";
+  values.forEach(function (value) {
+    var option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+}
+
+function keys(obj) { return Object.keys(obj || {}).sort(); }
+
+function buildFilters(meta) {
+  var langs = keys(meta.languages).concat(keys(meta.languages_required));
+  if (langs.indexOf("en") < 0) { langs.push("en"); }
+  langs = langs.filter(function (v, i) { return langs.indexOf(v) === i; }).sort();
+  var saved = stored("jobscraper.langs", "en").split(",").filter(function (v) { return v; });
+  checkboxes($("f-langs"), langs, saved);
+
+  var stacks = keys(meta.stacks);
+  var chips = $("f-stacks");
+  chips.innerHTML = "";
+  stacks.forEach(function (value) {
+    var chip = document.createElement("span");
+    chip.className = "chip";
+    chip.dataset.value = value;
+    chip.textContent = value + " (" + meta.stacks[value] + ")";
+    chip.addEventListener("click", function () { chip.classList.toggle("on"); reload(); });
+    chips.appendChild(chip);
+  });
+
+  var sections = ["ranked", "prefilter", "review"];
+  checkboxes($("f-sections"), sections, sections);
+  options($("f-country"), keys(meta.countries));
+  options($("f-remote"), keys(meta.remote));
+
+  var decision = $("f-decision");
+  (meta.decision_statuses || []).forEach(function (status) {
+    var option = document.createElement("option");
+    option.value = status;
+    option.textContent = status;
+    decision.appendChild(option);
+  });
+
+  var info = "no stored report — live view";
+  if (meta.report) {
+    var counts = meta.report.counts || {};
+    info = "report #" + meta.report.id + " · " + dateText(meta.report.created_at) +
+      " · " + (counts.jobs || 0) + " jobs · " + (counts.ranked || 0) + " ranked";
+  }
+  $("report-info").textContent = info;
+}
+
+function wire() {
+  $("user").value = stored("jobscraper.user", "");
+  $("user").addEventListener("change", function () {
+    store("jobscraper.user", handle());
+    $("hint").textContent = "";
+    reload();
+  });
+  ["f-webdev", "f-score", "f-decision"].forEach(function (id) {
+    $(id).addEventListener("change", reload);
+  });
+  $("f-q").addEventListener("input", reload);
+  $("f-country").addEventListener("change", reload);
+  $("f-remote").addEventListener("change", reload);
+  $("f-langs").addEventListener("change", function () {
+    store("jobscraper.langs", checkedValues($("f-langs")).join(","));
+  });
+  $("more").addEventListener("click", function () {
+    STATE.offset = STATE.shown;
+    load(true);
+  });
+  $("reset").addEventListener("click", function (event) {
+    event.preventDefault();
+    $("f-webdev").checked = false;
+    $("f-score").value = "";
+    $("f-q").value = "";
+    $("f-decision").value = "";
+    var chips = $("f-stacks").querySelectorAll(".chip");
+    for (var i = 0; i < chips.length; i++) { chips[i].classList.remove("on"); }
+    [$("f-country"), $("f-remote")].forEach(function (select) {
+      for (var j = 0; j < select.options.length; j++) { select.options[j].selected = false; }
+    });
+    var boxes = $("f-sections").querySelectorAll("input");
+    for (var k = 0; k < boxes.length; k++) { boxes[k].checked = true; }
+    load(false);
+  });
+
+  $("list").addEventListener("click", function (event) {
+    var card = event.target.closest ? event.target.closest(".card") : null;
+    if (!card) { return; }
+    var button = event.target.closest("button.act");
+    if (button) {
+      var note = card.querySelector("input.note");
+      saveDecision(card, button.dataset.status, note ? note.value : "");
+      return;
+    }
+    if (event.target.closest("a") || event.target.closest("input")) { return; }
+    if (event.target.closest(".card-main")) { toggleDetail(card); }
+  });
+  $("list").addEventListener("blur", function (event) {
+    if (!event.target.classList || !event.target.classList.contains("note")) { return; }
+    var card = event.target.closest(".card");
+    var active = card.querySelector("button.act.on");
+    saveDecision(card, active ? active.dataset.status : "interested", event.target.value);
+  }, true);
+}
+
+fetch("/api/meta")
+  .then(function (resp) { return resp.json(); })
+  .then(function (meta) {
+    buildFilters(meta);
+    wire();
+    load(false);
+  })
+  .catch(function (err) {
+    $("report-info").textContent = "could not load /api/meta";
+    $("hint").textContent = String(err.message || err);
+  });
+</script>
+</body>
+</html>
