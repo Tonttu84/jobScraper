@@ -225,3 +225,129 @@ def test_export_rank_skips_dropped_and_already_ranked_jobs(ranked, data_dir, mon
     _run(monkeypatch, "export", "rank", "--top", "5")
     assert _chunk_entries(data_dir / "exports" / "ai" / "rank") == []
     assert "0 jobs" in capsys.readouterr().out
+
+
+# ------------------------------------------------------- LinkedIn description hydration
+# The linkedin adapter runs with `fetch_descriptions: false` (slow + rate-limited), so its rows
+# are title-only. Ranking looks at ~60 jobs, so those few are topped up from the guest page.
+
+
+def _bare(source: str, n: int, url: str) -> Job:
+    """A job with no description at all — what the linkedin adapter normally yields."""
+    return Job(source=source, source_id=str(n), url=url, title=f"Junior Developer {n}",
+               company="Acme", country="FI")
+
+
+def _prefilter_scores(jobs: list[Job], scores: list[int]) -> None:
+    store = store_mod.Store()
+    try:
+        for job, score in zip(jobs, scores):
+            store.save_verdict(AIVerdict(job_id=job.id, stage="prefilter", model="claude-sonnet-5 (subagent)",
+                                         prompt_version=PROMPT_VERSION, relevant=True, score=score,
+                                         language_ok=True, seniority_ok=True, location_ok=True,
+                                         summary=f"scored {score}"))
+    finally:
+        store.close()
+
+
+def _stored_jobs() -> dict[str, Job]:
+    store = store_mod.Store()
+    try:
+        return {j.id: j for j in store.jobs()}
+    finally:
+        store.close()
+
+
+def test_export_rank_hydrates_title_only_linkedin_jobs(data_dir, monkeypatch, capsys):
+    li = _bare("linkedin", 11, "https://www.linkedin.com/jobs/view/4392276998")
+    other = _bare("duunitori", 12, "https://duunitori.fi/tyopaikat/tyo/12")
+    _seed([li, other], ["keep", "keep"])
+    _prefilter_scores([li, other], [90, 80])
+
+    fetched: list[str] = []
+
+    def fake_fetch(http, url):
+        fetched.append(url)
+        return "Go and Kubernetes, English-speaking team.\n\nApply before May."
+
+    monkeypatch.setattr(ai_batches, "fetch_description", fake_fetch)
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    assert fetched == [li.url]  # only linkedin rows, and only the ones missing a description
+    prompts = {e["job_id"]: e["prompt"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")}
+    assert "Go and Kubernetes, English-speaking team." in prompts[li.id]
+    assert "Go and Kubernetes" not in prompts[other.id]  # the non-linkedin job is left alone
+
+    stored = _stored_jobs()
+    assert stored[li.id].description.startswith("Go and Kubernetes")  # persisted, not just in the prompt
+    assert stored[other.id].description is None
+    assert "hydrated 1/1 linkedin descriptions" in capsys.readouterr().out
+
+
+def test_export_rank_leaves_linkedin_jobs_that_already_have_a_description(data_dir, monkeypatch, capsys):
+    li = Job(source="linkedin", source_id="13", url="https://www.linkedin.com/jobs/view/13",
+             title="Junior Developer 13", company="Acme", country="FI",
+             description="Already scraped with fetch_descriptions on.")
+    _seed([li], ["keep"])
+    _prefilter_scores([li], [90])
+
+    def explode(http, url):  # pragma: no cover - must never be called
+        raise AssertionError(f"refetched {url}")
+
+    monkeypatch.setattr(ai_batches, "fetch_description", explode)
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    assert "hydrated" not in capsys.readouterr().out  # nothing to do, no summary line
+
+
+def test_export_rank_caps_the_number_of_description_fetches(data_dir, monkeypatch, capsys):
+    jobs = [_bare("linkedin", n, f"https://www.linkedin.com/jobs/view/{n}") for n in (21, 22, 23)]
+    _seed(jobs, ["keep"] * 3)
+    _prefilter_scores(jobs, [90, 80, 70])
+
+    fetched: list[str] = []
+
+    def fake_fetch(http, url):
+        fetched.append(url)
+        return "Fetched description text."
+
+    monkeypatch.setattr(ai_batches, "fetch_description", fake_fetch)
+
+    _run(monkeypatch, "export", "rank", "--top", "5", "--max-fetch", "2")
+
+    assert fetched == [jobs[0].url, jobs[1].url]  # best prefilter scores first
+    assert _stored_jobs()[jobs[2].id].description is None
+    assert "hydrated 2/2 linkedin descriptions" in capsys.readouterr().out
+
+
+def test_export_rank_survives_a_description_fetch_that_comes_back_empty(data_dir, monkeypatch, capsys):
+    li = _bare("linkedin", 31, "https://www.linkedin.com/jobs/view/31")
+    _seed([li], ["keep"])
+    _prefilter_scores([li], [90])
+    monkeypatch.setattr(ai_batches, "fetch_description", lambda http, url: None)
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    prompts = {e["job_id"]: e["prompt"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")}
+    assert "no description available" in prompts[li.id]  # the job is still ranked, on its title
+    assert _stored_jobs()[li.id].description is None
+    out = capsys.readouterr().out
+    assert "hydrated 0/1 linkedin descriptions" in out
+    assert "1 jobs" in out
+
+
+def test_export_prefilter_never_fetches_descriptions(data_dir, monkeypatch, capsys):
+    """600+ title-only linkedin rows reach the prefilter; hydrating them all is the thing we avoid."""
+    li = _bare("linkedin", 41, "https://www.linkedin.com/jobs/view/41")
+    _seed([li], ["keep"])
+
+    def explode(http, url):  # pragma: no cover - must never be called
+        raise AssertionError(f"fetched {url} in the prefilter stage")
+
+    monkeypatch.setattr(ai_batches, "fetch_description", explode)
+
+    _run(monkeypatch, "export", "prefilter")
+
+    assert "1 jobs" in capsys.readouterr().out

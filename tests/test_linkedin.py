@@ -2,10 +2,11 @@
 
 from datetime import UTC, datetime
 
+import httpx
 import numpy as np
 import pandas as pd
 import pytest
-from conftest import fixture_json
+from conftest import FakeHttp, fixture_json, fixture_text
 
 from jobscraper.sources import linkedin as mod
 from jobscraper.sources.linkedin import LinkedIn
@@ -137,3 +138,94 @@ def test_limit_stops_early(monkeypatch, make_ctx):
 def test_missing_options_raise(make_ctx):
     with pytest.raises(ValueError, match="queries"):
         list(LinkedIn().fetch(make_ctx({}, options={"locations": ["Finland"]})))
+
+
+# --------------------------------------------------------------- description hydration
+# Search rows are title-only (``fetch_descriptions`` is off), so the ranking stage tops the
+# few jobs it actually looks at up from the public guest page. The fixture is a trimmed real one.
+
+
+def test_parse_description_reads_the_guest_page_markup():
+    text = mod.parse_description(fixture_text("linkedin_job.html"))
+
+    assert text.startswith("Atos Group is een wereldleider in digitale transformatie")
+    assert text.endswith("Choose your future. Choose Atos.")
+    assert "<" not in text and "show-more-less" not in text  # tags and class names gone
+    assert "Show more" not in text  # the expand/collapse buttons are chrome, not description
+    assert "Young Professionals" in text  # <strong> inside a paragraph survives
+    assert "DevOps engineering" in text  # a <li> survives
+    assert "Euronext Paris.\n\nHet doel van Atos Group" in text  # <br><br> -> paragraph break
+    assert "\n\n\n" not in text  # but no runs of blank lines
+
+
+def test_parse_description_falls_back_to_the_plain_description_block():
+    html = """<html><body><div class="description__text">
+        <p>We are hiring a graduate engineer.</p><p>Estonian office, English team.</p>
+        <button class="show-more-less-html__button">Show more</button>
+    </div></body></html>"""
+    text = mod.parse_description(html)
+
+    assert "We are hiring a graduate engineer." in text
+    assert "Estonian office, English team." in text
+    assert "<p>" not in text
+    assert "Show more" not in text  # page chrome is stripped on this path too
+
+
+def test_parse_description_returns_none_without_a_description_block():
+    assert mod.parse_description("<html><body><h1>Sign in</h1></body></html>") is None
+    assert mod.parse_description("") is None
+    assert mod.parse_description(None) is None
+
+
+def test_fetch_description_normalises_the_url_it_requests():
+    http = FakeHttp({"/jobs/view/4392276998": "linkedin_job.html"})
+    text = mod.fetch_description(
+        http, "https://nl.linkedin.com/jobs/view/4392276998?refId=abc&trk=public_jobs&position=3"
+    )
+
+    assert text.startswith("Atos Group is een wereldleider")
+    # the country subdomain and the tracking params are dropped before the request
+    assert [str(c.url) for c in http.calls] == ["https://www.linkedin.com/jobs/view/4392276998"]
+
+
+def test_fetch_description_ignores_non_linkedin_urls():
+    http = FakeHttp({})  # any request at all would raise
+    assert mod.fetch_description(http, "https://careers.examplia.fi/jobs/junior-dev") is None
+    assert mod.fetch_description(http, "https://www.linkedin.com/company/atos") is None
+    assert mod.fetch_description(http, "") is None
+    assert http.calls == []
+
+
+def test_fetch_description_returns_none_on_429():
+    http = FakeHttp({"/jobs/view/": lambda req: httpx.Response(429, text="Too Many Requests")})
+    assert mod.fetch_description(http, "https://www.linkedin.com/jobs/view/1111111111") is None
+
+
+def test_fetch_description_returns_none_on_an_authwall():
+    """LinkedIn walls a request off with a 200 + a redirect to /authwall, not with a 4xx.
+
+    FakeHttp rewrites ``response.request`` to the request it built, so it cannot model a
+    followed redirect; this needs a client that lands somewhere other than where it aimed.
+    """
+
+    class Redirecting:
+        def get(self, url: str):
+            landed = httpx.Request("GET", "https://www.linkedin.com/authwall?sessionRedirect=x")
+            # An authwall page still carries a `description` shell, so the URL is what gives it away.
+            body = '<html><body><section class="description">Sign in to view</section></body></html>'
+            return httpx.Response(200, text=body, request=landed)
+
+    assert mod.fetch_description(Redirecting(), "https://www.linkedin.com/jobs/view/1111111111") is None
+
+
+def test_fetch_description_returns_none_when_the_block_is_missing():
+    http = FakeHttp({"/jobs/view/": "<html><body><h1>Junior Developer</h1></body></html>"})
+    assert mod.fetch_description(http, "https://www.linkedin.com/jobs/view/1111111111") is None
+
+
+def test_fetch_description_never_raises_on_transport_errors():
+    def boom(req):
+        raise httpx.ConnectError("connection reset")
+
+    http = FakeHttp({"/jobs/view/": boom})
+    assert mod.fetch_description(http, "https://www.linkedin.com/jobs/view/1111111111") is None

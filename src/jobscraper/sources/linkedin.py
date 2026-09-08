@@ -16,11 +16,16 @@ Options (``config/sources.yaml``)::
 
 One failing query is logged and skipped (a 429 on "Berlin" shouldn't lose "Helsinki");
 if *every* call fails the adapter raises, because that means we're blocked outright.
+
+Because descriptions are off during the scrape, most LinkedIn rows are title-only. Later
+stages that only look at a handful of jobs (the ranking stage) top them up one at a time with
+``fetch_description``, which reads the same public guest page jobspy would have read.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Iterable
 from functools import partial
@@ -29,6 +34,7 @@ from typing import Any
 import pandas as pd
 from jobspy import scrape_jobs
 
+from jobscraper.http import Http, strip_html
 from jobscraper.models import Job
 from jobscraper.sources._common import guess_country, guess_remote, parse_date
 from jobscraper.sources.base import SourceContext, register, safe_records
@@ -177,3 +183,72 @@ class LinkedIn:
 
 
 register(LinkedIn())
+
+
+# ------------------------------------------------------------- description hydration
+# The guest job page (no login) carries the posting body in `div.show-more-less-html__markup`;
+# jobspy reads the same element. Everything here is best-effort: a rate-limited or walled-off
+# page must cost the caller a log line, never an exception.
+
+JOB_VIEW_RE = re.compile(r"linkedin\.com/jobs/view/(?:[\w%-]*-)?(\d+)", re.IGNORECASE)
+GUEST_URL = "https://www.linkedin.com/jobs/view/{}"
+DESCRIPTION_SELECTORS = (
+    "div.show-more-less-html__markup",
+    "div.description__text",
+    "section.description",
+)
+# LinkedIn answers a walled-off request with a 200 + an authwall/login page rather than a 4xx.
+WALLED_PATHS = ("/authwall", "/login", "/uas/login", "/checkpoint", "/signup")
+
+
+def guest_url(url: str | None) -> str | None:
+    """Any ``linkedin.com/jobs/view/<id>…`` URL → the canonical guest page, else None.
+
+    Country subdomains (``nl.linkedin.com``), slugged paths and ``?refId=…`` tracking
+    parameters all point at the same posting; the bare form is what the guest page wants.
+    """
+    match = JOB_VIEW_RE.search(url or "")
+    return GUEST_URL.format(match.group(1)) if match else None
+
+
+def parse_description(html: str | None) -> str | None:
+    """Guest job page HTML → plain-text description, or None if the page has no posting body."""
+    if not html:
+        return None
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    for selector in DESCRIPTION_SELECTORS:
+        node = soup.select_one(selector)
+        if node is None:
+            continue
+        for tag in node.find_all(["button", "script", "style", "icon", "form"]):
+            tag.decompose()
+        lines = [line.strip() for line in (strip_html(str(node)) or "").splitlines()]
+        text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+        if text:
+            return text
+    return None
+
+
+def fetch_description(http: Http, url: str) -> str | None:
+    """Read one posting's description from the public guest page. Never raises."""
+    target = guest_url(url)
+    if not target:
+        return None
+    try:
+        resp = http.get(target)
+    except Exception as exc:  # a missing description is never worth failing a run over
+        log.warning("%s: description fetch for %s failed: %s", NAME, target, exc)
+        return None
+    if resp.status_code >= 400:
+        log.warning("%s: description fetch for %s -> HTTP %s", NAME, target, resp.status_code)
+        return None
+    landed = str(resp.url).lower()
+    if any(path in landed for path in WALLED_PATHS):
+        log.warning("%s: description fetch for %s hit a login wall (%s)", NAME, target, resp.url)
+        return None
+    text = parse_description(resp.text)
+    if text is None:
+        log.info("%s: no description block on %s", NAME, target)
+    return text
