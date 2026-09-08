@@ -178,6 +178,28 @@ def test_log_run_and_stats_counters(store):
     assert stats["ai"] == {"prefilter": 1}
 
 
+def test_delete_verdicts_by_stage_and_for_every_stage(store):
+    """Hydration re-screens a job: its old verdicts have to go, one stage or both."""
+    store.save_verdict(make_verdict("a"))
+    store.save_verdict(make_verdict("a", stage="rank", model="claude-opus-5", score=88))
+    store.save_verdict(make_verdict("b"))
+
+    assert store.delete_verdicts(["a"], stage="prefilter") == 1
+    assert set(store.verdicts("prefilter")) == {"b"}
+    assert set(store.verdicts("rank")) == {"a"}  # the other stage is untouched
+
+    assert store.delete_verdicts(["a", "b"]) == 2  # both stages, both jobs
+    assert store.verdicts("prefilter") == {}
+    assert store.verdicts("rank") == {}
+
+
+def test_delete_verdicts_with_nothing_to_delete(store):
+    store.save_verdict(make_verdict("a"))
+    assert store.delete_verdicts([]) == 0
+    assert store.delete_verdicts(["missing"]) == 0
+    assert set(store.verdicts("prefilter")) == {"a"}
+
+
 def test_store_creates_parent_directories(tmp_path):
     s = Store(tmp_path / "nested" / "deeper" / "jobs.db")
     try:

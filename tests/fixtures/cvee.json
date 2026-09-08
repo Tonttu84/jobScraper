@@ -1,57 +1,160 @@
 {
-  "total": 3,
-  "searchMode": "ELASTIC",
-  "searchId": "0f4b1a8e-2c3d-4e5f-9a0b-1c2d3e4f5a6b",
+  "workTimes": {
+    "2": 3,
+    "6": 1
+  },
+  "categories": {
+    "INFORMATION_TECHNOLOGY": 3
+  },
+  "languages": {
+    "1": 2,
+    "4": 2
+  },
+  "countries": {
+    "1": 3
+  },
+  "counties": {
+    "67": 2,
+    "78": 1
+  },
+  "towns": {
+    "312": 1,
+    "314": 1
+  },
+  "remoteWork": {
+    "true": 3
+  },
+  "remoteWorkTypes": {
+    "HYBRID": 2,
+    "FULLY_REMOTE": 1
+  },
+  "quickApply": {
+    "false": 3
+  },
   "vacancies": [
     {
-      "id": 1476412,
-      "positionTitle": "Full Stack Developer",
-      "positionContent": "",
-      "employerId": 181230,
-      "employerName": "Bolt Technology OÜ",
+      "id": 1652906,
+      "promotions": null,
+      "positionTitle": "Küberturbe nõunik (Cybersecurity Advisor)",
+      "positionContent": "Otsime oma Eesti turvanõustamise meeskonda küberturbe nõunikku (Cybersecurity Advisor), kes aitab meie klientidel tugevdada info- ja küberturvalisust ning tõsta organisatsioonide turvaküpsust. Selles rollis nõustad kliente turbejuhtimise, riskihalduse ja vastavusnõuete teemadel ning toetad neid turvastrateegiate, protsesside ja kontrollimeetmete kavandamisel ning rakendamisel. […]",
+      "employerId": 22648,
+      "employerName": "Security Software OÜ",
+      "logoId": "185de54a-eafe-48c5-ba68-822df04be88b",
+      "domain": 1,
+      "publishDate": "2026-09-07T13:19:48.680+00:00",
+      "renewedDate": null,
+      "expirationDate": "2026-10-07T23:59:59.999+00:00",
+      "workTimes": [
+        2
+      ],
+      "languages": [
+        4,
+        1
+      ],
+      "categories": [
+        10
+      ],
+      "keywords": [],
+      "skills": null,
       "townId": 312,
+      "quickApply": false,
       "countyId": 67,
       "countryId": 1,
-      "salaryFrom": 3000.0,
-      "salaryTo": 4500.0,
-      "hourlySalary": false,
-      "remoteWork": false,
-      "remoteWorkType": "HYBRID",
-      "publishDate": "2026-09-01T09:12:00+03:00",
-      "expirationDate": "2026-10-01T23:59:59+03:00",
-      "categories": [10],
-      "keywords": ["react", "node.js"],
-      "workTimes": [2],
-      "quickApply": true
-    },
-    {
-      "id": 1476500,
-      "positionTitle": "Junior Python Developer",
-      "employerName": "Tartu Tech OÜ",
-      "townId": 314,
       "salaryFrom": null,
       "salaryTo": null,
+      "hourlySalary": false,
+      "suitableForRefugees": false,
       "remoteWork": true,
-      "remoteWorkType": "REMOTE",
-      "publishDate": "2026-08-30T11:00:00+03:00",
-      "categories": [10],
-      "keywords": []
+      "remoteWorkType": "HYBRID"
     },
     {
-      "id": 1476601,
-      "positionTitle": "IT-spetsialist",
-      "employerName": "Vahendatud pakkumised",
-      "townId": 312,
-      "remoteWork": false,
-      "publishDate": "2026-08-29T08:00:00+03:00"
+      "id": 1641665,
+      "promotions": null,
+      "positionTitle": "Java Developer",
+      "positionContent": "Your influential mission. You will... Develop and maintain the automation framework and create automation tests. Work on a massively multithreaded high-performance client server solution with a large code base that is used by millions of players around the world daily, 24/7. Take the responsibility of maintaining and developing the automation tools for other teams Mentor colleagues within your area of expertise You'll get extra points for... […]",
+      "employerId": 2410,
+      "employerName": "Playtech Estonia OÜ",
+      "logoId": "1d18fb4c-5f19-410a-8812-38dffcc9c27f",
+      "domain": 1,
+      "publishDate": "2026-09-01T12:00:00.956+00:00",
+      "renewedDate": "2026-09-01T12:00:00.956+00:00",
+      "expirationDate": "2026-09-17T23:59:59.999+00:00",
+      "workTimes": [
+        2
+      ],
+      "languages": [
+        4
+      ],
+      "categories": [
+        10
+      ],
+      "keywords": [
+        "Java",
+        "spring"
+      ],
+      "skills": null,
+      "townId": 314,
+      "quickApply": false,
+      "countyId": 78,
+      "countryId": 1,
+      "salaryFrom": 2970.0,
+      "salaryTo": null,
+      "hourlySalary": false,
+      "suitableForRefugees": false,
+      "remoteWork": true,
+      "remoteWorkType": "HYBRID"
+    },
+    {
+      "id": 1646695,
+      "promotions": null,
+      "positionTitle": "IT- ja teabehalduse osakonna juht",
+      "positionContent": "",
+      "employerId": 17987,
+      "employerName": "Hoolekandeteenused AS",
+      "logoId": "147662f0-d3ff-4a6b-a601-39d98342f000",
+      "domain": 1,
+      "publishDate": "2026-09-03T04:03:59.868+00:00",
+      "renewedDate": "2026-09-03T04:03:59.868+00:00",
+      "expirationDate": "2026-09-10T23:59:59.999+00:00",
+      "workTimes": [
+        6
+      ],
+      "languages": [
+        1
+      ],
+      "categories": [
+        10
+      ],
+      "keywords": [
+        "IT",
+        "infotehnoloogia",
+        "juhtimine"
+      ],
+      "skills": null,
+      "townId": null,
+      "quickApply": false,
+      "countyId": 67,
+      "countryId": 1,
+      "salaryFrom": null,
+      "salaryTo": null,
+      "hourlySalary": false,
+      "suitableForRefugees": false,
+      "remoteWork": true,
+      "remoteWorkType": "FULLY_REMOTE"
     },
     {
       "id": null,
+      "promotions": null,
       "positionTitle": null,
-      "employerName": null
+      "positionContent": "",
+      "employerId": 22648,
+      "employerName": "Security Software OÜ",
+      "townId": 312,
+      "countyId": 67,
+      "countryId": 1,
+      "publishDate": "2026-09-07T13:19:48.680+00:00"
     }
   ],
-  "categories": {"INFORMATION_TECHNOLOGY": 241},
-  "workTimes": {"FULL_TIME": 2282},
-  "languages": {"et": 682, "en": 376}
+  "searchMode": "ELASTIC",
+  "total": 4
 }

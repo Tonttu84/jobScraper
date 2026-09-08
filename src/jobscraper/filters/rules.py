@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from datetime import UTC, datetime
 
 from jobscraper.config import Profile
 from jobscraper.filters.language import detect_language, find_language_requirements
 from jobscraper.models import FilterResult, Job
+from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-09-07.1"
+RULES_VERSION = "2026-09-07.5"
 
 _YEARS_RE = re.compile(
     r"(?:(?:at least|minimum|min\.?|minimum of|over|more than|vähintään|yli|mindestens|mind\.|über|"
@@ -56,6 +58,10 @@ def _years_required(text: str) -> int | None:
     return min(found) if found else None
 
 
+_MID_LABEL_RE = re.compile(r"(mid|middle|medior|regular|intermediate|experienced)", re.I)
+_REMOTE_COUNTRY_ONLY = re.compile(r"\b([A-Za-z][A-Za-z .]{1,30}?)\s+only\b", re.I)
+
+
 def classify_remote_region(text: str | None) -> str:
     if not text:
         return "unknown"
@@ -65,18 +71,28 @@ def classify_remote_region(text: str | None) -> str:
         return "europe"
     if _REMOTE_WORLD.search(text):
         return "worldwide"
+    # "GB only", "UK only", "Germany only": remote in name, but closed to applicants elsewhere.
+    match = _REMOTE_COUNTRY_ONLY.search(text)
+    if match:
+        code = guess_country(match.group(1))
+        if code:
+            return f"country_only:{code}"
     return "unknown"
 
 
-def _location_tier(job: Job, profile: Profile) -> int | None:
+def _country_tier(country: str | None, profile: Profile) -> int | None:
     loc = profile.location
-    if job.country in loc.tier1:
+    if country in loc.tier1:
         return 1
-    if job.country in loc.tier2:
+    if country in loc.tier2:
         return 2
-    if job.country in loc.tier3:
+    if country in loc.tier3:
         return 3
     return None
+
+
+def _location_tier(job: Job, profile: Profile) -> int | None:
+    return _country_tier(job.country, profile)
 
 
 def evaluate(job: Job, profile: Profile) -> FilterResult:
@@ -110,6 +126,12 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
         signals["seniority"] = "senior_by_title"
     else:
         signals["seniority"] = "unlabeled"
+        # Boards label seniority separately from the title (justjoin "mid", nofluffjobs "Mid", devitjobs
+        # "Regular"): an above-junior label on an unlabelled title is as strong as a senior title.
+        label = job.seniority_raw or ""
+        if label and not (keep_sen and keep_sen.search(label)) and ((drop_sen and drop_sen.search(label)) or _MID_LABEL_RE.search(label)):
+            reasons.append(f"seniority label {label!r} is above junior")
+            signals["seniority"] = "senior_by_label"
     years = _years_required(text)
     if years is not None:
         signals["years_required"] = years
@@ -156,15 +178,29 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
         tier = tier or 0
         if remote_region == "us_only":
             review.append("remote but text suggests US-only; worth checking (high pay)")
+        elif remote_region.startswith("country_only:"):
+            only = remote_region.split(":", 1)[1]
+            if _country_tier(only, profile) is None:
+                review.append(f"remote but restricted to {only}, outside target countries")
     elif tier is None:
         if job.country:
             reasons.append(f"on-site in {job.country}, outside target countries")
         elif job.remote == "unknown":
             review.append("location unknown")
         else:
-            reasons.append("on-site with unknown country")
+            # Permissive: an on-site job whose country we could not parse (LinkedIn rows queried as
+            # "European Union" often have no location) goes to the AI stage instead of the bin.
+            review.append("on-site with unknown country")
     if tier == 3 and job.country in profile.location.notes:
         signals["work_rights_note"] = profile.location.notes[job.country]
+
+    # ------------------------------------------------------------- staleness
+    if job.posted_at is not None:
+        posted = job.posted_at if job.posted_at.tzinfo else job.posted_at.replace(tzinfo=UTC)
+        age_days = (datetime.now(UTC) - posted).days
+        signals["age_days"] = age_days
+        if age_days > profile.max_age_days:
+            reasons.append(f"posting is {age_days} days old (max {profile.max_age_days})")
 
     status = "drop" if reasons else ("review" if review else "keep")
     return FilterResult(job_id=job.id, status=status, reasons=reasons + review, signals=signals, location_tier=tier)

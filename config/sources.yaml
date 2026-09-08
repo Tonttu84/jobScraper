@@ -19,7 +19,7 @@ sources:
     max_details: 150
   thehub:
     enabled: true
-    countries: [FI, SE, NO, DK]
+    countries: [FI, SE, "NO", DK]   # "NO" quoted: bare NO is YAML for false
   cvee:
     enabled: true
     keywords: ["developer", "software", "engineer", "junior", "intern"]
@@ -28,20 +28,23 @@ sources:
   teamtailor:
     enabled: true
     # Teamtailor tenant slugs: https://<slug>.teamtailor.com/jobs.json . Add companies you care about.
-    tenants: [upcloud, siili, vismafinland, vincitoyj, huuva, huaweifinlandrnd, reaktor, futurice, nitor, gofore, solita, wolt, supercell, unity, relex, smartly, aiven, oura, swappie, hoxhunt, silo-ai, iceye, varjo, veikkaus, kesko, op, nordea, elisa, telia, dna, tietoevry, cgi, accenture-finland, knowit, sofigate, twoday, digia, netum, loihde, qvik, codemate, fraktio, evermade, geniem, nordcloud, efima, verkkokauppa, hsl, yle, sanoma, alma, bolt, pipedrive, wise, veriff, glia, skeleton, monese, starship, zego, klaus, katana, fyma, scoro, xolo, printify, mintos, vinted, tesonet, nordigen]
+    # Verified 2026-09-07: only these slugs answer jobs.json (the others 404 — most big
+    # Finnish/Estonian companies use their own ATS). nordea answers but lists 0 jobs.
+    tenants: [upcloud, siili, vismafinland, vincitoyj, huuva, huaweifinlandrnd, twoday, netum, qvik, evermade, monese, starship, mintos, nordea]
   ats_boards:
     enabled: true
     # Any careers URL supported by ats-scrapers (Greenhouse, Lever, Ashby, Workable, Personio,
     # SmartRecruiters, Recruitee, Breezy, …). It auto-detects the ATS from the URL.
+    # Verified 2026-09-07 (the slugs guessed in the sandbox were mostly wrong):
+    #   wolt, oura, veriff, wise -> Greenhouse; supercell -> Ashby; pipedrive -> Lever.
+    #   aiven (aiven.io/careers) and bolt (bolt.eu) front a custom ATS and can't be resolved from a URL.
     urls:
-      - https://jobs.lever.co/wolt
-      - https://boards.greenhouse.io/supercell
-      - https://jobs.ashbyhq.com/aiven
-      - https://apply.workable.com/oura
-      - https://careers.smartrecruiters.com/Bolt
-      - https://jobs.lever.co/pipedrive
+      - https://boards.greenhouse.io/wolt
+      - https://boards.greenhouse.io/oura
+      - https://boards.greenhouse.io/veriff
       - https://boards.greenhouse.io/wise
-      - https://jobs.lever.co/veriff
+      - https://jobs.ashbyhq.com/supercell
+      - https://jobs.lever.co/pipedrive
   linkedin:
     enabled: true
     queries: ["junior software developer", "junior developer", "software developer intern", "graduate software engineer", "trainee developer"]
@@ -71,10 +74,11 @@ sources:
   devitjobs:
     enabled: true
     sites: [germantechjobs.de, swissdevjobs.ch, devitjobs.nl, devitjobs.uk]
+    remote_only_sites: [devitjobs.uk]   # UK jobs are only interesting when they are remote
   wttj:
     enabled: true
     query: "junior developer"
-    countries: [FI, EE, SE, NO, DK, DE, NL, BE, AT, CH, FR, ES, PT, IT, IE, PL, CZ, AE]
+    countries: [FI, EE, SE, "NO", DK, DE, NL, BE, AT, CH, FR, ES, PT, IT, IE, PL, CZ, AE]   # "NO" quoted: bare NO is YAML for false
     include_remote: true
   landingjobs:
     enabled: true
@@ -82,7 +86,7 @@ sources:
   eures:
     enabled: false          # huge; enable with a small query if you want the EU-wide public feed
     query: "junior software developer"
-    countries: [fi, ee, de, nl, se, no, dk]
+    countries: [fi, ee, de, nl, se, "no", dk]   # "no" quoted: bare no is YAML for false
 
   # ---------------------------------------------------------------- Remote boards
   remotive:
@@ -95,10 +99,14 @@ sources:
   remoteok:
     enabled: true
   weworkremotely:
-    enabled: true
+    # Disabled 2026-09-08 (owner): the site makes job seekers buy a 12-month subscription to apply,
+    # which no legitimate board does — they charge the hiring companies, not the applicants.
+    enabled: false
 
   # ---------------------------------------------------------------- Dubai
   bayt:
-    enabled: true
+    # Disabled 2026-09-07: bayt.com answers HTTP 403 (bot challenge) to every request from a
+    # plain HTTP client, even after the cookie handshake. Needs a headless browser; not worth it.
+    enabled: false
     queries: ["junior developer", "software developer", "software engineer intern"]
     max_pages: 3

@@ -5,7 +5,7 @@ boards; auto-filters them with cheap rules; then lets Claude screen and rank wha
 
 ```
 scrape → filter (rules) → prefilter (Sonnet 5, permissive) → rank (Opus 5, top N) → report (markdown + DB) → serve (web UI)
- 21 sources   SQLite         structured JSON verdicts          top N explained        data/reports + jobs.db    FastAPI on localhost
+ 21 sources   SQLite         structured JSON verdicts          top N explained        results/ + jobs.db    FastAPI on localhost
 ```
 
 See `docs/PLAN.md` for the design, the source list, and the decisions behind it.
@@ -54,7 +54,7 @@ uv run jobscraper facets                # backfill the filter facets of an exist
 uv run jobscraper serve                 # web UI → http://127.0.0.1:8000
 ```
 
-Outputs: `data/jobs.db` (everything), `data/reports/report-YYYY-MM-DD.md` (ranked list),
+Outputs: `data/jobs.db` (everything), `results/report-YYYY-MM-DD.md` (ranked list),
 `data/exports/filtered.jsonl` (rule survivors with verdicts, for review in Claude Code or a
 spreadsheet). Each `report` run is also stored *in* `data/jobs.db` — the run and its counts in
 `reports`, its ordered sections in `report_items` — which is what `serve` reads; your
@@ -72,6 +72,26 @@ requires, a language you did not tick) and flip on "Benefits from Full Stack Ope
 the React/Node/TypeScript-ish roles. There is **no authentication**: keep it on localhost, or
 put it behind a tunnel (`cloudflared`, `tailscale funnel`) or a reverse proxy with basic auth
 before sharing the URL. See [docs/WEB.md](docs/WEB.md) for the API and the data model.
+
+## AI stages without API credits (subagent mode)
+
+The prefilter/rank stages can run through Claude Code subagents instead of the API, on a local
+session, with the same prompts and the same stored verdicts:
+
+```bash
+uv run python scripts/ai_batches.py export prefilter        # data/exports/ai/prefilter/{system.txt,chunk-NN.json}
+# ask one Sonnet subagent per chunk to write data/exports/ai/prefilter/verdicts/chunk-NN.jsonl
+uv run python scripts/ai_batches.py import prefilter
+uv run python scripts/ai_batches.py export rank --top 60    # top prefilter survivors, full descriptions + CV
+# ask one Opus subagent per chunk to write data/exports/ai/rank/verdicts/chunk-NN.jsonl
+uv run python scripts/ai_batches.py import rank
+uv run jobscraper report
+```
+
+Each verdict line is `{"job_id", "relevant", "score", "language_ok", "seniority_ok", "location_ok",
+"summary", "concerns"[, "why_apply"]}`. Import validates against the stage schema and stores the rows
+under the current `PROMPT_VERSION`, so `report` renders them like an API run. On 2026-09-07 the cheap
+pass cost about 1,500 subagent tokens per posting (100 postings ≈ 5-8 minutes per Sonnet agent).
 
 ## Tuning
 

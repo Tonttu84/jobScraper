@@ -13,3 +13,7 @@ data/exports/
 *.egg-info/
 dist/
 .coverage
+data/probe.log
+data/*.log
+.claude/worktrees/
+results/

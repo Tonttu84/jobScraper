@@ -306,6 +306,22 @@ class Store:
         ]
         return self._snapshot(row, items)
 
+    def delete_verdicts(self, job_ids: list[str], stage: str | None = None) -> int:
+        """Forget verdicts for ``job_ids`` (one ``stage`` or every stage). Returns rows deleted.
+
+        Used when a job's input changed — a hydrated description, say — and the stored verdict was
+        formed without it, so the job has to go through the stage again.
+        """
+        if not job_ids:
+            return 0
+        sql = f"DELETE FROM ai_verdicts WHERE job_id IN ({','.join('?' * len(job_ids))})"
+        args = list(job_ids)
+        if stage:
+            sql += " AND stage=?"
+            args.append(stage)
+        with self.tx() as c:
+            return c.execute(sql, args).rowcount
+
     # ------------------------------------------------------------------- runs
     def log_run(self, source: str, fetched: int, new: int, error: str | None = None) -> None:
         with self.tx() as c:

@@ -94,7 +94,8 @@ class Http:
         cache = self._cache_path(method, str(req.url), json_body or data)
         if cache and cache.exists():
             payload = json.loads(cache.read_text(encoding="utf-8"))
-            return httpx.Response(payload["status"], text=payload["text"], headers=payload["headers"], request=req)
+            headers = {k: v for k, v in payload["headers"].items() if k.lower() not in _TRANSFER_HEADERS}
+            return httpx.Response(payload["status"], text=payload["text"], headers=headers, request=req)
 
         last_exc: Exception | None = None
         status: int | None = None
@@ -110,7 +111,7 @@ class Http:
                     continue
                 if cache and resp.status_code < 400:
                     cache.write_text(
-                        json.dumps({"status": resp.status_code, "text": resp.text, "headers": dict(resp.headers)}),
+                        json.dumps({"status": resp.status_code, "text": resp.text, "headers": _cacheable_headers(resp)}),
                         encoding="utf-8",
                     )
                 return resp
@@ -144,6 +145,15 @@ class Http:
 
     def close(self) -> None:
         self._client.close()
+
+
+# The cache stores the *decoded* text, so the transfer-level headers must not be replayed
+# (httpx would try to gunzip plain text and raise DecodingError).
+_TRANSFER_HEADERS = {"content-encoding", "content-length", "transfer-encoding"}
+
+
+def _cacheable_headers(resp: httpx.Response) -> dict[str, str]:
+    return {k: v for k, v in resp.headers.items() if k.lower() not in _TRANSFER_HEADERS}
 
 
 def _raise_for_status(resp: httpx.Response) -> None:

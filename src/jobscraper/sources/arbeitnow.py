@@ -1,11 +1,21 @@
 """arbeitnow.com — free public job-board API (DACH-heavy, some wider EU; DE/EN mixed).
 
 GET https://www.arbeitnow.com/api/job-board-api?page=N → {"data": [...], "links": {...}, "meta": {...}}
-100 jobs per page, newest first. Don't follow ``links.next`` (carries a rotating search param).
+250 jobs per page, newest first (``meta.info``: ordered by ``created_at``, refreshed hourly).
+Don't follow ``links.next`` (carries a rotating search param) — just walk ``?page=``.
+
+Record shape (all ten keys are always present, values may be null/empty):
+``slug``, ``company_name``, ``title``, ``description`` (HTML), ``remote`` (bool), ``url``,
+``tags`` (free-text topic labels), ``job_types`` (mixed employment *and* seniority labels:
+"Full time", "Permanent", "Experienced", "Entry", "Working student", "berufserfahren", …),
+``location``, ``created_at`` (epoch seconds — the only date the feed carries).
+``location`` is free text: a city ("München"), a city + region ("Leipzig, Sachsen"), a bare
+country, an office label ("London Office"), a remote marker ("Remote", "Remote job"), or "".
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -16,12 +26,16 @@ from jobscraper.sources.base import SourceContext, register, safe_records
 
 API = "https://www.arbeitnow.com/api/job-board-api"
 
+# ``location`` is often only a work-mode marker; it is a place name in neither sense.
+_PLACELESS_RE = re.compile(r"^\s*(remote(\s+job)?|anywhere|worldwide|home\s?office)\s*$", re.I)
+
 
 def parse_record(rec: dict[str, Any]) -> Job | None:
     slug = rec.get("slug") or rec.get("url")
     if not slug or not rec.get("title"):
         return None
     location = rec.get("location") or None
+    placeless = bool(location and _PLACELESS_RE.match(location))
     remote_flag = rec.get("remote")
     tags = [t for t in (rec.get("tags") or []) if isinstance(t, str)]
     job_types = [t for t in (rec.get("job_types") or []) if isinstance(t, str)]
@@ -33,8 +47,10 @@ def parse_record(rec: dict[str, Any]) -> Job | None:
         company=rec.get("company_name"),
         description=strip_html(rec.get("description")),
         location_raw=location,
-        country=guess_country(location) or ("DE" if location else None),
-        city=location.split(",")[0].strip() if location else None,
+        # DACH-heavy board: an unrecognized place name is almost always a small German town,
+        # but a bare "Remote" is not a place at all and must not become a German city.
+        country=None if placeless else (guess_country(location) or ("DE" if location else None)),
+        city=None if placeless or not location else location.split(",")[0].strip() or None,
         remote=guess_remote(location, rec.get("title"), flag=remote_flag if isinstance(remote_flag, bool) else None),
         employment_type=", ".join(job_types) or None,
         tags=tags,

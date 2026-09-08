@@ -1,10 +1,20 @@
 """himalayas.app — remote-only board with a free JSON API (worldwide, tech-heavy).
 
-GET https://himalayas.app/jobs/api?limit=50&offset=0 → {"jobs": [...], "totalCount": N}
-Paginated by ``offset``; ``totalCount`` bounds the walk.
+GET https://himalayas.app/jobs/api?limit=20 →
+{"comments": …, "updatedAt": …, "offset": 0, "limit": 20, "totalCount": N, "nextCursor": "…",
+ "jobs": [...]}
+
+Paginated by ``nextCursor``: pass it back as ``?cursor=``. The feed's own ``comments`` field
+(21/08/2026) says cursor paging never repeats a job and that ``offset`` is deprecated and will
+be removed, so this adapter never sends ``offset``. ``totalCount`` is the size of the whole feed
+(six figures), not of the current slice, so it bounds nothing — stop on an empty page or a
+missing cursor instead.
 
 Every posting is remote. ``locationRestrictions`` (and ``timezoneRestrictions`` as a fallback)
-say who may apply and go to ``Job.remote_region`` for the location filter.
+say who may apply and go to ``Job.remote_region`` for the location filter; note the timezone
+entries are UTC offsets as *numbers* ([9], [-8, -7, …]), not strings. ``categories`` are
+hyphenated slugs and ``parentCategories`` the readable headings — both land in ``Job.tags``.
+``minSalary``/``maxSalary`` are amounts per ``salaryPeriod`` ("annual", "hourly", …).
 """
 
 from __future__ import annotations
@@ -35,7 +45,12 @@ def region_country(region: str | None) -> str | None:
     return codes.pop() if len(codes) == 1 else None
 
 
-def salary_text(low: Any, high: Any, currency: Any) -> str | None:
+_PERIODS = {"annual": "year", "yearly": "year", "monthly": "month", "weekly": "week", "daily": "day", "hourly": "hour"}
+
+
+def salary_text(low: Any, high: Any, currency: Any, period: Any = None) -> str | None:
+    """"61,030 - 71,800 PLN/year" — the period matters: 80-160 USD is hourly, not yearly."""
+
     def num(value: Any) -> str | None:
         try:
             amount = float(value)
@@ -48,14 +63,24 @@ def salary_text(low: Any, high: Any, currency: Any) -> str | None:
         return None
     span = f"{low_s} - {high_s}" if low_s and high_s else (low_s or high_s)
     unit = str(currency).strip().upper() if currency else ""
-    return f"{span} {unit}".strip()
+    text = f"{span} {unit}".strip()
+    key = str(period).strip().lower() if period else ""
+    per = _PERIODS.get(key, key)
+    return f"{text}/{per}" if per else text
 
 
 def _strings(value: Any) -> list[str]:
+    """Free-text entries as strings; timezone offsets arrive as numbers, so keep those too."""
     if isinstance(value, str):
         return [value] if value.strip() else []
     if isinstance(value, list):
-        return [v.strip() for v in value if isinstance(v, str) and v.strip()]
+        out = []
+        for v in value:
+            if isinstance(v, str) and v.strip():
+                out.append(v.strip())
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                out.append(f"UTC{v:+g}")
+        return out
     return []
 
 
@@ -69,6 +94,7 @@ def parse_record(rec: dict[str, Any]) -> Job | None:
     locations = _strings(rec.get("locationRestrictions"))
     timezones = _strings(rec.get("timezoneRestrictions"))
     region = ", ".join(locations) or ", ".join(timezones) or None
+    tags = list(dict.fromkeys(_strings(rec.get("parentCategories")) + _strings(rec.get("categories"))))
     return Job(
         source="himalayas",
         source_id=str(rec.get("guid") or url),
@@ -82,8 +108,10 @@ def parse_record(rec: dict[str, Any]) -> Job | None:
         remote_region=region,
         seniority_raw=", ".join(_strings(rec.get("seniority"))) or None,
         employment_type=rec.get("employmentType") or None,
-        tags=_strings(rec.get("categories")),
-        salary_text=salary_text(rec.get("minSalary"), rec.get("maxSalary"), rec.get("currency")),
+        tags=tags,
+        salary_text=salary_text(
+            rec.get("minSalary"), rec.get("maxSalary"), rec.get("currency"), rec.get("salaryPeriod")
+        ),
         posted_at=parse_date(rec.get("pubDate")),
         raw=rec,
     )
@@ -97,10 +125,12 @@ class Himalayas:
         max_pages = int(ctx.opt("max_pages", 5))
         page_size = int(ctx.opt("page_size", 50))
         emitted = 0
-        offset = 0
+        cursor: str | None = None
         for _ in range(max(max_pages, 1)):
-            payload = ctx.http.get_json(API, params={"limit": page_size, "offset": offset})
-            payload = payload or {}
+            params: dict[str, Any] = {"limit": page_size}
+            if cursor:
+                params["cursor"] = cursor
+            payload = ctx.http.get_json(API, params=params) or {}
             records = payload.get("jobs") or []
             if not records:
                 break
@@ -109,13 +139,10 @@ class Himalayas:
                 emitted += 1
                 if ctx.limit and emitted >= ctx.limit:
                     return
-            offset += len(records)
-            try:
-                total = int(payload.get("totalCount") or 0)
-            except (TypeError, ValueError):
-                total = 0
-            if total and offset >= total:
+            next_cursor = payload.get("nextCursor")
+            if not isinstance(next_cursor, str) or not next_cursor or next_cursor == cursor:
                 break
+            cursor = next_cursor
 
 
 register(Himalayas())

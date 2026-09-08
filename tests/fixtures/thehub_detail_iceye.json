@@ -1,0 +1,48 @@
+{
+  "doc": {
+    "id": "6a5acbbbfb0d306cbef9712d",
+    "key": "senior-software-engineer-developer-enablement",
+    "title": "Senior Software Engineer (Developer Enablement)",
+    "company": {
+      "id": "5b61aa87c47f543f792d4596",
+      "key": "iceye",
+      "name": "ICEYE",
+      "website": "https://www.iceye.com",
+      "numberOfEmployees": "11-50",
+      "founded": "2015"
+    },
+    "description": "<ul><li><p><strong>Title</strong>: Senior Software Engineer (Developer Enablement)</p></li><li><p><strong>Location</strong>: Espoo, Finland</p></li><li><p><strong>Department</strong>: Platform &amp; Release Engineering</p></li></ul>",
+    "salary": "competitive",
+    "salaryRange": {},
+    "countryCode": "FI",
+    "location": {
+      "address": "Espoo, Finland",
+      "locality": "Espoo",
+      "country": "Finland"
+    },
+    "geoLocation": {
+      "center": {
+        "type": "Point",
+        "_id": "6a5f4c501e53516cf395611d",
+        "coordinates": [
+          24.6559001,
+          60.2054911
+        ]
+      }
+    },
+    "jobPositionTypes": [
+      "5b8e46b3853f039706b6ea70"
+    ],
+    "jobRoles": [
+      "69b0f360765be1100ae12534"
+    ],
+    "expirationDate": "2027-01-21",
+    "createdAt": "2026-07-18T00:41:31.008Z",
+    "approvedAt": "2026-07-21T11:20:02.728Z",
+    "status": "ACTIVE",
+    "link": "https://jobs.ashbyhq.com/iceye/1ffce4d4-4088-4336-9007-622dc10399fb",
+    "isRemote": false,
+    "publishedAt": "2026-07-21T11:20:02.834Z",
+    "absoluteJobUrl": "https://thehub.io/jobs/6a5acbbbfb0d306cbef9712d"
+  }
+}

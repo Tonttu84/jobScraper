@@ -259,3 +259,24 @@ def test_build_snapshot_caps_the_review_section_at_300(state):
     assert len(review) == 300
     assert [i.position for i in review[:3]] == [1, 2, 3]
     assert all(i.score is None for i in review)
+
+def test_write_report_hides_jobs_the_rule_filter_now_drops(tmp_path, state):
+    """Rules tighten between runs (max age, seniority, language); stale verdicts must not resurrect a drop."""
+    jobs, filters, prefilter, ranked = state
+    ranked_job, pre_job, _ = jobs
+    filters[ranked_job.id] = FilterResult(job_id=ranked_job.id, status="drop", reasons=["requires pl: 'Polish C1'"])
+    filters[pre_job.id] = FilterResult(job_id=pre_job.id, status="drop", reasons=["posting is 40 days old (max 20)"])
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Junior Backend Developer" not in text
+    assert "Junior Platform Engineer" not in text
+
+
+def test_build_snapshot_hides_jobs_the_rule_filter_now_drops(state):
+    """Mirror of the markdown rule: a stale verdict must not resurrect a job the rules now drop."""
+    jobs, filters, prefilter, ranked = state
+    ranked_job, pre_job, review_job = jobs
+    filters[ranked_job.id] = FilterResult(job_id=ranked_job.id, status="drop", reasons=["requires pl"])
+    filters[pre_job.id] = FilterResult(job_id=pre_job.id, status="drop", reasons=["too old"])
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1")
+    assert [(i.job_id, i.section) for i in snap.items] == [(review_job.id, "review")]
+    assert snap.counts["prefiltered"] == 0 and snap.counts["ranked"] == 0

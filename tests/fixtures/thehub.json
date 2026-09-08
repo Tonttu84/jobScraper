@@ -1,55 +1,122 @@
 {
-  "docs": [
-    {
-      "id": "68b0c1d2e3f4a5b6c7d8e9f0",
-      "title": "Junior Backend Developer",
-      "status": "ACTIVE",
-      "company": {"name": "Nordic Startup Oy", "slug": "nordic-startup"},
-      "location": {"address": "Mannerheimintie 12, Helsinki, Finland", "locality": "Helsinki", "country": "Finland"},
-      "geoLocation": {"center": {"type": "Point", "coordinates": [24.9384, 60.1699]}},
-      "countryCode": "FI",
-      "isRemote": false,
-      "description": "<p>Join our platform team. <strong>Go</strong> and PostgreSQL.</p>",
-      "publishedAt": "2026-09-03T07:00:00.000Z",
-      "link": "https://jobs.lever.co/nordic-startup/junior-backend",
-      "salary": "competitive",
-      "salaryRange": {"from": 42000, "to": 52000, "currency": "EUR"},
-      "jobPositionTypes": ["Full-time"],
-      "jobRoles": ["Backend"]
-    },
-    {
-      "_id": "68b0c1d2e3f4a5b6c7d8e9f1",
-      "title": "Remote Frontend Engineer",
-      "status": "ACTIVE",
-      "company": {"name": "Hubtech AB"},
-      "location": {"locality": "Stockholm", "country": "Sweden"},
-      "countryCode": "SE",
-      "isRemote": true,
-      "publishedAt": "2026-09-02T12:00:00.000Z",
-      "link": "",
-      "jobPositionTypes": [],
-      "jobRoles": []
-    },
-    {
-      "id": "68b0c1d2e3f4a5b6c7d8e9f2",
-      "title": "Expired Data Engineer",
-      "status": "EXPIRED",
-      "company": {"name": "Old Corp"},
-      "location": {"locality": "Oslo", "country": "Norway"},
-      "countryCode": "NO",
-      "description": "Should never be ingested.",
-      "publishedAt": "2026-05-01T12:00:00.000Z"
-    },
-    {
-      "id": null,
-      "title": null,
-      "status": "ACTIVE",
-      "company": null,
-      "location": null
-    }
-  ],
+  "total": 4,
+  "limit": 15,
   "page": 1,
   "pages": 1,
-  "total": 4,
-  "limit": 15
+  "suggestions": {
+    "jobPositionTypes": {
+      "5b8e46b3853f039706b6ea70": 52
+    },
+    "jobRoles": {
+      "qualityassurance": 2,
+      "frontenddeveloper": 8,
+      "sales": 1,
+      "humanresources": 1,
+      "finance": 2,
+      "analyst": 1,
+      "fullstackdeveloper": 13,
+      "productmanagement": 2,
+      "uxuidesigner": 2,
+      "projectmanagement": 2,
+      "design": 2,
+      "marketing": 1,
+      "backenddeveloper": 27,
+      "devops": 16,
+      "customersuccess": 1,
+      "engineer": 27,
+      "businessdevelopment": 3,
+      "operations": 3
+    },
+    "remote": 7,
+    "paid": 52
+  },
+  "docs": [
+    {
+      "id": "6a96164ad9d4c7b3f6617c5a",
+      "key": "ai-developer-advocate",
+      "title": "AI Developer Advocate",
+      "location": {
+        "country": "Finland",
+        "locality": "Helsinki",
+        "address": "Helsinki, Finland"
+      },
+      "isRemote": false,
+      "jobPositionTypes": [
+        "5b8e46b3853f039706b6ea70"
+      ],
+      "isFeatured": false,
+      "views": {
+        "week": 721,
+        "total": 721
+      },
+      "company": {
+        "id": "6a903ba1c274135e3cce2ffb",
+        "key": "verda",
+        "name": "Verda",
+        "website": "https://verda.com/",
+        "numberOfEmployees": "101-200",
+        "founded": "2020"
+      },
+      "saved": false
+    },
+    {
+      "id": "6a5acbbbfb0d306cbef9712d",
+      "key": "senior-software-engineer-developer-enablement",
+      "title": "Senior Software Engineer (Developer Enablement)",
+      "location": {
+        "country": "Finland",
+        "locality": "Espoo",
+        "address": "Espoo, Finland"
+      },
+      "isRemote": false,
+      "jobPositionTypes": [
+        "5b8e46b3853f039706b6ea70"
+      ],
+      "isFeatured": false,
+      "views": {
+        "week": 588,
+        "total": 2997
+      },
+      "company": {
+        "id": "5b61aa87c47f543f792d4596",
+        "key": "iceye",
+        "name": "ICEYE",
+        "website": "https://www.iceye.com",
+        "numberOfEmployees": "11-50",
+        "founded": "2015"
+      },
+      "saved": false
+    },
+    {
+      "id": "6a96164cd9d4c7b3f6617cb7",
+      "key": "site-selection-manager-emea",
+      "title": "Site Selection Manager — EMEA",
+      "isRemote": true,
+      "jobPositionTypes": [
+        "5b8e46b3853f039706b6ea70"
+      ],
+      "isFeatured": false,
+      "views": {
+        "week": 792,
+        "total": 792
+      },
+      "company": {
+        "id": "6a903ba1c274135e3cce2ffb",
+        "key": "verda",
+        "name": "Verda",
+        "website": "https://verda.com/",
+        "numberOfEmployees": "101-200",
+        "founded": "2020"
+      },
+      "saved": false
+    },
+    {
+      "key": "broken-doc-without-id-or-title",
+      "isRemote": false,
+      "company": {
+        "name": "Nobody Oy"
+      },
+      "saved": false
+    }
+  ]
 }

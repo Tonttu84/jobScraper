@@ -28,6 +28,7 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(store_mod, "DATA_DIR", tmp_path)
     monkeypatch.setattr(report_mod, "DATA_DIR", tmp_path)
     monkeypatch.setattr(cli_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(report_mod, "RESULTS_DIR", tmp_path / "results")
     return tmp_path
 
 
@@ -60,7 +61,7 @@ def test_scrape_filter_report_pipeline(data_dir, fake_http):
     store = store_mod.Store()
     try:
         jobs = store.jobs()
-        assert len(jobs) == 2  # the third fixture record is broken and skipped
+        assert len(jobs) == 2  # --limit 2 stops after the first two fixture records
         assert {j.source for j in jobs} == {"arbeitnow"}
         runs = list(store.conn.execute("SELECT source, fetched, new FROM runs"))
         assert [tuple(r) for r in runs] == [("arbeitnow", 2, 2)]
@@ -84,14 +85,13 @@ def test_scrape_filter_report_pipeline(data_dir, fake_http):
         assert len(results) == 2
         by_title = {j.id: j.title for j in store.jobs()}
         statuses = {by_title[jid]: r.status for jid, r in results.items()}
-        assert statuses["Junior Software Developer (m/w/d)"] == "keep"
-        assert statuses["Senior Java Architect"] == "drop"
-        # one facet row per non-duplicate job, with the TypeScript/React job flagged web_dev
+        # one facet row per non-duplicate job; neither fixture job is web work, both are devops
         facets = store.facets()
         assert set(facets) == set(results)
-        by_id = {j.id: j for j in store.jobs()}
-        web = {by_id[jid].title for jid, f in facets.items() if f.web_dev}
-        assert web == {"Junior Software Developer (m/w/d)"}
+        assert not any(f.web_dev for f in facets.values())
+        assert all("devops" in f.stacks for f in facets.values())
+        assert statuses["DevOps Engineer (m/w/d)"] == "keep"
+        assert statuses["Senior Python Engineer, Platform Libraries (m/f/d)"] == "drop"
     finally:
         store.close()
 
@@ -99,7 +99,7 @@ def test_scrape_filter_report_pipeline(data_dir, fake_http):
     assert reported.exit_code == 0, reported.output
     assert "report #1" in reported.output
 
-    reports = list((data_dir / "reports").glob("report-*.md"))
+    reports = list((data_dir / "results").glob("report-*.md"))  # reports live in results/, not data/
     assert len(reports) == 1
     assert "# Job report" in reports[0].read_text(encoding="utf-8")
 
@@ -118,7 +118,7 @@ def test_scrape_filter_report_pipeline(data_dir, fake_http):
     lines = export.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1  # only the non-dropped job is exported
     rec = json.loads(lines[0])
-    assert rec["title"] == "Junior Software Developer (m/w/d)"
+    assert rec["title"] == "DevOps Engineer (m/w/d)"
     assert rec["filter"]["status"] == "keep"
     assert rec["verdict"] is None
 
@@ -157,14 +157,14 @@ def test_facets_command_backfills_an_existing_database(data_dir, fake_http):
     result = runner.invoke(cli_mod.app, ["facets", "--days", "30"])
     assert result.exit_code == 0, result.output
     assert "2 jobs" in result.output
-    assert "web" in result.output  # the stack-tag table
+    assert "devops" in result.output  # the stack-tag table
 
     store = store_mod.Store()
     try:
         facets = store.facets()
         assert len(facets) == 2
-        assert any(f.web_dev for f in facets.values())
-        assert any("java" in f.stacks for f in facets.values())
+        assert not any(f.web_dev for f in facets.values())
+        assert any("python" in f.stacks for f in facets.values())
     finally:
         store.close()
 
@@ -176,7 +176,7 @@ def test_report_backfills_missing_facets(data_dir, fake_http):
 
     store = store_mod.Store()
     try:  # a `review` job puts an item in the snapshot without running the AI stages
-        job = next(j for j in store.jobs() if j.title.startswith("Junior"))
+        job = next(j for j in store.jobs() if j.title.startswith("DevOps"))
         store.save_filter_results([FilterResult(job_id=job.id, status="review", reasons=["manual"])], "test")
         with store.tx() as c:
             c.execute("DELETE FROM job_facets")
@@ -192,7 +192,7 @@ def test_report_backfills_missing_facets(data_dir, fake_http):
         assert [i.section for i in snap.items] == ["review"]
         stored = store.facets()
         assert set(stored) >= {i.job_id for i in snap.items}
-        assert stored[job.id].web_dev is True
+        assert "devops" in stored[job.id].stacks
     finally:
         store.close()
 
@@ -226,3 +226,9 @@ def test_serve_with_reload_passes_the_factory_string(data_dir, monkeypatch):
     assert calls["kwargs"]["factory"] is True
     assert calls["kwargs"]["reload"] is True
     assert calls["kwargs"]["port"] == 8000
+
+def test_short_verbose_flag_is_accepted(data_dir, fake_http):
+    """README documents ``-v`` as the short form of ``--verbose`` on every command that logs."""
+    for args in (["probe", "-v", "arbeitnow"], ["scrape", "-v", "arbeitnow"], ["filter", "-v"]):
+        result = runner.invoke(cli_mod.app, args)
+        assert result.exit_code == 0, f"{args}: {result.output}"

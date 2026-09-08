@@ -1,36 +1,51 @@
 {
-  "count": 3,
-  "next": null,
+  "count": 132,
+  "next": "https://duunitori.fi/api/v1/jobentries?page=2&search=ohjelmistokehitt%C3%A4j%C3%A4&search_also_descr=1",
   "previous": null,
   "results": [
     {
-      "id": 9911001,
-      "slug": "esimerkki-oy-junior-software-developer-9911001",
-      "heading": "Junior Software Developer",
-      "company_name": "Esimerkki Oy",
-      "municipality_name": "Helsinki",
-      "descr": "<p>Etsimme <strong>junior-kehittäjää</strong> tiimiimme Helsinkiin.</p><ul><li>Python, Django, React</li><li>Työkielemme on englanti</li></ul>",
-      "date_posted": "2026-09-01",
-      "salary": null,
-      "job_entry_type": "tyopaikka"
+      "heading": "Senior Qt / C++ Developer",
+      "date_posted": "2026-09-07T10:00:07.803729+03:00",
+      "slug": "senior-qt-c-developer-sdsuu-20549989",
+      "municipality_name": "Tampere",
+      "export_image_url": "https://duunitori.imgix.net/uploads/og-images/duunitori_og_enitentyopaikkoja.png?auto=format&crop=entropy&fit=crop&h=630&w=1200",
+      "company_name": "Pareto Software Oy",
+      "descr": "Senior Qt / C++ Developer\nWe are looking for new professionals to join Pareto's journey\nPareto is a growing software company built around experienced professionals and a sharp focus on what delivers results.\nLocations: Tampere, Finland\nRemote status: Hybrid",
+      "latitude": null,
+      "longitude": null
     },
     {
-      "id": 9911002,
-      "slug": "etana-oy-full-stack-developer-remote-9911002",
-      "heading": "Full Stack Developer (etätyö)",
-      "company_name": "Etäna Oy",
-      "municipality_name": "Tampere, Etätyö",
-      "descr": "<p>Remote-first team. TypeScript ja Node.js.</p>",
-      "date_posted": "2026-08-28T09:15:00+03:00",
-      "salary": "3500 - 4500 €/kk"
+      "heading": "OpenShift-kehittäjä, YOSO",
+      "date_posted": "2026-09-07T00:00:00+03:00",
+      "slug": "openshift-kehittaja-yoso-sbsii-20550043",
+      "municipality_name": "Finland",
+      "export_image_url": "https://duunitori-ext2.imgix.net/https%3A%2F%2Fimages.teamtailor-cdn.com%2Fimages%2Fs3%2Fteamtailor-production%2Fhero_picture_large_full_cover-v6%2Fimage_uploads%2Fa0d6ac58-c3c0-42bf-b6c9-719b71ffa62b%2Foriginal.jpg?auto=format&crop=entropy&fit=crop&h=630&mark64=aHR0cHM6Ly9jZG4uZHV1bml0b3JpLmZpL3VwbG9hZHMvaW1naXgvZHV1bml0b3JpX2t1bG1hc3RyaXBlLnBuZw&markalign=top%2Cright&markpad=0&markw=0.15&w=1200&s=346235211e37e1024068604f964793d1",
+      "company_name": "Biisoni",
+      "descr": "Etsimme nyt YOSOlle kokenutta OpenShift-kehittäjää työskentelemään pitkäaikaisen julkishallinnon asiakkuuden parissa.\n\nYOSO on suomalainen ICT-alan asiantuntijayritys, joka auttaa asiakkaitaan rakentamaan, kehittämään ja ylläpitämään moderneja ohjelmisto-, integraatio- ja IT-arkkitehtuuriratkaisuja. Yritys yhdistää vahvan teknologiaosaamisen, asiakaslähtöisen toimintatavan ja joustavat työskentelymallit tarjotakseen ratkaisuja erilaisiin liiketoiminnan ja digitalisaation tarpeisiin. YOSOn toiminnan keskiössä ovat pitkäjänteiset asiakassuhteet, laadukkaat tekniset ratkaisut sekä korkeat tietoturva- ja luotettavuusvaatimukset.",
+      "latitude": null,
+      "longitude": null
     },
     {
-      "slug": null,
+      "heading": "Senior UI Programmer",
+      "date_posted": "2026-09-04T13:00:07.139264+03:00",
+      "slug": "remedy-entertainment-senior-ui-programmer-sdsuu-20545598",
+      "municipality_name": "Espoo",
+      "export_image_url": "https://duunitori.imgix.net/uploads/og-images/duunitori_og_enitentyopaikkoja.png?auto=format&crop=entropy&fit=crop&h=630&w=1200",
+      "company_name": "Remedy Entertainment Oyj",
+      "descr": "Remedy Entertainment, the creator of Control®, Max Payne®, Alan Wake®, and one of the leading independent game studios in the world, is looking for a Senior UI Programmer to create high-quality gaming experiences for the next generation of games.\nDo you want to bring game User Interfaces to life through code? Are you as interested in what happens underneath the UI as in the UI itself? Things like the data flowing from the engine, the rendering path, and the frame and memory budgets?",
+      "latitude": null,
+      "longitude": null
+    },
+    {
       "heading": null,
-      "company_name": null,
+      "date_posted": null,
+      "slug": null,
       "municipality_name": null,
+      "export_image_url": null,
+      "company_name": null,
       "descr": null,
-      "date_posted": null
+      "latitude": null,
+      "longitude": null
     }
   ]
 }

@@ -1,55 +1,234 @@
 {
   "hits": [
     {
-      "objectID": "1234567",
-      "reference": "WTTJ-1234567",
-      "name": "Junior Backend Developer",
-      "slug": "junior-backend-developer_helsinki",
-      "organization": {"name": "Nordic Softworks", "slug": "nordic-softworks", "reference": "nordic-softworks"},
-      "offices": [{"city": "Helsinki", "country": "Finland", "country_code": "FI"}],
+      "objectID": "2919acab-2be1-4c4c-b714-a264adfcf675",
+      "reference": "2919acab-2be1-4c4c-b714-a264adfcf675",
+      "name": "Développeur Junior",
+      "slug": "developpeur-junior_saint-marcel",
+      "language": "fr",
+      "organization": {
+        "name": "Groupe CNPP",
+        "slug": "cnpp",
+        "reference": "2fzSQm",
+        "description": null,
+        "summary": "Prévention et maîtrise des risques en cybersécurité et sécurité au travail.",
+        "profile_type": "standard",
+        "nb_employees": 450
+      },
+      "offices": [
+        {
+          "state": "Normandy",
+          "city": "Saint-Marcel",
+          "country": "France",
+          "country_code": "FR",
+          "district": "Eure",
+          "local_district": "Eure",
+          "local_city": "Saint-Marcel",
+          "local_state": "Normandie"
+        }
+      ],
       "remote": "partial",
-      "experience_level_minimum": 1,
-      "contract_type": "full_time",
-      "published_at": "2025-09-02T06:00:00Z",
-      "published_at_timestamp": 1756792800,
-      "salary_minimum": 38000,
-      "salary_maximum": 46000,
+      "contract_type": "temporary",
+      "contract_duration_minimum": 12,
+      "contract_duration_maximum": 12,
+      "education_level": "bac_3",
+      "experience_level_minimum": 0.0,
+      "published_at": "2026-08-28T19:13:01Z",
+      "published_at_date": "2026-08-28",
+      "published_at_timestamp": 1787944381,
       "salary_currency": "EUR",
-      "salary_period": "yearly",
-      "sectors": [{"name": "SaaS / Cloud Services"}],
-      "profile": "<p>You have finished a CS degree or a bootcamp and write clean Python.</p>",
-      "sections": [
-        {"name": "Your mission", "description": "<p>Ship features in our Django monolith.</p>"},
-        {"title": "Nice to have", "content": "Docker, CI/CD"}
-      ]
-    },
-    {
-      "objectID": "7654321",
-      "name": "Graduate Software Engineer (Remote, EU)",
-      "slug": "graduate-software-engineer",
-      "organization": {"name": "Remote Collective", "slug": "remote-collective"},
-      "offices": [{"city": "Tallinn", "country": "Estonia", "country_code": "EE"}],
-      "remote": "fulltime",
-      "experience_level_minimum": 0,
-      "contract_type": "internship",
-      "published_at_timestamp": 1756700000,
+      "salary_minimum": 30000.0,
+      "salary_maximum": 35000.0,
       "salary_yearly_minimum": 30000,
-      "salary_currency": "eur",
       "salary_period": "yearly",
-      "description": "<p>A twelve-month graduate programme, fully remote inside the EU.</p>"
+      "sectors": [
+        {
+          "name": "Audit",
+          "reference": "audit-1",
+          "parent_name": "Consulting / Audit",
+          "parent_reference": "consulting-audit"
+        },
+        {
+          "name": "Cyber Security",
+          "reference": "cyber-security",
+          "parent_name": "Tech",
+          "parent_reference": "tech-1"
+        },
+        {
+          "name": "Job Training",
+          "reference": "job-training-1",
+          "parent_name": "Education / Training / Recruitment",
+          "parent_reference": "education-training-recruitment"
+        }
+      ],
+      "new_profession": {
+        "sub_category_reference": "software-web-development-iMzA4",
+        "sub_category_name": "Software & Web Development",
+        "category_reference": "tech-engineering-3NjUy",
+        "category_name": "Tech & Engineering",
+        "pivot_name": "Software Developer",
+        "pivot_reference": "software-developer-xY2Ri"
+      },
+      "key_missions": [
+        "Réaliser des applicatifs et des sites web à destination de nos clients internes et externes avec des compétences approfondies en…",
+        "Assurer la maintenance évolutive et corrective des applicatifs et des sites web existants (notamment sous WordPress et Drupal)."
+      ],
+      "summary": "Rejoignez notre équipe en tant que Développeur Junior. Vous serez impliqué dans la conception, le développement et la maintenance d'applications et de sites web destinés à nos clients internes et externes. Vous travaillerez en étroite…",
+      "profile": "<br />Issu(e) d'une formation Bac+3 à Bac+5 en informatique, vous disposez de premières expériences en développement (stage, alternance, projets personnels ou premier emploi).<br />Vous possédez de bonnes bases en développement web et/ou…"
     },
     {
-      "objectID": "0000000",
+      "objectID": "b84dadad-75ad-4a6f-b520-6c717048950a",
+      "reference": "b84dadad-75ad-4a6f-b520-6c717048950a",
+      "name": "Junior iOS Engineer",
+      "slug": "junior-ios-engineer_berlin_qf4lb6qg",
+      "language": "en",
+      "organization": {
+        "name": "Scalable Capital",
+        "slug": "scalable-capital",
+        "reference": "u4mLCE",
+        "description": "Digital investment platform",
+        "summary": "Digital investment platform for wealth creation, trading, and investing.",
+        "profile_type": "standard",
+        "nb_employees": 1200
+      },
+      "offices": [
+        {
+          "state": null,
+          "city": "Berlin",
+          "country": "Germany",
+          "country_code": "DE",
+          "district": null,
+          "local_district": null,
+          "local_city": null,
+          "local_state": null
+        }
+      ],
+      "remote": "unknown",
+      "contract_type": "full_time",
+      "contract_duration_minimum": null,
+      "contract_duration_maximum": null,
+      "education_level": null,
+      "experience_level_minimum": 1.0,
+      "published_at": "2026-08-01T00:17:44Z",
+      "published_at_date": "2026-08-01",
+      "published_at_timestamp": 1785543464,
+      "salary_currency": null,
+      "salary_minimum": null,
+      "salary_maximum": null,
+      "salary_yearly_minimum": null,
+      "salary_period": null,
+      "sectors": [
+        {
+          "name": "Finance",
+          "reference": "finance-2",
+          "parent_name": "Banking / Insurance / Finance",
+          "parent_reference": "banking-insurance-finance"
+        }
+      ],
+      "new_profession": {
+        "sub_category_reference": "software-web-development-iMzA4",
+        "sub_category_name": "Software & Web Development",
+        "category_reference": "tech-engineering-3NjUy",
+        "category_name": "Tech & Engineering",
+        "pivot_name": "Mobile App Developer",
+        "pivot_reference": "mobile-app-developer-yNGNl"
+      },
+      "key_missions": [
+        "Contribuer à la conception et à la mise en œuvre d'interfaces utilisateur et de fonctionnalités sur iOS.",
+        "Collaborer étroitement avec les ingénieurs, les chefs de produit et les designers pour offrir des expériences utilisateur de haute qualité."
+      ],
+      "summary": "Join our team as a Junior iOS Engineer and work alongside a motivated group of software engineers and academics. You will contribute to the design and implementation of user interfaces and features on iOS, take ownership of parts of the…",
+      "profile": " - Motivation to learn modern iOS development practices and deepen your understanding of the platform\n- Curiosity about other technology stacks and platforms beyond iOS\n- Familiarity with Swift and the iOS SDK, and basic experience with…"
+    },
+    {
+      "objectID": "b4e62e71-356f-46a6-96a2-e4a2132e1dcf",
+      "reference": "b4e62e71-356f-46a6-96a2-e4a2132e1dcf",
+      "name": "Mobile App Developer",
+      "slug": "mobile-app-developer_us_v45wqjdk",
+      "language": "en",
+      "organization": {
+        "name": "Injective Labs",
+        "slug": "injective-labs",
+        "reference": "Pf32ZG",
+        "description": "Decentralized finance blockchain",
+        "summary": "Decentralized finance blockchain for an inclusive financial paradigm.",
+        "profile_type": "standard",
+        "nb_employees": 96
+      },
+      "offices": [
+        {
+          "state": null,
+          "city": null,
+          "country": "United States",
+          "country_code": "US",
+          "district": null,
+          "local_district": null,
+          "local_city": null,
+          "local_state": null
+        }
+      ],
+      "remote": "fulltime",
+      "contract_type": "full_time",
+      "contract_duration_minimum": null,
+      "contract_duration_maximum": null,
+      "education_level": null,
+      "experience_level_minimum": 1.0,
+      "published_at": "2026-07-16T00:06:12Z",
+      "published_at_date": "2026-07-16",
+      "published_at_timestamp": 1784160372,
+      "salary_currency": null,
+      "salary_minimum": null,
+      "salary_maximum": null,
+      "salary_yearly_minimum": null,
+      "salary_period": null,
+      "sectors": [
+        {
+          "name": "Software",
+          "reference": "software-1",
+          "parent_name": "Tech",
+          "parent_reference": "tech-1"
+        },
+        {
+          "name": "Finance",
+          "reference": "finance-2",
+          "parent_name": "Banking / Insurance / Finance",
+          "parent_reference": "banking-insurance-finance"
+        }
+      ],
+      "new_profession": {
+        "sub_category_reference": "software-web-development-iMzA4",
+        "sub_category_name": "Software & Web Development",
+        "category_reference": "tech-engineering-3NjUy",
+        "category_name": "Tech & Engineering",
+        "pivot_name": "Mobile App Developer",
+        "pivot_reference": "mobile-app-developer-yNGNl"
+      },
+      "key_missions": [
+        "Develop, maintain, and improve features for the React Native mobile application, ensuring high-quality user experiences.",
+        "Collaborate closely with Product, Design, and Backend Engineering teams to deliver a fast, reliable, and intuitive trading experience."
+      ],
+      "summary": "Join our Mobile team as a Mobile App Developer, where you'll work on building the next generation of DeFi trading applications. You'll primarily focus on our React Native mobile app, collaborating closely with Product, Design, and Backend…",
+      "profile": " - This role is ideal for a junior to mid-level engineer with strong React and TypeScript fundamentals who enjoys building high-quality mobile products. We're looking for someone who thrives in fast-paced environments, takes ownership of…"
+    },
+    {
+      "objectID": "00000000-0000-0000-0000-000000000000",
+      "reference": "00000000-0000-0000-0000-000000000000",
       "name": null,
       "slug": null,
-      "organization": "not-an-object",
-      "offices": "broken",
+      "organization": null,
+      "offices": [],
       "remote": null,
-      "published_at_timestamp": null
+      "published_at_timestamp": null,
+      "summary": null
     }
   ],
-  "nbHits": 2,
-  "nbPages": 1,
+  "nbHits": 262,
   "page": 0,
-  "hitsPerPage": 100
+  "nbPages": 2,
+  "hitsPerPage": 100,
+  "exhaustiveNbHits": true,
+  "exhaustiveTypo": true,
+  "query": "junior developer",
+  "params": "query=junior+developer&hitsPerPage=100&page=0&filters=%28offices.country_code%3AFI+OR+offices.country_code%3AEE%29+OR+remote%3Afulltime",
+  "processingTimeMS": 14
 }

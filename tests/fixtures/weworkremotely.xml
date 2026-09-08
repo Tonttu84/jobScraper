@@ -1,49 +1,89 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss">
   <channel>
-    <title>We Work Remotely: Remote Programming Jobs</title>
-    <link>https://weworkremotely.com/categories/remote-programming-jobs</link>
-    <description>Remote Programming Jobs</description>
-    <language>en-us</language>
+    <title>We Work Remotely: Full-Stack Programming Jobs</title>
+    <link>https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss</link>
+    <description>We Work Remotely: Full-Stack Programming Jobs</description>
+    <language>en-US</language>
+    <ttl>60</ttl>
     <item>
-      <title>Aurora Metrics: Junior Ruby on Rails Developer</title>
-      <region>Europe Only</region>
-      <category>Back-End Programming</category>
-      <type>Full-Time</type>
-      <skills>Ruby, Rails, PostgreSQL</skills>
-      <pubDate>Mon, 01 Sep 2026 09:12:00 +0000</pubDate>
-      <link>https://weworkremotely.com/remote-jobs/aurora-metrics-junior-ruby-on-rails-developer</link>
-      <guid isPermaLink="true">https://weworkremotely.com/remote-jobs/aurora-metrics-junior-ruby-on-rails-developer</guid>
-      <description><![CDATA[<p><strong>Aurora Metrics</strong> is looking for a junior Rails developer.</p><ul><li>1+ year of Rails</li><li>Working hours overlapping CET</li></ul>]]></description>
-    </item>
-    <item>
-      <title>Northstar Digital: Senior Front-End Engineer (React)</title>
+      <title>Legion: Director of Production Engineering</title>
       <region>Anywhere in the World</region>
-      <country>Anywhere in the World</country>
-      <category>Front-End Programming</category>
-      <type>Contract</type>
-      <skills>React, TypeScript</skills>
-      <pubDate>Sun, 31 Aug 2026 14:00:00 +0000</pubDate>
-      <link>https://weworkremotely.com/remote-jobs/northstar-digital-senior-front-end-engineer-react</link>
-      <guid isPermaLink="true">https://weworkremotely.com/remote-jobs/northstar-digital-senior-front-end-engineer-react</guid>
-      <description><![CDATA[<p>7+ years of React. Fully distributed team.</p>]]></description>
-    </item>
-    <item>
-      <title>Standalone Title Without A Company</title>
-      <region>Germany Only</region>
+      <country>🇺🇸 United States of America</country>
+      <state></state>
+      <skills></skills>
       <category>Full-Stack Programming</category>
       <type>Full-Time</type>
-      <pubDate>Sat, 30 Aug 2026 08:30:00 +0000</pubDate>
-      <link>https://weworkremotely.com/remote-jobs/standalone-title-without-a-company</link>
-      <guid isPermaLink="true">https://weworkremotely.com/remote-jobs/standalone-title-without-a-company</guid>
-      <description><![CDATA[<p>Full-stack role, German timezone.</p>]]></description>
+      <description>
+
+&lt;p&gt;
+  &lt;strong&gt;Headquarters:&lt;/strong&gt; Remote, United States
+&lt;/p&gt;
+
+&lt;h1&gt;Director of Production Engineering&amp;nbsp;&lt;/h1&gt;
+&lt;p&gt;At Legion, we are seeking a Director of Engineering, DevOps &amp;amp; SRE to lead the teams responsible for the availability, scalability, and security of our platform.&lt;/p&gt;
+</description>
+      <pubDate>Mon, 07 Sep 2026 07:30:54 +0000</pubDate>
+      <expires_at>Wed, 07 Oct 2026 07:30:54 +0000</expires_at>
+      <guid>https://weworkremotely.com/remote-jobs/legion-director-of-production-engineering</guid>
+      <link>https://weworkremotely.com/remote-jobs/legion-director-of-production-engineering</link>
     </item>
     <item>
-      <title></title>
+      <media:content url="https://wwr-pro.s3.amazonaws.com/logos/0171/6322/logo.gif" type="image/png"/>
+      <title>Lemon.io: Senior React Native Developer</title>
       <region>Anywhere in the World</region>
-      <link></link>
-      <guid isPermaLink="false"></guid>
-      <description></description>
+      <country>🇦🇩 Andorra, 🇦🇱 Albania, 🇦🇷 Argentina, 🇦🇹 Austria, 🇦🇺 Australia, 🇺🇸 United States of America, and 🇿🇦 South Africa</country>
+      <state>Delaware</state>
+      <skills>Node.js, React, Engineer, Developer, Full Stack Dev, and Mobile Development</skills>
+      <category>Full-Stack Programming</category>
+      <type>Full-Time</type>
+      <description>&lt;img src="https://we-work-remotely.imgix.net/logos/0171/6322/logo.gif" /&gt;
+
+&lt;p&gt;
+  &lt;strong&gt;Headquarters:&lt;/strong&gt; New York, NY
+    &lt;br /&gt;&lt;strong&gt;URL:&lt;/strong&gt; &lt;a href="https://lemon.io"&gt;https://lemon.io&lt;/a&gt;
+&lt;/p&gt;
+
+&lt;p&gt;Are you a talented Senior Developer looking for a remote job that lets you show your skills and get decent compensation? Look no further than Lemon.io.&lt;/p&gt;
+</description>
+      <pubDate>Fri, 04 Sep 2026 15:56:51 +0000</pubDate>
+      <expires_at>Sun, 04 Oct 2026 15:56:51 +0000</expires_at>
+      <guid>https://weworkremotely.com/remote-jobs/lemon-io-senior-react-native-developer-1</guid>
+      <link>https://weworkremotely.com/remote-jobs/lemon-io-senior-react-native-developer-1</link>
+    </item>
+    <item>
+      <media:content url="https://wwr-pro.s3.amazonaws.com/logos/0066/7400/logo.gif" type="image/png"/>
+      <title>A.Team: Senior Independent Software Developer ($90-$170/hr)</title>
+      <region>Anywhere in the World</region>
+      <country></country>
+      <state>New York</state>
+      <skills></skills>
+      <category>Full-Stack Programming</category>
+      <type>Contract</type>
+      <description>&lt;img src="https://we-work-remotely.imgix.net/logos/0066/7400/logo.gif" /&gt;
+
+&lt;p&gt;
+  &lt;strong&gt;Headquarters:&lt;/strong&gt; NYC and TLV
+&lt;/p&gt;
+
+&lt;div&gt;Imagine choosing your projects, collaborating with the best, and keeping every dollar you earn.&lt;/div&gt;
+</description>
+      <pubDate>Sun, 16 Jun 2024 17:30:51 +0000</pubDate>
+      <expires_at>Sun, 04 Oct 2026 17:30:51 +0000</expires_at>
+      <guid>https://weworkremotely.com/remote-jobs/a-team-senior-independent-software-developer-90-170-hr</guid>
+      <link>https://weworkremotely.com/remote-jobs/a-team-senior-independent-software-developer-90-170-hr</link>
+    </item>
+    <item>
+      <title>Broken Feed Ltd: Senior Platform Engineer</title>
+      <region>Anywhere in the World</region>
+      <country></country>
+      <state></state>
+      <skills></skills>
+      <category>Full-Stack Programming</category>
+      <type>Full-Time</type>
+      <description>&lt;p&gt;An item with neither link nor guid; the parser must skip it.&lt;/p&gt;</description>
+      <pubDate>Sat, 05 Sep 2026 07:31:22 +0000</pubDate>
+      <expires_at>Mon, 05 Oct 2026 07:31:22 +0000</expires_at>
     </item>
   </channel>
 </rss>

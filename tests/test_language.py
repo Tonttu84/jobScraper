@@ -131,3 +131,19 @@ def test_polish_requirement_is_required() -> None:
     req = find_language_requirements("Wymagana biegła znajomość języka polskiego.")
     assert req.required == {"pl"}
     assert req.optional == set()
+
+
+def test_language_names_match_whole_words_only() -> None:
+    """'viro' (Finnish for Estonia) must not fire inside 'environment' — it dropped real jobs."""
+    req = find_language_requirements(
+        "You will work in a fast-paced, cloud-native environment. Python is required. "
+        "At Aiven we are committed to providing reasonable accommodations for qualified individuals."
+    )
+    assert "et" not in req.required
+    assert "et" not in req.mentioned
+
+
+def test_inflected_finnish_language_names_still_match() -> None:
+    req = find_language_requirements("Viron kielen sujuva taito vaaditaan. Englannin kielen taito on eduksi.")
+    assert "et" in req.required
+    assert "en" in req.optional

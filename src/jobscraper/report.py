@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from jobscraper.config import DATA_DIR
+from jobscraper.config import DATA_DIR, RESULTS_DIR  # noqa: F401 - DATA_DIR patched by tests
 from jobscraper.models import AIVerdict, FilterResult, Job, ReportItem, ReportSnapshot
 
 
@@ -16,9 +16,13 @@ def _tier_label(t: int | None) -> str:
 
 def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
                  ranked: dict[str, AIVerdict], path: Path | None = None, cost: dict | None = None) -> Path:
-    path = path or DATA_DIR / "reports" / f"report-{datetime.now(UTC):%Y-%m-%d}.md"
+    path = path or RESULTS_DIR / f"report-{datetime.now(UTC):%Y-%m-%d}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     by_id = {j.id: j for j in jobs}
+    # Rules tighten between runs (max age, seniority, language); a stale verdict must not resurrect a drop.
+    dropped = {f.job_id for f in filters.values() if f.status == "drop"}
+    prefilter = {k: v for k, v in prefilter.items() if k not in dropped}
+    ranked = {k: v for k, v in ranked.items() if k not in dropped}
 
     lines = [f"# Job report {datetime.now(UTC):%Y-%m-%d %H:%M} UTC", ""]
     lines.append(f"Jobs in DB: {len(jobs)} · rule-kept: {sum(f.status == 'keep' for f in filters.values())} · "
@@ -80,6 +84,9 @@ def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter:
     ``review`` leftovers that never reached the AI (capped at 300, as in the markdown).
     """
     by_id = {j.id: j for j in jobs}
+    dropped = {f.job_id for f in filters.values() if f.status == "drop"}
+    prefilter = {k: v for k, v in prefilter.items() if k not in dropped}
+    ranked = {k: v for k, v in ranked.items() if k not in dropped}
     items: list[ReportItem] = []
 
     for v in sorted(ranked.values(), key=lambda v: -v.score):

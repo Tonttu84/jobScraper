@@ -1,0 +1,41 @@
+{
+  "job": {
+    "name": "Développeur Junior",
+    "slug": "developpeur-junior_saint-marcel",
+    "reference": "GC_Nlj1qz3",
+    "wttj_reference": "2919acab-2be1-4c4c-b714-a264adfcf675",
+    "language": "fr",
+    "status": "published",
+    "archived_at": null,
+    "contract_type": "temporary",
+    "experience_level": "LESS_THAN_6_MONTHS",
+    "education_level": "bac_3",
+    "remote": "partial",
+    "salary_currency": "EUR",
+    "salary_min": 30000.0,
+    "salary_max": 35000.0,
+    "salary_period": "yearly",
+    "published_at": "2026-08-28T19:13:01Z",
+    "updated_at": "2026-08-28T19:13:04.754635Z",
+    "apply_url": "https://job.mytalentplug.com/api/JobOffer/redirect/?id=5555e17d-a5ca-4e64-a91a-8a7e108648ad",
+    "ats": "external",
+    "description": "<br/>Votre challenge<br/>Au sein de la Direction des Systèmes d&#39;Information (DSI), vous contribuez à la conception, au développement et à la maintenance d&#39;applicatifs et de sites web à destination de nos clients internes et externes.<br/>Accompagné(e) par nos chefs de projet et en collaboration étroite avec les équipes métiers, vous intervenez sur des projets variés, depuis la compréhension du besoin jusqu&#39;au déploiement.<br/>Vos principales missions seront :<br/>- Réaliser des applicatifs et des sites web à destination de nos clients internes et externes avec des compétences approfondies en développement front-end, back-end et bases de données,<br/>- Assurer la maintenance…",
+    "profile": "<br/>Issu(e) d&#39;une formation Bac+3 à Bac+5 en informatique, vous disposez de premières expériences en développement (stage, alternance, projets personnels ou premier emploi).<br/>Vous possédez de bonnes bases en développement web et/ou applicatif, notamment en Python, PHP, JavaScript et bases de données relationnelles. Vous êtes curieux(se), autonome dans vos apprentissages et avez envie de…",
+    "recruitment_process": null,
+    "key_missions": [],
+    "summary": "",
+    "office": {
+      "address": "Saint-Marcel, Normandy, France",
+      "city": "Saint-Marcel",
+      "country_code": "FR",
+      "district": "Eure",
+      "zip_code": "27950"
+    },
+    "tools": [
+      "Microsoft 365",
+      "PHP",
+      "Drupal",
+      "WordPress"
+    ]
+  }
+}

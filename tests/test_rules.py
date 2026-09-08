@@ -76,7 +76,8 @@ def test_senior_title_is_dropped(settings):
     assert res.signals["seniority"] == "senior_by_title"
 
 
-def test_three_years_experience_is_review_not_drop(settings):
+def test_three_years_experience_is_dropped(settings):
+    """Owner (2026-09-07): only trainee/intern/junior roles; an unlabelled title asking 3+ years is out."""
     job = make_job(
         title="Software Developer",
         description="We are looking for someone with 3+ years of experience in web development. "
@@ -85,8 +86,37 @@ def test_three_years_experience_is_review_not_drop(settings):
         country="EE",
     )
     res = evaluate(job, settings.profile)
-    assert res.status == "review"
+    assert res.status == "drop"
     assert res.signals["years_required"] == 3
+
+
+def test_junior_title_asking_three_years_is_only_review(settings):
+    job = make_job(title="Junior Software Developer",
+                   description="3+ years of experience with Python. " + ENGLISH_DESC)
+    assert evaluate(job, settings.profile).status == "review"
+
+
+@pytest.mark.parametrize("title", ["Mid-level Backend Developer", "Medior Java Developer",
+                                   "Experienced Software Developer", "Mid Software Engineer",
+                                   "Kokenut ohjelmistokehittäjä", "Intermediate Frontend Developer"])
+def test_mid_level_titles_are_dropped(settings, title):
+    res = evaluate(make_job(title=title), settings.profile)
+    assert res.status == "drop", title
+    assert any("title" in r for r in res.reasons)
+
+
+def test_middleware_is_not_mid_level(settings):
+    res = evaluate(make_job(title="Software Engineer - Platform & Middleware (Early Career)"), settings.profile)
+    assert res.status != "drop"
+
+
+def test_mid_seniority_label_drops_unlabelled_title(settings):
+    """Boards label seniority separately (justjoin 'mid', nofluffjobs 'Mid', devitjobs 'Regular')."""
+    res = evaluate(make_job(title="Backend Developer", seniority_raw="Mid"), settings.profile)
+    assert res.status == "drop"
+    assert any("label" in r for r in res.reasons)
+    assert evaluate(make_job(title="Backend Developer", seniority_raw="Trainee, Junior"), settings.profile).status != "drop"
+    assert evaluate(make_job(title="Junior Backend Developer", seniority_raw="Mid"), settings.profile).status != "drop"
 
 
 def test_six_years_experience_is_dropped(settings):
@@ -271,3 +301,57 @@ def test_dedupe_keeps_unrelated_jobs_apart():
 )
 def test_classify_remote_region(text, expected):
     assert classify_remote_region(text) == expected
+
+
+def test_onsite_with_unknown_country_is_review_not_drop(settings):
+    """LinkedIn rows queried as 'European Union' often carry no location at all; a junior job
+    with an unknown country must reach the AI stage, not be thrown away (permissive filter)."""
+    job = Job(source="linkedin", source_id=str(next(_ids)), url="https://x/1", title="Junior Full Stack Developer",
+              company="Acme", description=ENGLISH_DESC, location_raw=None, country=None, remote="onsite")
+    res = evaluate(job, settings.profile)
+    assert res.status == "review"
+    assert any("unknown" in r for r in res.reasons)
+
+
+def test_remote_restricted_to_a_non_target_country_is_review(settings):
+    """devitjobs.uk marks many jobs 'remote' with remote_region 'GB only': remote in name, but
+    closed to applicants outside the UK. Permissive filter → review, not keep, not drop."""
+    job = Job(source="devitjobs", source_id=str(next(_ids)), url="https://x/1", title="Junior Software Developer",
+              company="Acme", description=ENGLISH_DESC, location_raw="London, GB", country="GB", remote="remote",
+              remote_region="GB only")
+    res = evaluate(job, settings.profile)
+    assert res.status == "review"
+    assert any("GB" in r for r in res.reasons)
+    assert res.signals["remote_region"] == "country_only:GB"
+
+
+def test_remote_restricted_to_a_target_country_is_kept(settings):
+    job = Job(source="devitjobs", source_id=str(next(_ids)), url="https://x/2", title="Junior Software Developer",
+              company="Acme", description=ENGLISH_DESC, location_raw="Helsinki, FI", country="FI", remote="remote",
+              remote_region="FI only")
+    res = evaluate(job, settings.profile)
+    assert res.status == "keep"
+
+
+def test_stale_postings_are_dropped(settings):
+    """Owner: kill anything too old before the AI passes. Unknown dates stay (permissive)."""
+    from datetime import UTC, datetime, timedelta
+
+    old = make_job(posted_at=datetime.now(UTC) - timedelta(days=settings.profile.max_age_days + 5))
+    res = evaluate(old, settings.profile)
+    assert res.status == "drop"
+    assert any("days old" in r for r in res.reasons)
+
+    fresh = make_job(posted_at=datetime.now(UTC) - timedelta(days=3))
+    assert evaluate(fresh, settings.profile).status != "drop"
+
+    undated = make_job(posted_at=None)
+    assert evaluate(undated, settings.profile).status != "drop"
+
+
+def test_stale_check_accepts_naive_datetimes(settings):
+    """SQLite hands back naive datetimes; the age check must not raise on them."""
+    from datetime import datetime, timedelta
+
+    old = make_job(posted_at=datetime.now() - timedelta(days=200))  # naive on purpose
+    assert evaluate(old, settings.profile).status == "drop"

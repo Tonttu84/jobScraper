@@ -1,34 +1,67 @@
+"""remotive fixture = a trimmed copy of the real remotive.com/api/remote-jobs response (2026-09-07).
+
+The live call already asks for ``category=software-dev&limit=5`` and still comes back with the
+whole 18-posting teaser feed — Sales, Writing, "All others" and all — so the fixture keeps one
+non-software posting to pin the client-side category filter down.
+"""
+
 from datetime import UTC, datetime
 
-from jobscraper.sources.remotive import Remotive, region_country
+from jobscraper.sources.remotive import Remotive, matches_category, region_country
+
+ROUTE = {"api/remote-jobs": "remotive.json"}
+
+
+def all_jobs(make_ctx):
+    """Every real record: switch the client-side category filter off."""
+    return list(Remotive().fetch(make_ctx(ROUTE, options={"categories": []})))
 
 
 def test_remotive_parses_fixture(make_ctx):
-    ctx = make_ctx({"api/remote-jobs": "remotive.json"})
-    jobs = list(Remotive().fetch(ctx))
+    jobs = all_jobs(make_ctx)
 
-    assert len(jobs) == 2  # the record without id/url is skipped, not raised
+    assert len(jobs) == 3  # the record without id and url is skipped, not raised
     j = jobs[0]
     assert j.source == "remotive"
-    assert j.source_id == "1948321"
-    assert j.title == "Junior Backend Engineer (Python)"
-    assert j.company == "Sunrise Labs"
-    assert j.url.endswith("junior-backend-engineer-1948321")
+    assert j.source_id == "2091101"  # the feed sends the id as a number
+    assert j.title == "Senior React Full-stack Developer"
+    assert j.company == "Lemon.io"
+    assert j.url == (
+        "https://remotive.com/remote-jobs/software-development/senior-react-full-stack-developer-2091101"
+    )
     assert j.remote == "remote"
-    assert j.remote_region == "Europe"
-    assert j.country is None  # "Europe" is a region, not a country
+    assert j.remote_region == "LATAM, Europe, USA, Canada, APAC"
+    assert j.country is None  # several countries named: a region, not a country
+    assert j.location_raw == "LATAM, Europe, USA, Canada, APAC"
     assert j.employment_type == "full_time"
-    assert j.tags[0] == "Software Development" and "python" in j.tags
-    assert j.salary_text == "€45,000 - €58,000"
-    assert "Junior Backend Engineer" in j.description and "<" not in j.description
-    assert j.posted_at == datetime(2026, 8, 28, 9, 15, 11, tzinfo=UTC)
+    assert j.tags[0] == "Software Development" and ".Net" in j.tags  # category first, then tags
+    assert j.salary_text is None  # the feed sends "" when no salary is published
+    assert "marketplace that connects you" in j.description and "<" not in j.description
+    assert j.posted_at == datetime(2026, 8, 27, 14, 36, 9, tzinfo=UTC)  # naive ISO, read as UTC
 
-    assert jobs[1].country == "US"  # "USA Only" names exactly one country
-    assert jobs[1].salary_text is None
+
+def test_remotive_maps_salary_and_single_country_regions(make_ctx):
+    rails, reviewer = all_jobs(make_ctx)[1:]
+
+    assert rails.title == "Tech Lead Full-Stack Rails Engineer"
+    assert rails.salary_text == "$170k - $200k"
+    assert rails.country is None  # "USA, Canada, USA timezones"
+
+    assert reviewer.country == "US"  # "USA" names exactly one country
+    assert reviewer.employment_type == "part_time"
+    assert reviewer.salary_text == "$14/hour"
+
+
+def test_remotive_drops_categories_the_api_refuses_to_filter(make_ctx):
+    ctx = make_ctx(ROUTE)  # default categories: software development, devops, QA, IT, data
+    titles = [j.title for j in Remotive().fetch(ctx)]
+
+    assert titles == ["Senior React Full-stack Developer", "Tech Lead Full-Stack Rails Engineer"]
+    assert "Content Reviewer - English US" not in titles  # category "All others"
 
 
 def test_remotive_makes_exactly_one_request(make_ctx):
-    ctx = make_ctx({"api/remote-jobs": "remotive.json"}, options={"search": "python"})
+    ctx = make_ctx(ROUTE, options={"search": "python"})
     list(Remotive().fetch(ctx))
 
     assert len(ctx.http.calls) == 1
@@ -37,13 +70,22 @@ def test_remotive_makes_exactly_one_request(make_ctx):
 
 
 def test_remotive_respects_limit(make_ctx):
-    ctx = make_ctx({"api/remote-jobs": "remotive.json"}, limit=1)
-    assert len(list(Remotive().fetch(ctx))) == 1
+    ctx = make_ctx(ROUTE, limit=1)
+    assert len(list(Remotive().fetch(ctx))) == 1  # the API ignores &limit=, so we cut client-side
+
+
+def test_matches_category_is_permissive():
+    wanted = ["software development", "devops"]
+    assert matches_category({"category": "Software Development"}, wanted)
+    assert matches_category({"category": "Devops"}, wanted)
+    assert not matches_category({"category": "Writing"}, wanted)
+    assert matches_category({}, wanted)  # no category stated → keep it, the AI stages decide
+    assert matches_category({"category": "Writing"}, [])  # filter off
 
 
 def test_region_country_only_for_single_countries():
     assert region_country("Germany") == "DE"
     assert region_country("Europe") is None
-    assert region_country("UK, USA, Canada") is None
-    assert region_country("Anywhere in the World") is None
+    assert region_country("USA, Canada, USA timezones") is None
+    assert region_country("Worldwide") is None
     assert region_country(None) is None

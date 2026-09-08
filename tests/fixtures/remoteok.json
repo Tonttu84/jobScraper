@@ -1,59 +1,95 @@
 [
-  {
-    "legal": "By using this API you agree to keep the 'Powered by Remote OK' attribution and link back to remoteok.com.",
-    "last_updated": "2026-08-31T06:00:03+00:00"
-  },
-  {
-    "slug": "junior-backend-developer-brightloop",
-    "id": "1099231",
-    "epoch": 1756713600,
-    "date": "2026-09-01T08:00:00+00:00",
-    "company": "Brightloop",
-    "company_logo": "https://remoteok.com/assets/img/jobs/brightloop.png",
-    "position": "Junior Backend Developer",
-    "tags": ["dev", "backend", "python", "junior"],
-    "logo": "https://remoteok.com/assets/img/jobs/brightloop.png",
-    "description": "<p>We're hiring a junior backend developer.</p><p>Python, FastAPI, Postgres.</p>\n\nPlease mention the word **BRILLIANT** when applying to show you read the job post completely.",
-    "location": "Europe",
-    "salary_min": 40000,
-    "salary_max": 60000,
-    "apply_url": "https://remoteok.com/remote-jobs/1099231-junior-backend-developer-brightloop",
-    "url": "/remote-jobs/1099231-junior-backend-developer-brightloop"
-  },
-  {
-    "slug": "senior-sales-manager-cloudhaus",
-    "id": "1099180",
-    "epoch": 1756627200,
-    "date": "2026-08-31T08:00:00+00:00",
-    "company": "Cloudhaus",
-    "position": "Senior Sales Manager",
-    "tags": ["sales", "marketing"],
-    "description": "<p>Own the EMEA pipeline.</p>",
-    "location": "Worldwide",
-    "salary_min": 0,
-    "salary_max": 0,
-    "url": "https://remoteok.com/remote-jobs/1099180-senior-sales-manager-cloudhaus"
-  },
-  {
-    "slug": "site-reliability-engineer-nordvector",
-    "id": "1099144",
-    "epoch": 1756540800,
-    "date": "2026-08-30T08:00:00+00:00",
-    "company": "Nordvector",
-    "position": "Site Reliability Engineer",
-    "tags": ["engineer", "devops", "kubernetes"],
-    "description": "<p>Keep the platform up. Kubernetes, Terraform.</p>",
-    "location": "Germany",
-    "salary_min": 70000,
-    "salary_max": 95000,
-    "url": "https://remoteok.com/remote-jobs/1099144-site-reliability-engineer-nordvector"
-  },
-  {
-    "slug": "broken-row",
-    "id": null,
-    "position": null,
-    "tags": ["dev"],
-    "description": null,
-    "url": null
-  }
+ {
+  "last_updated": 1788666444,
+  "legal": "API Terms of Service: Please link back (with follow, and without nofollow!) to the URL on Remote OK and mention Remote OK as a source, so we get traffic back from your site. If you do not we'll have to suspend API access.\n\nPlease don't use the Remote OK logo without written permission as it's a registered trademark, please DO use our name Remote OK though."
+ },
+ {
+  "slug": "remote-qa-engineer-sunnydata-1137300",
+  "id": "1137300",
+  "epoch": 1788451205,
+  "date": "2026-09-03T16:00:05+00:00",
+  "company": "SunnyData",
+  "company_logo": "",
+  "position": "QA Engineer",
+  "tags": [
+   "technical",
+   "dev",
+   "testing",
+   "marketing",
+   "quality assurance",
+   "education",
+   "cloud",
+   "engineer",
+   "digital nomad"
+  ],
+  "description": "<p style=\"min-height:1.5em\"><strong>About SunnyData</strong><br />At SunnyData, a leading DataBricks technology partner, our mission is to empower customers with scalable architectures, robust data engineering pipelines, seamless data consumption layers, and advanced ML and AI applications. As a<strong> QA Engineer </strong>with a strong focus on Data, you will understand requirements and translate them into effective test cases, execute and automate those tests, and track testing progress and defects.</p><p style=\"min-height:1.5em\"><strong>The Impact You’ll Have</strong></p><ul><li><p>Understand requirements and translate them into test plans and test cases, ensuring requirements traceability.</p></li><li><p>Execute test cases, including regression testing, and automate them with Python and pytest.</p></li></ul><br/><br/>Please mention the word **BRILLIANTLY** and tag REDACTED when applying to show you read the job post completely (#REDACTED). This is a beta feature to avoid spam applicants.",
+  "location": "",
+  "apply_url": "https://remoteOK.com/remote-jobs/remote-qa-engineer-sunnydata-1137300",
+  "salary_min": 0,
+  "salary_max": 0,
+  "logo": "",
+  "url": "https://remoteOK.com/remote-jobs/remote-qa-engineer-sunnydata-1137300"
+ },
+ {
+  "slug": "remote-chief-steward-w-hotels-1137272",
+  "id": "1137272",
+  "epoch": 1788319975,
+  "date": "2026-09-02T03:32:55+00:00",
+  "company": "W Hotels",
+  "company_logo": "",
+  "position": "Chief Steward",
+  "tags": [
+   "infosec",
+   "education",
+   "customer support",
+   "exec"
+  ],
+  "description": "<strong>Additional Information<br><br></strong><strong>Job Number</strong> 26111393<br><br><strong>Job Category</strong> Food and Beverage &amp; Culinary<br><br><strong>Location</strong> Andrassy ut 25, Budapest, Hungary, Hungary, 1061VIEW ON MAP<br><br><strong>Schedule</strong> Full Time<br><br><strong>Located Remotely?</strong> N<br><br><strong>Position Summary<br><br></strong>Direct and assist Stewards in order to make clean up more efficient. Ensure water temperature, and chemical levels are appropriate for cleaning and documented.<br/><br/>Please mention the word **APPROVE** and tag REDACTED when applying to show you read the job post completely (#REDACTED). This is a beta feature to avoid spam applicants.",
+  "location": "Budapest, ",
+  "apply_url": "https://remoteOK.com/remote-jobs/remote-chief-steward-w-hotels-1137272",
+  "salary_min": 0,
+  "salary_max": 0,
+  "logo": "",
+  "url": "https://remoteOK.com/remote-jobs/remote-chief-steward-w-hotels-1137272"
+ },
+ {
+  "slug": "remote-carpenter-st-regis-hotels-amp-resorts-1137253",
+  "id": "1137253",
+  "epoch": 1788265461,
+  "date": "2026-09-01T12:24:21+00:00",
+  "company": "St. Regis Hotels &amp; Resorts",
+  "company_logo": "",
+  "position": "Carpenter",
+  "tags": [
+   "sys admin",
+   "infosec",
+   "education",
+   "customer support",
+   "testing",
+   "c",
+   "exec",
+   "engineer"
+  ],
+  "description": "<strong>Additional Information<br><br></strong><strong>Job Number</strong>26111231<br><br><strong>Job Category</strong>Engineering &amp; Facilities<br><br><strong>Location</strong>438 1 34 Mobor, Goa, India, India, 403731 VIEW ON MAP<br><br><strong>Schedule</strong>Full Time<br><br><strong>Located Remotely?</strong>N<br><br><strong>Position Summary<br><br></strong>Respond and attend to guest repair requests. Perform preventive maintenance on tools and kitchen and mechanical room equipment, including cleaning and lubrication.<br/><br/>Please mention the word **SHINE** and tag REDACTED when applying to show you read the job post completely (#REDACTED). This is a beta feature to avoid spam applicants.",
+  "location": "Goa, ",
+  "apply_url": "https://remoteOK.com/remote-jobs/remote-carpenter-st-regis-hotels-amp-resorts-1137253",
+  "salary_min": 0,
+  "salary_max": 0,
+  "logo": "",
+  "url": "https://remoteOK.com/remote-jobs/remote-carpenter-st-regis-hotels-amp-resorts-1137253"
+ },
+ {
+  "slug": "remote-broken-record-1137299",
+  "id": "1137299",
+  "epoch": 1788440000,
+  "date": "2026-09-03T13:00:00+00:00",
+  "company": "Broken Feed Ltd",
+  "position": "Backend Developer",
+  "tags": 42,
+  "description": "<p>A record whose tags are not a list; the parser must skip it, not crash.</p>",
+  "location": "",
+  "salary_min": 0,
+  "salary_max": 0,
+  "url": "https://remoteOK.com/remote-jobs/remote-broken-record-1137299"
+ }
 ]

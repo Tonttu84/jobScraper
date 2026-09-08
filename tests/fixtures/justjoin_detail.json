@@ -1,7 +1,76 @@
 {
-  "slug": "acme-warsaw-junior-python-developer",
-  "body": "<h2>About the role</h2><p>You will build <strong>FastAPI</strong> services with our team.</p><ul><li>English B2</li><li>Some Django experience</li></ul>",
-  "requiredSkills": [{"name": "Python"}, {"name": "FastAPI"}],
-  "experienceLevel": {"value": "junior"},
-  "companyName": "Acme Sp. z o.o."
+  "id": "ba853a14-f777-4071-9dd3-2c54960257ee",
+  "slug": "craftware-junior-ai-engineer-warszawa-ai",
+  "title": "Junior AI Engineer",
+  "experienceLevel": "junior",
+  "category": {
+    "key": "ai",
+    "parentKey": null
+  },
+  "companyName": "Craftware",
+  "companyUrl": "",
+  "body": "<p>Craftware is a technology company of over 500 experts, empowering large organizations to solve complex business challenges with modern IT solutions – from sales systems and automation to data platforms and AI. We operate where technology must be reliable, secure, and scalable. We deliver end-to-end projects: from analysis and architecture through implementation to development and maintenance. We are a trusted partner of industry leaders such as Salesforce, Veeva, UiPath, and Databricks.</p><p></p><p><strong>Model: </strong>remote</p><p><strong>Employment type:</strong> full-time</p><p></p><p>We are looking for a motivated Junior AI Engineer with at least 1 year of commercial experience to join our team and support the development of AI solutions that solve real business problems. In this role, you will work closely with data scientists, data engineers, and cloud engineers, contributing to the design, build, and deployment of AI systems in production environments, with guidance from senior team members.</p><ul><li>Python and SQL</li><li>English B2</li></ul>",
+  "locationId": "91042976-f048-4ae4-be71-cffb8cedda75",
+  "city": "Warszawa",
+  "street": "Al. Jerozolimskie 134",
+  "countryCode": "PL",
+  "latitude": 52.2214304,
+  "longitude": 20.9737114,
+  "companySize": "",
+  "employmentTypes": [
+    {
+      "from": 13440.0,
+      "fromPerUnit": 80.0,
+      "to": 25200.0,
+      "toPerUnit": 150.0,
+      "currency": "PLN",
+      "currencySource": "original",
+      "type": "b2b",
+      "unit": "Hour",
+      "gross": false
+    }
+  ],
+  "workplaceType": "remote",
+  "requiredSkills": [
+    {
+      "name": "Python",
+      "level": 2
+    },
+    {
+      "name": "AI",
+      "level": 3
+    },
+    {
+      "name": "Cloud",
+      "level": 2
+    },
+    {
+      "name": "Agentic Frameworks",
+      "level": 2
+    },
+    {
+      "name": "ML frameworks",
+      "level": 2
+    }
+  ],
+  "niceToHaveSkills": [],
+  "workingTime": "full_time",
+  "applyUrl": "https://system.erecruiter.pl/FormTemplates/RecruitmentForm.aspx?WebID=289094f1761046648443378e9f316492",
+  "publishedAt": "2026-09-06T17:00:07.2387318Z",
+  "companyProfileSlug": null,
+  "isOpenToHireUkrainians": false,
+  "locations": [
+    {
+      "city": "Warszawa",
+      "street": "Al. Jerozolimskie 134",
+      "latitude": 52.2214304,
+      "longitude": 20.9737114,
+      "slug": "craftware-junior-ai-engineer-warszawa-ai"
+    }
+  ],
+  "isActive": true,
+  "expiredAt": "2026-10-26T17:20:47.115Z",
+  "languages": [],
+  "hybridWorkSchedule": null,
+  "url": "https://justjoin.it/job-offer/craftware-junior-ai-engineer-warszawa-ai"
 }

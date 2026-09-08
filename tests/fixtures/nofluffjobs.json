@@ -1,48 +1,454 @@
 {
   "postings": [
     {
-      "id": "abcd1234",
-      "url": "junior-python-developer-acme-warszawa-abcd1234",
-      "title": "Junior Python Developer",
-      "name": "Acme Software",
-      "technology": "Python",
-      "category": "backend",
-      "seniority": ["Trainee", "Junior"],
+      "id": "privacy-data-governance-analyst-qvc-group-global-business-services-Kraków",
+      "name": "QVC GROUP GLOBAL BUSINESS SERVICES",
       "location": {
         "places": [
-          {"city": "Warszawa", "province": "Mazowieckie", "country": {"code": "PL", "name": "Poland"}},
-          {"city": "Kraków", "country": {"code": "PL", "name": "Poland"}}
+          {
+            "country": {
+              "code": "pl",
+              "name": "Polish"
+            },
+            "city": "Kraków",
+            "street": "Wielicka 30",
+            "postalCode": "30-552",
+            "geoLocation": {
+              "latitude": 50.0394443,
+              "longitude": 19.9648914
+            },
+            "url": "privacy-data-governance-analyst-qvc-group-global-business-services-krakow"
+          }
         ],
         "fullyRemote": false,
-        "covidTimeRemotely": true
+        "covidTimeRemotely": false,
+        "hybridDesc": ""
       },
-      "salary": {"from": 1800, "to": 2600, "currency": "EUR", "type": "b2b"},
-      "posted": 1756900000000,
-      "renewed": 1756910000000
+      "posted": 1787735594863,
+      "renewed": 1788772394863,
+      "title": "Privacy & Data Governance Analyst",
+      "category": "security",
+      "seniority": [
+        "Junior"
+      ],
+      "url": "privacy-data-governance-analyst-qvc-group-global-business-services-krakow",
+      "regions": [
+        "pl"
+      ],
+      "fullyRemote": false,
+      "salary": {
+        "from": 2084,
+        "to": 3242,
+        "type": "permanent",
+        "currency": "EUR",
+        "period": "Month",
+        "disclosedAt": "VISIBLE",
+        "flexibleUpperBound": false
+      },
+      "flavors": [
+        "it"
+      ],
+      "topInSearch": false,
+      "highlighted": true,
+      "help4Ua": false,
+      "reference": "AE8GPZPY",
+      "searchBoost": false,
+      "onlineInterviewAvailable": false,
+      "tiles": {
+        "values": [
+          {
+            "value": "security",
+            "type": "category"
+          },
+          {
+            "value": "Data management",
+            "type": "requirement"
+          },
+          {
+            "value": "Stakeholder management",
+            "type": "requirement"
+          },
+          {
+            "value": "Compliance",
+            "type": "requirement"
+          }
+        ]
+      }
     },
     {
-      "id": "efgh5678",
-      "url": "remote-junior-frontend-developer-nordics-efgh5678",
-      "title": "Junior Frontend Developer (React)",
-      "name": "Nordics Digital",
-      "technology": "JavaScript",
-      "category": "frontend",
-      "seniority": ["Junior"],
-      "location": {"places": [{"city": "Tallinn", "country": {"code": "EE", "name": "Estonia"}}], "fullyRemote": true},
-      "salary": {"from": 2200, "to": null, "currency": "EUR", "type": "permanent"},
-      "posted": 1756800000000
+      "id": "junior-software-engineer-integrations-co3-Remote",
+      "name": "CO3 sp. z o.o.",
+      "location": {
+        "places": [
+          {
+            "city": "Remote",
+            "url": "junior-software-engineer-integrations-co3-remote"
+          },
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "city": "Wrocław",
+            "street": "Powstańców Śląskich 17",
+            "postalCode": "53-332",
+            "geoLocation": {
+              "latitude": 51.0955333,
+              "longitude": 17.0218358
+            },
+            "url": "junior-software-engineer-integrations-co3-wroclaw"
+          },
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "province": "kuyavian-pomeranian",
+            "url": "junior-software-engineer-integrations-co3-kuyavian-pomeranian",
+            "provinceOnly": true
+          }
+        ],
+        "fullyRemote": true,
+        "covidTimeRemotely": false,
+        "hybridDesc": ""
+      },
+      "posted": 1788539049853,
+      "renewed": 1788711849853,
+      "title": "Junior Software Engineer (Integrations)",
+      "technology": "Java",
+      "category": "backend",
+      "seniority": [
+        "Junior"
+      ],
+      "url": "junior-software-engineer-integrations-co3-remote",
+      "regions": [
+        "pl"
+      ],
+      "fullyRemote": false,
+      "salary": {
+        "from": 1389,
+        "to": 2084,
+        "type": "b2b",
+        "currency": "EUR",
+        "period": "Month",
+        "disclosedAt": "VISIBLE",
+        "flexibleUpperBound": false
+      },
+      "flavors": [
+        "it"
+      ],
+      "topInSearch": false,
+      "highlighted": false,
+      "help4Ua": false,
+      "reference": "WEKWAG3T",
+      "searchBoost": true,
+      "onlineInterviewAvailable": true,
+      "tiles": {
+        "values": [
+          {
+            "value": "backend",
+            "type": "category"
+          },
+          {
+            "value": "Java",
+            "type": "requirement"
+          },
+          {
+            "value": "Testing",
+            "type": "requirement"
+          },
+          {
+            "value": "AI",
+            "type": "requirement"
+          }
+        ]
+      }
     },
     {
-      "id": null,
+      "id": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-Remote",
+      "name": "Veeva Systems",
+      "location": {
+        "places": [
+          {
+            "city": "Remote",
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems"
+          },
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "city": "Warszawa",
+            "street": "",
+            "postalCode": "",
+            "geoLocation": {
+              "latitude": 52.2296756,
+              "longitude": 21.0122287
+            },
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-warszawa"
+          },
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "city": "Kraków",
+            "street": "",
+            "postalCode": "",
+            "geoLocation": {
+              "latitude": 50.06465009999999,
+              "longitude": 19.9449799
+            },
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-krakow"
+          },
+          {
+            "country": {
+              "code": "HUN",
+              "name": "Hungary"
+            },
+            "city": "Budapest",
+            "street": "Alkotas u. 50.",
+            "postalCode": "1123",
+            "geoLocation": {
+              "latitude": 47.4904707,
+              "longitude": 19.0248951
+            },
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-budapest"
+          },
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "city": "Wrocław",
+            "street": "",
+            "postalCode": "",
+            "geoLocation": {
+              "latitude": 51.10929480000001,
+              "longitude": 17.0386019
+            },
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-wroclaw"
+          },
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "province": "kuyavian-pomeranian",
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-kuyavian-pomeranian",
+            "provinceOnly": true
+          }
+        ],
+        "fullyRemote": true,
+        "covidTimeRemotely": false,
+        "hybridDesc": ""
+      },
+      "posted": 1788766592775,
+      "title": "Associate Consultant - Entry-Level Technology Consulting (Remote)",
+      "category": "consulting",
+      "seniority": [
+        "Junior"
+      ],
+      "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems",
+      "regions": [
+        "pl"
+      ],
+      "fullyRemote": false,
+      "salary": {
+        "from": 2315,
+        "to": 2315,
+        "type": "permanent",
+        "currency": "EUR",
+        "period": "Month",
+        "disclosedAt": "VISIBLE",
+        "flexibleUpperBound": false
+      },
+      "flavors": [
+        "it"
+      ],
+      "topInSearch": false,
+      "highlighted": false,
+      "help4Ua": false,
+      "reference": "PHSSTKP3",
+      "searchBoost": true,
+      "onlineInterviewAvailable": true,
+      "tiles": {
+        "values": [
+          {
+            "value": "consulting",
+            "type": "category"
+          },
+          {
+            "value": "Degree",
+            "type": "requirement"
+          },
+          {
+            "value": "Analitycal mindset",
+            "type": "requirement"
+          },
+          {
+            "value": "Communication skills",
+            "type": "requirement"
+          }
+        ]
+      }
+    },
+    {
+      "id": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-Warszawa",
+      "name": "Veeva Systems",
+      "location": {
+        "places": [
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "city": "Warszawa",
+            "street": "",
+            "postalCode": "",
+            "geoLocation": {
+              "latitude": 52.2296756,
+              "longitude": 21.0122287
+            },
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-warszawa"
+          },
+          {
+            "city": "Remote",
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems"
+          },
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "city": "Kraków",
+            "street": "",
+            "postalCode": "",
+            "geoLocation": {
+              "latitude": 50.06465009999999,
+              "longitude": 19.9449799
+            },
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-krakow"
+          },
+          {
+            "country": {
+              "code": "HUN",
+              "name": "Hungary"
+            },
+            "city": "Budapest",
+            "street": "Alkotas u. 50.",
+            "postalCode": "1123",
+            "geoLocation": {
+              "latitude": 47.4904707,
+              "longitude": 19.0248951
+            },
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-budapest"
+          },
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "city": "Wrocław",
+            "street": "",
+            "postalCode": "",
+            "geoLocation": {
+              "latitude": 51.10929480000001,
+              "longitude": 17.0386019
+            },
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-wroclaw"
+          },
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "province": "kuyavian-pomeranian",
+            "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-kuyavian-pomeranian",
+            "provinceOnly": true
+          }
+        ],
+        "fullyRemote": true,
+        "covidTimeRemotely": false,
+        "hybridDesc": ""
+      },
+      "posted": 1788766592775,
+      "title": "Associate Consultant - Entry-Level Technology Consulting (Remote)",
+      "category": "consulting",
+      "seniority": [
+        "Junior"
+      ],
+      "url": "associate-consultant-entry-level-technology-consulting-remote-veeva-systems-warszawa",
+      "regions": [
+        "pl"
+      ],
+      "fullyRemote": false,
+      "salary": {
+        "from": 2315,
+        "to": 2315,
+        "type": "permanent",
+        "currency": "EUR",
+        "period": "Month",
+        "disclosedAt": "VISIBLE",
+        "flexibleUpperBound": false
+      },
+      "flavors": [
+        "it"
+      ],
+      "topInSearch": false,
+      "highlighted": false,
+      "help4Ua": false,
+      "reference": "PHSSTKP3",
+      "searchBoost": true,
+      "onlineInterviewAvailable": true,
+      "tiles": {
+        "values": [
+          {
+            "value": "consulting",
+            "type": "category"
+          },
+          {
+            "value": "Degree",
+            "type": "requirement"
+          },
+          {
+            "value": "Analitycal mindset",
+            "type": "requirement"
+          },
+          {
+            "value": "Communication skills",
+            "type": "requirement"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Broken Record Sp. z o.o.",
+      "location": {
+        "places": [
+          {
+            "country": {
+              "code": "POL",
+              "name": "Poland"
+            },
+            "city": "Gdańsk"
+          }
+        ]
+      },
+      "posted": null,
+      "seniority": [],
       "url": null,
-      "title": null,
-      "name": null,
-      "seniority": null,
-      "location": null,
+      "regions": [
+        "pl"
+      ],
+      "fullyRemote": false,
       "salary": "not-a-dict",
-      "posted": null
+      "tiles": {
+        "values": []
+      }
     }
   ],
-  "totalCount": 2,
-  "totalPages": 1
+  "totalCount": 630,
+  "totalPages": 6,
+  "exactMatchesPages": 6
 }

@@ -1,12 +1,20 @@
+"""Teamtailor adapter, checked against trimmed copies of the real UpCloud feeds.
+
+``tests/fixtures/teamtailor.json`` and ``teamtailor.rss`` are the live
+``upcloud.teamtailor.com`` responses with the job bodies cut to their first two
+paragraphs (plus one deliberately broken JSON item).
+"""
+
 from datetime import datetime, timedelta, timezone
+from xml.etree import ElementTree as ET
 
 import httpx
 import pytest
 
-from jobscraper.sources.teamtailor import Teamtailor
+from jobscraper.sources.teamtailor import Teamtailor, parse_rss_item
 
-JSON_TENANT = "examplia"
-RSS_TENANT = "rssonly"
+TENANT = "upcloud"
+EEST = timezone(timedelta(hours=3))
 
 
 def _404(req):
@@ -19,85 +27,130 @@ def _dns_error(req):
 
 def test_json_feed_is_preferred_and_parsed(make_ctx):
     ctx = make_ctx(
-        {f"{JSON_TENANT}.teamtailor.com/jobs.json": "teamtailor.json"},
-        options={"tenants": [JSON_TENANT]},
+        {f"{TENANT}.teamtailor.com/jobs.json": "teamtailor.json"},
+        options={"tenants": [TENANT]},
     )
     jobs = list(Teamtailor().fetch(ctx))
 
-    assert len(jobs) == 2  # the title-less item is skipped, not raised
+    assert len(jobs) == 3  # the id/title/url-less item is skipped, not raised
     j = jobs[0]
     assert j.source == "teamtailor"
-    assert j.source_id == "examplia:1234567"
-    assert j.title == "Junior Software Developer"
-    assert j.company == "Examplia Oy"
-    assert j.url.endswith("/jobs/1234567-junior-software-developer")
+    # JSON Feed ids are the job's UUID; the numeric id only appears in the URL slug
+    assert j.source_id == "upcloud:d8938509-ff5a-4755-a5f7-5f89a0ac791e"
+    assert j.title == "Business Intelligence Analyst"
+    assert j.company == "UpCloud"  # _jobposting.hiringOrganization.name
+    assert j.url == "https://upcloud.teamtailor.com/jobs/8323453-business-intelligence-analyst"
     assert j.country == "FI" and j.city == "Helsinki"
     assert j.location_raw == "Helsinki, FI"
+    # jobs.json carries no jobLocationType / remoteStatus: a posting with a real address
+    # is reported on-site even when the RSS feed calls the same job hybrid or fully remote.
     assert j.remote == "onsite"
-    assert j.employment_type == "FULL_TIME"
-    assert "Junior Developer" in j.description and "<" not in j.description
-    assert j.posted_at == datetime(2026, 9, 1, 8, 30, tzinfo=timezone(timedelta(hours=3)))
+    assert j.employment_type is None  # no employmentType in any observed _jobposting
+    assert j.tags == []  # department/role live in the RSS feed only
+    assert "join UpCloud" in j.description and "<" not in j.description
+    assert j.posted_at == datetime(2026, 9, 4, 14, 50, 13, tzinfo=EEST)
 
-    remote_job = jobs[1]
-    assert remote_job.remote == "remote"  # jobLocationType == TELECOMMUTE
-    assert remote_job.country == "EE"
+    # a fully remote role still looks on-site in jobs.json (only the street address says "Europe")
+    assert jobs[1].title == "Full Stack Developer"
+    assert jobs[1].remote == "onsite"
+    # the first of several jobLocation entries wins
+    assert jobs[2].city == "Helsinki" and jobs[2].country == "FI"
+
     # only jobs.json was requested — no needless RSS round-trip
     assert [str(c.url) for c in ctx.http.calls] == [
-        f"https://{JSON_TENANT}.teamtailor.com/jobs.json"
+        f"https://{TENANT}.teamtailor.com/jobs.json"
     ]
 
 
 def test_falls_back_to_rss_on_404(make_ctx):
     ctx = make_ctx(
         {
-            f"{RSS_TENANT}.teamtailor.com/jobs.json": _404,
-            f"{RSS_TENANT}.teamtailor.com/jobs.rss": "teamtailor.rss",
+            f"{TENANT}.teamtailor.com/jobs.json": _404,
+            f"{TENANT}.teamtailor.com/jobs.rss": "teamtailor.rss",
         },
-        options={"tenants": [RSS_TENANT]},
+        options={"tenants": [TENANT]},
     )
     jobs = list(Teamtailor().fetch(ctx))
 
-    assert len(jobs) == 2  # the link-less item is skipped
+    assert len(jobs) == 2
     j = jobs[0]
-    assert j.source_id == "rssonly:2222222"  # numeric id from the URL, not the guid
-    assert j.title == "Trainee Frontend Developer"
-    assert j.company == "rssonly"  # RSS has no hiring organization → slug
-    assert j.url.endswith("/jobs/2222222-trainee-frontend-developer")
-    assert j.location_raw == "Tampere, Finland" and j.country == "FI" and j.city == "Tampere"
-    assert j.remote == "onsite"  # remoteStatus == none
-    assert j.tags == ["Engineering", "Frontend Developer"]
-    assert "frontend" in j.description and "<" not in j.description
-    assert j.posted_at == datetime(2026, 8, 25, 9, 30, 4, tzinfo=timezone(timedelta(hours=3)))
-    assert jobs[1].remote == "remote"  # remoteStatus == fully
+    assert j.source_id == "upcloud:8323453"  # numeric id from the URL, not the guid
+    assert j.title == "Business Intelligence Analyst"
+    assert j.company == "upcloud"  # RSS has no hiring organization → slug
+    assert j.url == "https://upcloud.teamtailor.com/jobs/8323453-business-intelligence-analyst"
+    assert j.location_raw == "Helsinki, Finland"
+    assert j.country == "FI" and j.city == "Helsinki"
+    assert j.remote == "hybrid"  # remoteStatus == hybrid
+    assert j.tags == ["Finance", "Business Intelligence Analyst"]  # tt:department, tt:role
+    assert "join UpCloud" in j.description and "<" not in j.description
+    assert j.posted_at == datetime(2026, 9, 4, 14, 50, 13, tzinfo=EEST)
+
+    remote_job = jobs[1]
+    assert remote_job.title == "Full Stack Developer"
+    assert remote_job.remote == "remote"  # remoteStatus == fully
+    assert remote_job.city == "Helsinki"  # tt:city wins over the tt:name "EU"
+    assert remote_job.tags == ["Product Engineering", "Full Stack Developer"]
+    assert remote_job.posted_at == datetime(2026, 6, 23, 16, 35, 8, tzinfo=EEST)
 
     assert [str(c.url) for c in ctx.http.calls] == [
-        f"https://{RSS_TENANT}.teamtailor.com/jobs.json",
-        f"https://{RSS_TENANT}.teamtailor.com/jobs.rss?per_page=200",
+        f"https://{TENANT}.teamtailor.com/jobs.json",
+        f"https://{TENANT}.teamtailor.com/jobs.rss?per_page=200",
     ]
 
 
 def test_falls_back_to_rss_when_body_is_not_json(make_ctx):
     ctx = make_ctx(
         {
-            f"{RSS_TENANT}.teamtailor.com/jobs.json": "<html>login</html>",
-            f"{RSS_TENANT}.teamtailor.com/jobs.rss": "teamtailor.rss",
+            f"{TENANT}.teamtailor.com/jobs.json": "<html>login</html>",
+            f"{TENANT}.teamtailor.com/jobs.rss": "teamtailor.rss",
         },
-        options={"tenants": [RSS_TENANT]},
+        options={"tenants": [TENANT]},
     )
     assert len(list(Teamtailor().fetch(ctx))) == 2
+
+
+def _rss_item(body: str) -> ET.Element:
+    return ET.fromstring(
+        f'<item xmlns:tt="https://teamtailor.com/locations">{body}</item>'
+    )
+
+
+def test_rss_item_without_a_link_is_skipped():
+    assert parse_rss_item(_rss_item("<title>Ghost</title>"), TENANT) is None
+
+
+def test_rss_item_without_a_title_is_skipped():
+    link = "https://upcloud.teamtailor.com/jobs/1-x"
+    assert parse_rss_item(_rss_item(f"<link>{link}</link>"), TENANT) is None
+
+
+def test_rss_falls_back_to_the_location_name_and_the_title():
+    """No tt:city/tt:country and an unknown remoteStatus: name + title carry the location."""
+    job = parse_rss_item(
+        _rss_item(
+            "<title>Backend Developer (Remote)</title>"
+            "<link>https://upcloud.teamtailor.com/jobs/9-backend</link>"
+            "<remoteStatus>temporary</remoteStatus>"
+            "<tt:locations><tt:location><tt:name>Stockholm</tt:name></tt:location></tt:locations>"
+        ),
+        TENANT,
+    )
+    assert job is not None
+    assert job.city == "Stockholm" and job.country == "SE"
+    assert job.remote == "remote"  # from the title, no usable remoteStatus
 
 
 def test_one_dead_tenant_does_not_stop_the_others(make_ctx, caplog):
     ctx = make_ctx(
         {
             "dead.teamtailor.com": _dns_error,
-            f"{JSON_TENANT}.teamtailor.com/jobs.json": "teamtailor.json",
+            f"{TENANT}.teamtailor.com/jobs.json": "teamtailor.json",
         },
-        options={"tenants": ["dead", JSON_TENANT]},
+        options={"tenants": ["dead", TENANT]},
     )
     jobs = list(Teamtailor().fetch(ctx))
-    assert len(jobs) == 2
-    assert all(j.source_id.startswith("examplia:") for j in jobs)
+    assert len(jobs) == 3
+    assert all(j.source_id.startswith("upcloud:") for j in jobs)
 
 
 def test_all_tenants_failing_raises(make_ctx):
@@ -120,8 +173,8 @@ def test_missing_tenants_option_raises(make_ctx):
 
 def test_limit_stops_early(make_ctx):
     ctx = make_ctx(
-        {f"{JSON_TENANT}.teamtailor.com/jobs.json": "teamtailor.json"},
-        options={"tenants": [JSON_TENANT, RSS_TENANT]},
+        {f"{TENANT}.teamtailor.com/jobs.json": "teamtailor.json"},
+        options={"tenants": [TENANT, "other"]},
         limit=1,
     )
     assert len(list(Teamtailor().fetch(ctx))) == 1

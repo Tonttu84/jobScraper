@@ -47,6 +47,18 @@ LANGUAGE_NAMES: dict[str, list[str]] = {
     "zh": ["chinese", "mandarin", "kiina"],
 }
 
+# Names match at a word start only (a trailing inflection is fine: "viron kielen", "englannin"),
+# so "viro" cannot fire inside "environment" and "italia" cannot fire inside "italiano"-free text.
+_LANGUAGE_RES: dict[str, re.Pattern[str]] = {
+    code: re.compile(r"(?<!\w)(?:" + "|".join(re.escape(n.strip()) for n in names) + ")", re.I)
+    for code, names in LANGUAGE_NAMES.items()
+}
+
+
+def _mentioned(text: str) -> set[str]:
+    return {code for code, pattern in _LANGUAGE_RES.items() if pattern.search(text)}
+
+
 _REQUIRED_WORDS = re.compile(
     r"\b(required|require|requirement|must|mandatory|essential|necessary|need(ed)?|fluent|fluency|native|"
     r"proficien|excellent|business[- ]level|c1|c2|working language|"
@@ -121,14 +133,14 @@ def find_language_requirements(text: str | None) -> LanguageRequirements:
             continue
         low = s.lower()
         # Only natural-language names are in the table, so "Go"/"Rust"/"Swift" never collide.
-        if not any(n in low for names in LANGUAGE_NAMES.values() for n in names):
+        if not _mentioned(low):
             continue
         sentence_required = bool(_REQUIRED_WORDS.search(low)) and not _OPTIONAL_WORDS.search(low)
         sentence_negated = bool(_NOT_NEEDED.search(low))
         # Classify per clause so "Fluent English required; Finnish is a plus" splits correctly;
         # a clause without any keyword inherits the sentence-level verdict.
         for clause in _CLAUSE_SPLIT.split(low):
-            hits = {code for code, names in LANGUAGE_NAMES.items() if any(n in clause for n in names)}
+            hits = _mentioned(clause)
             if not hits:
                 continue
             out.mentioned |= hits
