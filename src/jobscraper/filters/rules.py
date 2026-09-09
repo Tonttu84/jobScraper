@@ -143,7 +143,7 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
             if signals["seniority"] != "kept_by_title":
                 reasons.append(f"asks for {years}+ years of experience")
             else:
-                review.append(f"entry-level title but mentions {years} years")
+                review.append(f"title matches the profile level terms but mentions {years} years")
         elif years > sen.max_years_keep:
             review.append(f"asks for {years} years of experience")
 
