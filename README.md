@@ -58,6 +58,27 @@ uv run jobscraper publish --name week37 # copy the current DB to data/serve/week
 uv run jobscraper serve                 # web UI over data/serve/ → http://127.0.0.1:8000
 ```
 
+### Profiles (more than one candidate)
+
+Everything candidate-specific lives in `config/profile.yaml`: the CV, the language / seniority /
+location policies, the role terms, and the wording of the AI prompts (`prompt.role_label`,
+`prompt.seniority_rule`, `prompt.role_rule`, `prompt.extra_rules`). Nothing about the owner is
+hard-coded, so a second person only needs their own copy of that file.
+
+```bash
+uv run jobscraper profile-init ana      # copies config/profile.yaml + sources.yaml to config/profiles/ana/
+$EDITOR config/profiles/ana/profile.yaml
+uv run jobscraper profiles              # which profiles exist (* = active)
+uv run jobscraper --profile ana run     # scrape → … → report, all under that profile
+uv run jobscraper --profile ana publish --name week37
+uv run jobscraper --profile ana serve   # serves data/profiles/ana/serve/
+```
+
+`--profile ana` (or `JOBSCRAPER_PROFILE=ana`) moves the whole run: config from
+`config/profiles/ana/`, databases, `runs/`, `serve/`, `exports/` and `cache/` under
+`data/profiles/ana/`, reports into `results/ana/`. Without it everything behaves exactly as
+before. `config/profiles/` is gitignored — other people's CV text must not be pushed.
+
 ### Databases
 
 Every `run` creates its own SQLite file, `data/runs/<timestamp>.db`, by snapshotting the

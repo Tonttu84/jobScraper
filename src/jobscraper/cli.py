@@ -9,11 +9,17 @@
     jobscraper run                  # scrape → filter → prefilter → rank → report
     jobscraper facets               # recompute the deterministic facets (backfill an old DB)
     jobscraper serve                # web UI over data/jobs.db
+    jobscraper profiles             # candidate profiles under config/profiles
+    jobscraper profile-init NAME    # start a new profile from the default config
+
+Every command takes a global --profile NAME (or $JOBSCRAPER_PROFILE), which moves config, data
+and results into config/profiles/NAME/, data/profiles/NAME/ and results/NAME/.
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 import time
 from pathlib import Path
 
@@ -21,8 +27,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from jobscraper import config
 from jobscraper import store as store_mod
-from jobscraper.config import DATA_DIR, load_settings
+from jobscraper.config import load_settings
 from jobscraper.facets import compute_all
 from jobscraper.filters import RULES_VERSION, apply_rules, dedupe
 from jobscraper.http import Http
@@ -35,8 +42,14 @@ console = Console()
 
 
 @app.callback()
-def main(db: Path | None = typer.Option(None, "--db", help="Database to work on (default: newest data/runs/*.db, else data/jobs.db)")) -> None:
+def main(db: Path | None = typer.Option(None, "--db", help="Database to work on (default: newest data/runs/*.db, else data/jobs.db)"),
+         profile: str | None = typer.Option(None, "--profile", envvar="JOBSCRAPER_PROFILE",
+                                            help="Candidate profile: config/profiles/NAME, data/profiles/NAME, results/NAME")) -> None:
     store_mod.DB_OVERRIDE = db
+    try:
+        config.use_profile(profile)
+    except config.ProfileError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -216,7 +229,7 @@ def report(days: int = 30, out: Path | None = None) -> None:
     cost = estimate_cost(list(pre.values()) + list(ranked.values()))
     path = write_report(jobs, filters, pre, ranked, out, cost)
     jsonl = export_jsonl([j for j in jobs if filters.get(j.id) and filters[j.id].status != "drop"], filters, {**pre, **ranked},
-                         DATA_DIR / "exports" / "filtered.jsonl")
+                         config.paths().data / "exports" / "filtered.jsonl")
     snap = store.save_report(build_snapshot(jobs, filters, pre, ranked, days=days, cost=cost, path=path, prompt_version=PROMPT_VERSION))
 
     # The web UI needs facets for everything it shows; fill in whatever `filter` never saw.
@@ -265,7 +278,8 @@ def serve(dir: Path | None = typer.Option(None, "--dir", help="Directory of data
 
     from jobscraper.web.app import create_app
 
-    serve_dir = None if db else (dir or DATA_DIR / "serve")
+    serve_dir = None if db else (dir or config.paths().data / "serve")
+    languages = list(load_settings().profile.languages.ok)
     if serve_dir is not None:
         serve_dir.mkdir(parents=True, exist_ok=True)
         console.print(f"serving copies from {serve_dir} (put a database there with `jobscraper publish`)")
@@ -275,9 +289,11 @@ def serve(dir: Path | None = typer.Option(None, "--dir", help="Directory of data
 
         if serve_dir is not None:
             os.environ["JOBSCRAPER_SERVE_DIR"] = str(serve_dir)
+        # --reload builds the app in a worker process from the factory string, which takes no
+        # arguments: the profile's spoken languages are not offered there, only the observed ones.
         uvicorn.run("jobscraper.web.app:create_app", host=host, port=port, reload=True, factory=True)
     else:
-        uvicorn.run(create_app(db, serve_dir), host=host, port=port)
+        uvicorn.run(create_app(db, serve_dir, languages=languages), host=host, port=port)
 
 
 @app.command()
@@ -285,7 +301,8 @@ def runs() -> None:
     """List the per-run databases under data/runs (newest last, * = current)."""
     current = default_db_path().resolve()
     table = Table("database", "size", "modified", "jobs", "")
-    for path in sorted((DATA_DIR / "runs").glob("*.db")) if (DATA_DIR / "runs").is_dir() else []:
+    runs_dir = config.paths().data / "runs"
+    for path in sorted(runs_dir.glob("*.db")) if runs_dir.is_dir() else []:
         st = path.stat()
         n = Store(path, readonly=True)
         try:
@@ -304,9 +321,40 @@ def publish(name: str | None = typer.Option(None, help="File name for the copy (
     src = default_db_path()
     if not src.exists():
         raise typer.BadParameter(f"{src} does not exist")
-    dst = (dir or DATA_DIR / "serve") / f"{(name or src.stem).removesuffix('.db')}.db"
+    dst = (dir or config.paths().data / "serve") / f"{(name or src.stem).removesuffix('.db')}.db"
     copy_db(src, dst)
     console.print(f"published {src} → {dst}")
+
+
+@app.command()
+def profiles() -> None:
+    """List the candidate profiles under config/profiles (* = the one this command used)."""
+    base = config.base_paths()
+    active = config.active_profile()
+    table = Table("profile", "config", "")
+    table.add_row("default", str(base.config), "*" if active is None else "")
+    for name in config.known_profiles():
+        table.add_row(name, str(config.profile_dir(name, base)), "*" if name == active else "")
+    console.print(table)
+
+
+@app.command("profile-init")
+def profile_init(name: str = typer.Argument(..., help="Name of the new profile")) -> None:
+    """Copy the default config/profile.yaml and config/sources.yaml into config/profiles/NAME/."""
+    base = config.base_paths()
+    try:
+        dst = config.profile_dir(name, base)
+    except config.ProfileError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for filename in config.PROFILE_FILES:
+        if not (base.config / filename).is_file():
+            raise typer.BadParameter(f"{base.config / filename} does not exist; nothing to copy from")
+        if (dst / filename).exists():
+            raise typer.BadParameter(f"{dst / filename} already exists; refusing to overwrite")
+    dst.mkdir(parents=True, exist_ok=True)
+    for filename in config.PROFILE_FILES:
+        shutil.copyfile(base.config / filename, dst / filename)
+    console.print(f"created {dst} — edit profile.yaml, then run commands with --profile {name}")
 
 
 @app.command()

@@ -205,6 +205,12 @@ def test_index_page_is_served(seeded):
     assert "jobscraper" in resp.text
 
 
+def test_the_app_description_names_no_particular_candidate(seeded):
+    client, _jobs = seeded
+    info = client.get("/openapi.json").json()["info"]
+    assert info["description"] == "Ranked jobs with per-user decisions."
+
+
 def test_static_index_file_resolves_from_the_package():
     from jobscraper.web import app as web_app
 
@@ -228,6 +234,7 @@ def test_meta_reports_counts_facets_and_users(seeded):
     assert meta["sections"] == {"ranked": 1, "prefilter": 2, "review": 1}
     assert meta["languages"] == {"en": 3, "de": 1}
     assert meta["languages_required"] == {"de": 1}
+    assert meta["languages_offered"] == ["de", "en"]  # observed + English, no profile given
     assert meta["stacks"]["web"] == 1
     assert meta["stacks"]["python"] == 1
     assert meta["countries"] == {"FI": 1, "DE": 1, "PT": 1, "SE": 1}
@@ -238,6 +245,14 @@ def test_meta_reports_counts_facets_and_users(seeded):
         "interested", "applied", "skipped", "interview", "rejected", "offer"
     }
     assert meta["facets_version"] == FACETS_VERSION
+
+
+def test_meta_offers_the_served_profiles_languages(tmp_path):
+    """A Portuguese candidate gets a "pt" box even when no posting in the report is Portuguese."""
+    _seed(tmp_path / "t.db")
+    with TestClient(create_app(tmp_path / "t.db", languages=["pt", "EN"])) as client:
+        meta = client.get("/api/meta").json()
+    assert meta["languages_offered"] == ["de", "en", "pt"]
 
 
 def test_meta_is_null_for_an_on_the_fly_view(unreported):

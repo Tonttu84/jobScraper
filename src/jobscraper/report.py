@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from jobscraper.config import DATA_DIR, RESULTS_DIR  # noqa: F401 - DATA_DIR patched by tests
+from jobscraper.config import paths
 from jobscraper.models import AIVerdict, FilterResult, Job, ReportItem, ReportSnapshot
 
 
@@ -16,7 +16,7 @@ def _tier_label(t: int | None) -> str:
 
 def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
                  ranked: dict[str, AIVerdict], path: Path | None = None, cost: dict | None = None) -> Path:
-    path = path or RESULTS_DIR / f"report-{datetime.now(UTC):%Y-%m-%d}.md"
+    path = path or paths().results / f"report-{datetime.now(UTC):%Y-%m-%d}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     by_id = {j.id: j for j in jobs}
     # Rules tighten between runs (max age, seniority, language); a stale verdict must not resurrect a drop.

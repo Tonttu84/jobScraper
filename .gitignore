@@ -19,3 +19,8 @@ data/*.log
 results/
 data/runs/
 data/serve/
+# Per-profile working data (databases, runs/, serve/, exports/, cache/).
+data/profiles/
+# Other candidates' profiles carry their personal data; only the layout note is tracked.
+config/profiles/*
+!config/profiles/README.md

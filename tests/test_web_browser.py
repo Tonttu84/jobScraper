@@ -41,7 +41,10 @@ def site(tmp_path):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(create_app(db), host="127.0.0.1", port=port, log_level="warning"))
+    # ``languages`` is what ``serve`` passes from the profile: "pt" is offered although no
+    # posting in the seeded report is Portuguese.
+    app = create_app(db, languages=["en", "pt"])
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(200):
@@ -124,6 +127,12 @@ def test_detail_opens_on_click_with_rank_summary_and_description(page, site):
 
 
 # ------------------------------------------------------------------ languages
+
+
+def test_the_profiles_languages_are_offered_even_when_unobserved(page, site):
+    expect(lang(page, "pt")).to_have_count(1)
+    expect(lang(page, "pt")).not_to_be_checked()
+    expect(count(page)).to_have_text("3 of 3")  # an unticked box changes nothing
 
 
 def test_ticking_a_language_reloads_the_list_without_a_page_reload(page, site):

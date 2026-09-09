@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from jobscraper.config import DATA_DIR
+from jobscraper.config import paths
 from jobscraper.models import (
     AIVerdict,
     Decision,
@@ -133,8 +133,9 @@ def default_db_path() -> Path:
     env = os.environ.get("JOBSCRAPER_DB")
     if env:
         return Path(env)
-    runs = sorted((DATA_DIR / "runs").glob("*.db")) if (DATA_DIR / "runs").is_dir() else []
-    return runs[-1] if runs else DATA_DIR / "jobs.db"
+    data = paths().data
+    runs = sorted((data / "runs").glob("*.db")) if (data / "runs").is_dir() else []
+    return runs[-1] if runs else data / "jobs.db"
 
 
 def copy_db(src: Path, dst: Path) -> Path:
@@ -157,7 +158,7 @@ def new_run_db(fresh: bool = False) -> Path:
     Unless ``fresh``, the current database is copied forward so first-seen dates, decisions
     and cached AI verdicts carry over while the previous file stays untouched.
     """
-    runs = DATA_DIR / "runs"
+    runs = paths().data / "runs"
     runs.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     path, n = runs / f"{stamp}.db", 1

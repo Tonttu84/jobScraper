@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from jobscraper.config import DATA_DIR
+from jobscraper.config import paths
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class Http:
         self.retries = retries
         self._last_call: dict[str, float] = {}
         use_cache = os.environ.get("JOBSCRAPER_HTTP_CACHE") == "1"
-        self.cache_dir = cache_dir or (DATA_DIR / "cache" if use_cache else None)
+        self.cache_dir = cache_dir or (paths().data / "cache" if use_cache else None)
         base_headers = {
             "User-Agent": DEFAULT_UA,
             "Accept-Language": "en-US,en;q=0.9,fi;q=0.8,de;q=0.7",

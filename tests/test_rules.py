@@ -10,6 +10,7 @@ import itertools
 
 import pytest
 
+from jobscraper.config import Profile, SeniorityPolicy
 from jobscraper.filters.rules import classify_remote_region, dedupe, evaluate
 from jobscraper.models import Job
 
@@ -117,6 +118,38 @@ def test_mid_seniority_label_drops_unlabelled_title(settings):
     assert any("label" in r for r in res.reasons)
     assert evaluate(make_job(title="Backend Developer", seniority_raw="Trainee, Junior"), settings.profile).status != "drop"
     assert evaluate(make_job(title="Junior Backend Developer", seniority_raw="Mid"), settings.profile).status != "drop"
+
+
+def test_a_senior_profile_inverts_the_seniority_terms(settings):
+    """Nothing in the code assumes a junior: the terms come from the profile (config.py)."""
+    senior = settings.profile.model_copy(update={
+        "seniority": SeniorityPolicy(max_years_keep=15, max_years_review=20,
+                                     drop_title_terms=["junior", "intern", "trainee", "graduate"],
+                                     keep_title_terms=["senior", "principal", "staff"],
+                                     drop_label_terms=["junior", "trainee"]),
+    })
+    junior = evaluate(make_job(title="Junior Developer", country="FI"), senior)
+    assert junior.status == "drop"
+    assert junior.signals["seniority"] == "senior_by_title"
+    assert any("excluded by profile" in r for r in junior.reasons)
+
+    kept = evaluate(make_job(title="Senior C++ Engineer", country="FI"), senior)
+    assert kept.status == "keep"
+    assert kept.signals["seniority"] == "entry_by_title"
+
+    labelled = evaluate(make_job(title="C++ Engineer", seniority_raw="Junior", country="FI"), senior)
+    assert labelled.status == "drop"
+    assert any("label" in r and "excluded by profile" in r for r in labelled.reasons)
+    # keep_title_terms still win over an excluded label, as they do for the owner's profile
+    assert evaluate(make_job(title="Senior C++ Engineer", seniority_raw="Junior", country="FI"),
+                    senior).status != "drop"
+
+
+def test_empty_drop_label_terms_never_drop_on_a_label():
+    """The default policy has no label terms at all: no board label can drop a job by itself."""
+    profile = Profile(name="X", summary="s")
+    res = evaluate(make_job(title="Backend Developer", seniority_raw="Mid", country="FI"), profile)
+    assert res.status != "drop"
 
 
 def test_six_years_experience_is_dropped(settings):

@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
+from jobscraper import config
 from jobscraper.config import load_settings
 from jobscraper.http import Http, _raise_for_status
 from jobscraper.sources.base import SourceContext
@@ -61,6 +62,15 @@ class FakeHttp(Http):
                 resp.request = req
                 return resp
         raise AssertionError(f"FakeHttp: no route for {method} {full}")
+
+
+@pytest.fixture(autouse=True)
+def _no_profile_leaks(monkeypatch):
+    """The active profile is process state; no test may inherit one from another."""
+    monkeypatch.delenv("JOBSCRAPER_PROFILE", raising=False)
+    config.use_profile(None)
+    yield
+    config.use_profile(None)
 
 
 @pytest.fixture(scope="session")

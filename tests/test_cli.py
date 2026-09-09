@@ -12,7 +12,6 @@ import pytest
 from typer.testing import CliRunner
 
 from jobscraper import cli as cli_mod
-from jobscraper import report as report_mod
 from jobscraper import store as store_mod
 from jobscraper.models import FilterResult
 from tests.conftest import FakeHttp
@@ -22,15 +21,11 @@ runner = CliRunner()
 
 @pytest.fixture
 def data_dir(tmp_path, monkeypatch):
-    """Point every module-level DATA_DIR at tmp_path so nothing touches the repo's data/."""
+    """Point config.paths() at tmp_path so nothing touches the repo's data/ or results/."""
     monkeypatch.setenv("JOBSCRAPER_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr("jobscraper.config.DATA_DIR", tmp_path)
-    monkeypatch.setattr(store_mod, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(report_mod, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(cli_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("JOBSCRAPER_RESULTS_DIR", str(tmp_path / "results"))
     monkeypatch.setattr(store_mod, "DB_OVERRIDE", None)
     monkeypatch.delenv("JOBSCRAPER_DB", raising=False)
-    monkeypatch.setattr(report_mod, "RESULTS_DIR", tmp_path / "results")
     return tmp_path
 
 

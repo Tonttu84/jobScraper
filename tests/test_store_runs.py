@@ -6,7 +6,6 @@ import sqlite3
 
 import pytest
 
-from jobscraper import store as store_mod
 from jobscraper.models import Decision, Job
 from jobscraper.store import Store, copy_db, default_db_path, new_run_db
 
@@ -18,7 +17,7 @@ def _job(sid: str = "1") -> Job:
 @pytest.fixture
 def data_dir(tmp_path, monkeypatch):
     monkeypatch.delenv("JOBSCRAPER_DB", raising=False)
-    monkeypatch.setattr(store_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("JOBSCRAPER_DATA_DIR", str(tmp_path))
     return tmp_path
 
 

@@ -174,6 +174,11 @@ class Meta(BaseModel):
     sections: dict[str, int] = Field(default_factory=dict)
     languages: dict[str, int] = Field(default_factory=dict)
     languages_required: dict[str, int] = Field(default_factory=dict)
+    languages_offered: list[str] = Field(
+        default_factory=list,
+        description="Codes to offer as 'languages you speak': observed in the data, plus English, "
+                    "plus whatever the served profile speaks",
+    )
     stacks: dict[str, int] = Field(default_factory=dict)
     countries: dict[str, int] = Field(default_factory=dict)
     remote: dict[str, int] = Field(default_factory=dict)
@@ -380,19 +385,24 @@ def _counter(values) -> dict[str, int]:
 # ------------------------------------------------------------------------------- app
 
 
-def create_app(db_path: Path | None = None, serve_dir: Path | None = None) -> FastAPI:
+def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
+               languages: list[str] | None = None) -> FastAPI:
     """Build the app over one database (``db_path``) or over a directory of copies.
 
     With neither argument the app serves ``$JOBSCRAPER_SERVE_DIR`` or ``data/serve/``: whatever
     ``*.db`` copy was put there last, read-only, with decisions in a sidecar.
+
+    ``languages`` are the codes the served candidate speaks (``profile.languages.ok``); they are
+    offered as tick boxes even when no posting in the report happens to use them.
     """
     if db_path is None and serve_dir is None:
-        from jobscraper.config import DATA_DIR
+        from jobscraper.config import paths
 
-        serve_dir = Path(os.environ.get("JOBSCRAPER_SERVE_DIR") or DATA_DIR / "serve")
-    app = FastAPI(title="jobscraper", description="Ranked junior jobs with per-user decisions.")
+        serve_dir = Path(os.environ.get("JOBSCRAPER_SERVE_DIR") or paths().data / "serve")
+    app = FastAPI(title="jobscraper", description="Ranked jobs with per-user decisions.")
     app.state.db_path = db_path
     app.state.serve_dir = Path(serve_dir) if serve_dir is not None else None
+    app.state.languages = [code.lower() for code in (languages or [])]
 
     @app.get("/api/meta", response_model=Meta)
     def meta(store: StoreDep, report_id: int | None = None) -> Meta:
@@ -403,6 +413,11 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None) -> Fa
             sections=_counter(j.section for j in jobs),
             languages=_counter(j.facets.posting_language for j in jobs),
             languages_required=_counter(c for j in jobs for c in j.facets.languages_required),
+            languages_offered=sorted(
+                {j.facets.posting_language for j in jobs if j.facets.posting_language}
+                | {c for j in jobs for c in j.facets.languages_required}
+                | {"en", *app.state.languages}
+            ),
             stacks=_counter(s for j in jobs for s in j.facets.stacks),
             countries=_counter(j.country for j in jobs),
             remote=_counter(j.remote for j in jobs),

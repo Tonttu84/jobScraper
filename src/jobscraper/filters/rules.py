@@ -16,7 +16,7 @@ from jobscraper.filters.language import detect_language, find_language_requireme
 from jobscraper.models import FilterResult, Job
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-09-07.5"
+RULES_VERSION = "2026-09-09.1"
 
 _YEARS_RE = re.compile(
     r"(?:(?:at least|minimum|min\.?|minimum of|over|more than|vähintään|yli|mindestens|mind\.|über|"
@@ -119,18 +119,22 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
     sen = profile.seniority
     drop_sen = _compile_terms(sen.drop_title_terms)
     keep_sen = _compile_terms(sen.keep_title_terms)
+    drop_label = _compile_terms(sen.drop_label_terms)
     if keep_sen and keep_sen.search(title):
         signals["seniority"] = "entry_by_title"
     elif drop_sen and drop_sen.search(title):
-        reasons.append(f"senior-level title: {title!r}")
+        reasons.append(f"title level excluded by profile: {title!r}")
         signals["seniority"] = "senior_by_title"
     else:
         signals["seniority"] = "unlabeled"
-        # Boards label seniority separately from the title (justjoin "mid", nofluffjobs "Mid", devitjobs
-        # "Regular"): an above-junior label on an unlabelled title is as strong as a senior title.
+        # Boards label seniority separately from the title (justjoin "mid", nofluffjobs "Mid",
+        # devitjobs "Regular"): an excluded label on an unlabelled title is as strong as an
+        # excluded title. ``keep_title_terms`` wins over both lists, as it does for titles.
         label = job.seniority_raw or ""
-        if label and not (keep_sen and keep_sen.search(label)) and ((drop_sen and drop_sen.search(label)) or _MID_LABEL_RE.search(label)):
-            reasons.append(f"seniority label {label!r} is above junior")
+        if label and not (keep_sen and keep_sen.search(label)) and (
+            (drop_sen and drop_sen.search(label)) or (drop_label and drop_label.search(label))
+        ):
+            reasons.append(f"seniority label {label!r} excluded by profile")
             signals["seniority"] = "senior_by_label"
     years = _years_required(text)
     if years is not None:

@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jobscraper.ai.prompts import PROMPT_VERSION, job_prompt, system_prompt  # noqa: E402
 from jobscraper.ai.schemas import Ranking, Screening  # noqa: E402
-from jobscraper.config import DATA_DIR, load_settings  # noqa: E402
+from jobscraper.config import load_settings, paths  # noqa: E402
 from jobscraper.http import Http  # noqa: E402
 from jobscraper.models import AIVerdict, Job  # noqa: E402
 from jobscraper.sources import linkedin  # noqa: E402
@@ -55,13 +55,13 @@ fetch_description = linkedin.fetch_description
 
 
 def _out_dir(stage: str) -> Path:
-    d = DATA_DIR / "exports" / "ai" / stage
+    d = paths().data / "exports" / "ai" / stage
     (d / "verdicts").mkdir(parents=True, exist_ok=True)
     return d
 
 
 def _hydration_log() -> Path:
-    path = DATA_DIR / "exports" / "ai" / "hydration.jsonl"
+    path = paths().data / "exports" / "ai" / "hydration.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 

@@ -1,8 +1,8 @@
 """Tests for ``scripts/ai_batches.py``, the API-free way to run the two AI stages.
 
 The script is not a package module, so it is loaded from its path with importlib. Both its own
-``DATA_DIR`` and the store's are pointed at ``tmp_path``; nothing here touches the network or the
-repo's ``data/``.
+data directory is pointed at ``tmp_path`` through ``JOBSCRAPER_DATA_DIR``; nothing here touches
+the network or the repo's ``data/``.
 """
 
 from __future__ import annotations
@@ -34,8 +34,9 @@ ai_batches = _load_script()
 @pytest.fixture
 def data_dir(tmp_path, monkeypatch):
     """Point the script and the store at tmp_path."""
-    monkeypatch.setattr(ai_batches, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(store_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("JOBSCRAPER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(store_mod, "DB_OVERRIDE", None)
+    monkeypatch.delenv("JOBSCRAPER_DB", raising=False)
     return tmp_path
 
 

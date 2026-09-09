@@ -394,7 +394,9 @@ function options(select, values) {
 function keys(obj) { return Object.keys(obj || {}).sort(); }
 
 function buildFilters(meta) {
-  var langs = keys(meta.languages).concat(keys(meta.languages_required));
+  // The server offers the languages seen in the data plus the ones the profile speaks.
+  var langs = (meta.languages_offered || []).slice();
+  if (!langs.length) { langs = keys(meta.languages).concat(keys(meta.languages_required)); }
   if (langs.indexOf("en") < 0) { langs.push("en"); }
   langs = langs.filter(function (v, i) { return langs.indexOf(v) === i; }).sort();
   var saved = stored("jobscraper.langs", "en").split(",").filter(function (v) { return v; });
