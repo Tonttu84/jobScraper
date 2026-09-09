@@ -27,7 +27,7 @@ LANGUAGE_NAMES: dict[str, list[str]] = {
            "polaco", "polonês", "polones"],
     "nl": ["dutch", "hollanti", "nederlands", "niederländisch", "flemish",
            "holandês", "holandes", "neerlandês", "neerlandes"],
-    "fr": ["french", "ranska", "français", "francais", "französisch", "francês", "frances"],
+    "fr": ["french", "ranska", "français", "francais", "französisch", "francês"],
     "es": ["spanish", "espanja", "español", "espanol", "spanisch", "castellano",
            "espanhol", "castelhano"],
     "pt": ["portuguese", "portugali", "português", "portugues", "portugiesisch"],
