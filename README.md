@@ -4,8 +4,8 @@ Finds junior / intern software jobs across Finland, Estonia, the EU + Norway, Du
 boards; auto-filters them with cheap rules; then lets Claude screen and rank what is left.
 
 ```
-scrape → filter (rules) → prefilter (Sonnet 5, permissive) → rank (Opus 5, top N) → report (markdown + DB) → serve (web UI)
- 21 sources   SQLite         structured JSON verdicts          top N explained        results/ + jobs.db    FastAPI on localhost
+scrape → filter (rules) → prefilter (Sonnet 5, permissive) → rank (Opus 5, top N) → report (markdown + DB) → publish → serve (web UI)
+ 21 sources   SQLite         structured JSON verdicts          top N explained        results/ + runs/*.db   copy to data/serve/  FastAPI, read-only
 ```
 
 See `docs/PLAN.md` for the design, the source list, and the decisions behind it.
@@ -42,8 +42,11 @@ test fixtures.
 ## Daily use
 
 ```bash
-uv run jobscraper run                   # scrape → filter → prefilter → rank → report
+uv run jobscraper run                   # new data/runs/<timestamp>.db, then scrape → filter → prefilter → rank → report
 uv run jobscraper run --skip-ai         # no API calls: scrape + rules + report only
+uv run jobscraper run --fresh           # start the run from an empty database instead of copying the last one forward
+uv run jobscraper runs                  # list per-run databases (* = the one commands use by default)
+uv run jobscraper --db data/runs/20260909-101500.db report   # any command against a specific database
 uv run jobscraper scrape linkedin indeed
 uv run jobscraper filter --days 14
 uv run jobscraper prefilter --max-jobs 50     # try the Sonnet pass on a sample first
@@ -51,15 +54,31 @@ uv run jobscraper rank --top 30
 uv run jobscraper report
 uv run jobscraper stats
 uv run jobscraper facets                # backfill the filter facets of an existing DB, no AI re-runs
-uv run jobscraper serve                 # web UI → http://127.0.0.1:8000
+uv run jobscraper publish --name week37 # copy the current DB to data/serve/week37.db
+uv run jobscraper serve                 # web UI over data/serve/ → http://127.0.0.1:8000
 ```
 
-Outputs: `data/jobs.db` (everything), `results/report-YYYY-MM-DD.md` (ranked list),
-`data/exports/filtered.jsonl` (rule survivors with verdicts, for review in Claude Code or a
-spreadsheet). Each `report` run is also stored *in* `data/jobs.db` — the run and its counts in
-`reports`, its ordered sections in `report_items` — which is what `serve` reads; your
-applied/skipped/interview marks live in `decisions`. AI verdicts are cached per job, model and
-prompt version, so re-runs only pay for new jobs. Change `PROMPT_VERSION` in
+### Databases
+
+Every `run` creates its own SQLite file, `data/runs/<timestamp>.db`, by snapshotting the
+previous run's database (so first-seen dates, cached AI verdicts and decisions carry over) and
+then working only on the new file; the earlier files are never touched again. `--fresh` starts
+from an empty database. Commands without `--db` use the newest run database (or the legacy
+`data/jobs.db` if there are no runs yet); `$JOBSCRAPER_DB` overrides that too.
+
+The web UI never reads the run databases directly. `jobscraper publish` copies whichever
+database you choose into `data/serve/` (any name you like), and `jobscraper serve` shows the
+most recently modified `*.db` copy in that directory, opened read-only. Decisions made in the
+UI go to `data/serve/decisions.db`, a sidecar keyed by job id, so you can replace the served
+copy with a newer one and keep everyone's marks. To expose a different snapshot, publish (or
+copy) another file there; to roll back, delete the newer copy. `serve --dir <path>` serves
+another directory, `serve --db-file <db>` serves one writable database the old way.
+
+Other outputs: `results/report-YYYY-MM-DD.md` (ranked list), `data/exports/filtered.jsonl`
+(rule survivors with verdicts, for review in Claude Code or a spreadsheet). Each `report` run is
+also stored *in* the database — the run and its counts in `reports`, its ordered sections in
+`report_items` — which is what `serve` reads. AI verdicts are cached per job, model and prompt
+version, so re-runs only pay for new jobs. Change `PROMPT_VERSION` in
 `src/jobscraper/ai/prompts.py` when you edit the prompts.
 
 ### Sharing with other students

@@ -21,16 +21,22 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from jobscraper import store as store_mod
 from jobscraper.config import DATA_DIR, load_settings
 from jobscraper.facets import compute_all
 from jobscraper.filters import RULES_VERSION, apply_rules, dedupe
 from jobscraper.http import Http
 from jobscraper.models import Job
 from jobscraper.sources.base import SourceContext, all_sources, get_source, take
-from jobscraper.store import Store
+from jobscraper.store import Store, copy_db, default_db_path, new_run_db
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help=__doc__)
 console = Console()
+
+
+@app.callback()
+def main(db: Path | None = typer.Option(None, "--db", help="Database to work on (default: newest data/runs/*.db, else data/jobs.db)")) -> None:
+    store_mod.DB_OVERRIDE = db
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -251,23 +257,67 @@ def facets_cmd(days: int = 30, verbose: bool = False) -> None:
 
 
 @app.command()
-def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None:
-    """Run the web UI (latest report + per-user decisions) over data/jobs.db."""
+def serve(dir: Path | None = typer.Option(None, "--dir", help="Directory of database copies to serve (default data/serve)"),
+          db: Path | None = typer.Option(None, "--db-file", help="Serve this single writable database instead"),
+          host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None:
+    """Run the web UI over the copies in the serve directory (newest wins, read-only, decisions in decisions.db)."""
     import uvicorn
 
     from jobscraper.web.app import create_app
 
+    serve_dir = None if db else (dir or DATA_DIR / "serve")
+    if serve_dir is not None:
+        serve_dir.mkdir(parents=True, exist_ok=True)
+        console.print(f"serving copies from {serve_dir} (put a database there with `jobscraper publish`)")
     console.print(f"jobscraper web UI on http://{host}:{port} — no auth, keep it local or behind a proxy")
     if reload:
+        import os
+
+        if serve_dir is not None:
+            os.environ["JOBSCRAPER_SERVE_DIR"] = str(serve_dir)
         uvicorn.run("jobscraper.web.app:create_app", host=host, port=port, reload=True, factory=True)
     else:
-        uvicorn.run(create_app(), host=host, port=port)
+        uvicorn.run(create_app(db, serve_dir), host=host, port=port)
 
 
 @app.command()
-def run(days: int = 30, skip_ai: bool = False, verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
-    """Full pipeline: scrape → filter → prefilter → rank → report."""
-    scrape(None, verbose=verbose)
+def runs() -> None:
+    """List the per-run databases under data/runs (newest last, * = current)."""
+    current = default_db_path().resolve()
+    table = Table("database", "size", "modified", "jobs", "")
+    for path in sorted((DATA_DIR / "runs").glob("*.db")) if (DATA_DIR / "runs").is_dir() else []:
+        st = path.stat()
+        n = Store(path, readonly=True)
+        try:
+            jobs = n.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        finally:
+            n.close()
+        table.add_row(path.name, f"{st.st_size / 1e6:.1f} MB", time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)),
+                      str(jobs), "*" if path.resolve() == current else "")
+    console.print(table)
+
+
+@app.command()
+def publish(name: str | None = typer.Option(None, help="File name for the copy (default: the source name)"),
+            dir: Path | None = typer.Option(None, "--dir", help="Serve directory (default data/serve)")) -> None:
+    """Copy the current database (or --db) into the serve directory for the web UI."""
+    src = default_db_path()
+    if not src.exists():
+        raise typer.BadParameter(f"{src} does not exist")
+    dst = (dir or DATA_DIR / "serve") / f"{(name or src.stem).removesuffix('.db')}.db"
+    copy_db(src, dst)
+    console.print(f"published {src} → {dst}")
+
+
+@app.command()
+def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (default: all enabled)"),
+        days: int = 30, skip_ai: bool = False, verbose: bool = typer.Option(False, "--verbose", "-v"),
+        fresh: bool = typer.Option(False, help="Start from an empty database instead of copying the previous run forward")) -> None:
+    """Full pipeline in a new per-run database: scrape → filter → prefilter → rank → report."""
+    path = new_run_db(fresh=fresh)
+    store_mod.DB_OVERRIDE = path
+    console.print(f"run database: {path}" + ("" if fresh else " (copied forward from the previous run)"))
+    scrape(names, verbose=verbose)
     filter_cmd(days=days, verbose=verbose)
     if not skip_ai:
         prefilter(days=days, verbose=verbose)

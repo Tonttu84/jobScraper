@@ -17,3 +17,5 @@ data/probe.log
 data/*.log
 .claude/worktrees/
 results/
+data/runs/
+data/serve/

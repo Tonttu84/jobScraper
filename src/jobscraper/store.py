@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -113,14 +115,96 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+#: Set by the CLI's --db option (and by `run`, which creates a database per run).
+DB_OVERRIDE: Path | None = None
+
+_DECISIONS_DDL = re.search(r"CREATE TABLE IF NOT EXISTS decisions \((.*?)\);", SCHEMA, re.S).group(1)
+
+
+def default_db_path() -> Path:
+    """Which database the CLI works on when none is given.
+
+    Precedence: the CLI ``--db`` override, then ``$JOBSCRAPER_DB``, then the newest per-run
+    database under ``data/runs/`` (names are timestamps, so lexical order is chronological),
+    then the legacy single ``data/jobs.db``.
+    """
+    if DB_OVERRIDE is not None:
+        return DB_OVERRIDE
+    env = os.environ.get("JOBSCRAPER_DB")
+    if env:
+        return Path(env)
+    runs = sorted((DATA_DIR / "runs").glob("*.db")) if (DATA_DIR / "runs").is_dir() else []
+    return runs[-1] if runs else DATA_DIR / "jobs.db"
+
+
+def copy_db(src: Path, dst: Path) -> Path:
+    """Consistent snapshot of ``src`` into ``dst`` via SQLite's online backup (safe mid-write)."""
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(_uri(Path(src), "ro"), uri=True)
+    target = sqlite3.connect(dst)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+    return dst
+
+
+def new_run_db(fresh: bool = False) -> Path:
+    """Create ``data/runs/<timestamp>.db`` for a new pipeline run.
+
+    Unless ``fresh``, the current database is copied forward so first-seen dates, decisions
+    and cached AI verdicts carry over while the previous file stays untouched.
+    """
+    runs = DATA_DIR / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    path, n = runs / f"{stamp}.db", 1
+    while path.exists():  # "_n" sorts after ".db", keeping lexical order chronological
+        path, n = runs / f"{stamp}_{n}.db", n + 1
+    previous = default_db_path()
+    if not fresh and previous.exists() and previous.resolve() != path.resolve():
+        copy_db(previous, path)
+    else:
+        Store(path).close()
+    return path
+
+
+def _uri(path: Path, mode: str) -> str:
+    return f"{path.resolve().as_uri()}?mode={mode}"
+
+
 class Store:
-    def __init__(self, path: Path | None = None) -> None:
-        self.path = Path(path) if path else DATA_DIR / "jobs.db"
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path)
+    def __init__(self, path: Path | None = None, *, readonly: bool = False,
+                 decisions_path: Path | None = None) -> None:
+        """Open a database.
+
+        ``readonly`` opens an existing file with ``mode=ro`` (no schema creation, writes fail).
+        ``decisions_path`` keeps the ``decisions`` table in a separate, writable sidecar file so
+        the web UI can annotate read-only copies and the notes survive swapping the copy.
+        """
+        self.path = Path(path) if path else default_db_path()
+        self.readonly = readonly
+        if readonly:
+            if not self.path.exists():
+                raise FileNotFoundError(self.path)
+            self.conn = sqlite3.connect(_uri(self.path, "ro"), uri=True)
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.conn = sqlite3.connect(_uri(self.path, "rwc"), uri=True)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
-        self.conn.executescript(SCHEMA)
+        if not readonly:
+            self.conn.executescript(SCHEMA)
+        self._decisions = "decisions"
+        if decisions_path is not None:
+            decisions_path = Path(decisions_path)
+            decisions_path.parent.mkdir(parents=True, exist_ok=True)
+            self.conn.execute("ATTACH DATABASE ? AS dec", (_uri(decisions_path, "rwc"),))
+            self.conn.execute(f"CREATE TABLE IF NOT EXISTS dec.decisions ({_DECISIONS_DDL})")
+            self.conn.commit()
+            self._decisions = "dec.decisions"
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
@@ -235,7 +319,7 @@ class Store:
         stored = d.model_copy(update={"updated_at": datetime.now(UTC)})
         with self.tx() as c:
             c.execute(
-                "INSERT OR REPLACE INTO decisions (job_id, user, status, note, updated_at) VALUES (?,?,?,?,?)",
+                f"INSERT OR REPLACE INTO {self._decisions} (job_id, user, status, note, updated_at) VALUES (?,?,?,?,?)",
                 (stored.job_id, stored.user, stored.status, stored.note, stored.updated_at.isoformat()),
             )
         return stored
@@ -243,11 +327,11 @@ class Store:
     def delete_decision(self, job_id: str, user: str) -> bool:
         """Drop one decision. True when a row was actually removed."""
         with self.tx() as c:
-            cur = c.execute("DELETE FROM decisions WHERE job_id=? AND user=?", (job_id, user))
+            cur = c.execute(f"DELETE FROM {self._decisions} WHERE job_id=? AND user=?", (job_id, user))
         return cur.rowcount > 0
 
     def decisions(self, user: str | None = None) -> list[Decision]:
-        sql, args = "SELECT job_id, user, status, note, updated_at FROM decisions", []
+        sql, args = f"SELECT job_id, user, status, note, updated_at FROM {self._decisions}", []
         if user is not None:
             sql += " WHERE user=?"
             args.append(user)
@@ -255,7 +339,7 @@ class Store:
         return [Decision(**dict(row)) for row in self.conn.execute(sql, args)]
 
     def decision_users(self) -> list[str]:
-        return [r["user"] for r in self.conn.execute("SELECT DISTINCT user FROM decisions ORDER BY user")]
+        return [r["user"] for r in self.conn.execute(f"SELECT DISTINCT user FROM {self._decisions} ORDER BY user")]
 
     # ---------------------------------------------------------------- reports
     @staticmethod

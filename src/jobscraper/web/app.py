@@ -7,6 +7,7 @@ a threadpool, so every request gets its own :class:`~jobscraper.store.Store` thr
 
 from __future__ import annotations
 
+import os
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -46,9 +47,33 @@ DECISION_STATUSES: list[str] = list(get_args(DecisionStatus))
 Handle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 
 
+#: Reserved file name for the writable decisions sidecar inside a serve directory.
+DECISIONS_DB = "decisions.db"
+
+
+def current_db(serve_dir: Path) -> Path | None:
+    """The database to serve: the most recently modified ``*.db`` copy in the directory."""
+    candidates = [p for p in Path(serve_dir).glob("*.db") if p.name != DECISIONS_DB and p.is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: (p.stat().st_mtime, p.name))
+
+
 def get_store(request: Request) -> Iterator[Store]:
-    """One SQLite connection per request — they are bound to the thread that opened them."""
-    store = Store(request.app.state.db_path)
+    """One SQLite connection per request — they are bound to the thread that opened them.
+
+    In serve-directory mode the job database is opened read-only (it is a copy the owner
+    dropped in) and decisions go to the ``decisions.db`` sidecar next to it, so they survive
+    replacing the copy. In single-database mode everything lives in that one file.
+    """
+    serve_dir: Path | None = request.app.state.serve_dir
+    if serve_dir is not None:
+        db = current_db(serve_dir)
+        if db is None:
+            raise HTTPException(status_code=503, detail=f"no database in {serve_dir}; run `jobscraper publish`")
+        store = Store(db, readonly=True, decisions_path=serve_dir / DECISIONS_DB)
+    else:
+        store = Store(request.app.state.db_path)
     try:
         yield store
     finally:
@@ -154,6 +179,7 @@ class Meta(BaseModel):
     users: list[str] = Field(default_factory=list)
     decision_statuses: list[str] = Field(default_factory=list)
     facets_version: str = FACETS_VERSION
+    database: str | None = Field(None, description="File name of the database being served")
 
 
 class DecisionIn(BaseModel):
@@ -352,10 +378,19 @@ def _counter(values) -> dict[str, int]:
 # ------------------------------------------------------------------------------- app
 
 
-def create_app(db_path: Path | None = None) -> FastAPI:
-    """Build the app over ``db_path`` (``data/jobs.db`` by default)."""
+def create_app(db_path: Path | None = None, serve_dir: Path | None = None) -> FastAPI:
+    """Build the app over one database (``db_path``) or over a directory of copies.
+
+    With neither argument the app serves ``$JOBSCRAPER_SERVE_DIR`` or ``data/serve/``: whatever
+    ``*.db`` copy was put there last, read-only, with decisions in a sidecar.
+    """
+    if db_path is None and serve_dir is None:
+        from jobscraper.config import DATA_DIR
+
+        serve_dir = Path(os.environ.get("JOBSCRAPER_SERVE_DIR") or DATA_DIR / "serve")
     app = FastAPI(title="jobscraper", description="Ranked junior jobs with per-user decisions.")
     app.state.db_path = db_path
+    app.state.serve_dir = Path(serve_dir) if serve_dir is not None else None
 
     @app.get("/api/meta", response_model=Meta)
     def meta(store: StoreDep, report_id: int | None = None) -> Meta:
@@ -373,6 +408,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             users=store.decision_users(),
             decision_statuses=DECISION_STATUSES,
             facets_version=FACETS_VERSION,
+            database=store.path.name,
         )
 
     @app.get("/api/jobs", response_model=JobList)

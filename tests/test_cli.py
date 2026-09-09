@@ -28,6 +28,8 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(store_mod, "DATA_DIR", tmp_path)
     monkeypatch.setattr(report_mod, "DATA_DIR", tmp_path)
     monkeypatch.setattr(cli_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(store_mod, "DB_OVERRIDE", None)
+    monkeypatch.delenv("JOBSCRAPER_DB", raising=False)
     monkeypatch.setattr(report_mod, "RESULTS_DIR", tmp_path / "results")
     return tmp_path
 
@@ -232,3 +234,46 @@ def test_short_verbose_flag_is_accepted(data_dir, fake_http):
     for args in (["probe", "-v", "arbeitnow"], ["scrape", "-v", "arbeitnow"], ["filter", "-v"]):
         result = runner.invoke(cli_mod.app, args)
         assert result.exit_code == 0, f"{args}: {result.output}"
+
+
+def test_run_creates_its_own_database_and_publish_copies_it(data_dir, fake_http, monkeypatch):
+    monkeypatch.delenv("JOBSCRAPER_DB", raising=False)
+    result = runner.invoke(cli_mod.app, ["run", "arbeitnow", "--skip-ai"])
+    assert result.exit_code == 0, result.output
+    run_dbs = sorted((data_dir / "runs").glob("*.db"))
+    assert len(run_dbs) == 1
+    assert not (data_dir / "jobs.db").exists()
+    store = store_mod.Store(run_dbs[0])
+    try:
+        n_jobs = len(store.jobs())
+        assert n_jobs > 0
+    finally:
+        store.close()
+
+    listed = runner.invoke(cli_mod.app, ["runs"])
+    assert listed.exit_code == 0, listed.output
+    assert run_dbs[0].name in listed.output
+
+    # a second run copies the first forward: same jobs, new file
+    second = runner.invoke(cli_mod.app, ["run", "arbeitnow", "--skip-ai"])
+    assert second.exit_code == 0, second.output
+    assert len(list((data_dir / "runs").glob("*.db"))) == 2
+    fresh = runner.invoke(cli_mod.app, ["run", "arbeitnow", "--skip-ai", "--fresh"])
+    assert fresh.exit_code == 0, fresh.output
+    assert len(list((data_dir / "runs").glob("*.db"))) == 3
+
+    published = runner.invoke(cli_mod.app, ["publish", "--name", "week37"])
+    assert published.exit_code == 0, published.output
+    assert (data_dir / "serve" / "week37.db").exists()
+    copy = store_mod.Store(data_dir / "serve" / "week37.db")
+    try:
+        assert len(copy.jobs()) == n_jobs
+    finally:
+        copy.close()
+
+
+def test_db_option_overrides_database_for_a_command(data_dir, fake_http):
+    result = runner.invoke(cli_mod.app, ["--db", str(data_dir / "custom.db"), "scrape", "arbeitnow", "--limit", "1"])
+    assert result.exit_code == 0, result.output
+    assert (data_dir / "custom.db").exists()
+    assert not (data_dir / "jobs.db").exists()
