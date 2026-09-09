@@ -13,38 +13,41 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 
-# Language names as they appear in job ads, in English, Finnish, German, Swedish and the local
-# language itself. Keys are ISO-639-1 codes.
+# Language names as they appear in job ads, in English, Finnish, German, Swedish, Portuguese and
+# the local language itself. Keys are ISO-639-1 codes.
 LANGUAGE_NAMES: dict[str, list[str]] = {
-    "en": ["english", "englanti", "englannin", "englisch", "engelska"],
-    "fi": ["finnish", "suomi", "suomen kiel", "finnisch", "finska"],
-    "de": ["german", "saksa", "saksan kiel", "deutsch", "tyska"],
-    "sv": ["swedish", "ruotsi", "ruotsin kiel", "schwedisch", "svenska"],
-    "no": ["norwegian", "norja", "norsk", "norwegisch"],
-    "da": ["danish", "tanska", "dansk", "dänisch"],
+    "en": ["english", "englanti", "englannin", "englisch", "engelska", "inglês", "ingles"],
+    "fi": ["finnish", "suomi", "suomen kiel", "finnisch", "finska", "finlandês", "finlandes"],
+    "de": ["german", "saksa", "saksan kiel", "deutsch", "tyska", "alemão", "alemao"],
+    "sv": ["swedish", "ruotsi", "ruotsin kiel", "schwedisch", "svenska", "sueco"],
+    "no": ["norwegian", "norja", "norsk", "norwegisch", "norueguês", "noruegues"],
+    "da": ["danish", "tanska", "dansk", "dänisch", "dinamarquês", "dinamarques"],
     "et": ["estonian", "viro", "viron kiel", "eesti keel", "estnisch"],
-    "pl": ["polish", "puola", "polski", "polnisch", "języka polskiego", "język polski"],
-    "nl": ["dutch", "hollanti", "nederlands", "niederländisch", "flemish"],
-    "fr": ["french", "ranska", "français", "francais", "französisch"],
-    "es": ["spanish", "espanja", "español", "espanol", "spanisch", "castellano"],
+    "pl": ["polish", "puola", "polski", "polnisch", "języka polskiego", "język polski",
+           "polaco", "polonês", "polones"],
+    "nl": ["dutch", "hollanti", "nederlands", "niederländisch", "flemish",
+           "holandês", "holandes", "neerlandês", "neerlandes"],
+    "fr": ["french", "ranska", "français", "francais", "französisch", "francês", "frances"],
+    "es": ["spanish", "espanja", "español", "espanol", "spanisch", "castellano",
+           "espanhol", "castelhano"],
     "pt": ["portuguese", "portugali", "português", "portugues", "portugiesisch"],
     "it": ["italian", "italia ", "italiano", "italienisch"],
     "cs": ["czech", "tšekki", "čeština", "cestina", "tschechisch"],
     "sk": ["slovak", "slovakki", "slovenčina", "slowakisch"],
     "hu": ["hungarian", "unkari", "magyar", "ungarisch"],
     "ro": ["romanian", "romania", "română", "rumänisch"],
-    "ru": ["russian", "venäjä", "venäjän kiel", "русск", "russisch"],
+    "ru": ["russian", "venäjä", "venäjän kiel", "русск", "russisch", "russo"],
     "uk": ["ukrainian", "ukraina", "українськ"],
     "lt": ["lithuanian", "liettua", "lietuvių"],
     "lv": ["latvian", "latvia", "latviešu"],
-    "ar": ["arabic", "arabia", "arabisch"],
+    "ar": ["arabic", "arabia", "arabisch", "árabe", "arabe"],
     "tr": ["turkish", "turkki", "türkçe", "türkisch"],
     "el": ["greek", "kreikka", "ελληνικ"],
     "hr": ["croatian", "kroatia", "hrvatski"],
     "sl": ["slovenian", "slovene", "slovenščina"],
     "bg": ["bulgarian", "bulgaria", "български"],
-    "ja": ["japanese", "japani"],
-    "zh": ["chinese", "mandarin", "kiina"],
+    "ja": ["japanese", "japani", "japonês", "japones"],
+    "zh": ["chinese", "mandarin", "kiina", "chinês", "chines", "mandarim"],
 }
 
 # Names match at a word start only (a trailing inflection is fine: "viron kielen", "englannin"),
@@ -64,7 +67,11 @@ _REQUIRED_WORDS = re.compile(
     r"proficien|excellent|business[- ]level|c1|c2|working language|"
     r"vaaditaan|edellyt|välttämät|sujuva|erinomai|äidinkiel|työkieli|"
     r"erforderlich|voraussetzung|vorausgesetzt|zwingend|fließend|fliessend|verhandlungssicher|muttersprach|sehr gut|"
-    r"krävs|flytande|obligatorisk|wymagan|biegł|płynn|vereist|vloeiend|requis|courant|imprescindible|obligatorio)",
+    r"krävs|flytande|obligatorisk|wymagan|biegł|płynn|vereist|vloeiend|requis|courant|imprescindible|obligatorio|"
+    # Portuguese (European and Brazilian spellings). Accented and bare forms are spelled out
+    # rather than left open-ended so they cannot fire inside English words ("necessarily").
+    r"obrigat[óo]ri|requisito|exigid|exige-se|exigimos|exig[êe]ncia|necess[áa]ri[oa]|flu[êe]ncia|nativ[oa]|"
+    r"dom[íi]nio|avan[çc]ad[oa]|imprescind[íi]vel|essencial|indispens[áa]vel|l[íi]ngua de trabalho)",
     re.I,
 )
 _OPTIONAL_WORDS = re.compile(
@@ -72,12 +79,16 @@ _OPTIONAL_WORDS = re.compile(
     r"optional|not required|not necessary|no need|would be|is a merit|helpful|"
     r"eduksi|etu|katsotaan eduksi|plussaa|hyödyksi|ei vaadita|ei edellytetä|"
     r"von vorteil|wünschenswert|nicht erforderlich|kein muss|gerne gesehen|"
-    r"meriterande|mile widziane|dodatkowym atutem|pré|een pre|un plus|deseable)\b",
+    r"meriterande|mile widziane|dodatkowym atutem|pré|een pre|un plus|deseable|"
+    # Portuguese. This table is anchored on both sides, so plurals are spelled out.
+    r"valorizad[oa]s?|valoriza-se|valorizamos|preferencial(?:mente)?|desej[áa]ve[li]s?|"
+    r"mais[- ]valia|vantagens?|opcional|n[ãa]o (?:é |e )?(?:obrigat[óo]ri[oa]|necess[áa]ri[oa]))\b",
     re.I,
 )
 _NOT_NEEDED = re.compile(
-    r"\b(no|not|don'?t|without|isn'?t|aren'?t|ei|nicht|kein|ohne|inte)\b[^.\n]{0,40}\b(need|require|necessary|must|"
-    r"vaadi|tarvitse|edellyt|erforderlich|voraussetzung|notwendig|krävs)\w*",
+    r"\b(no|not|don'?t|without|isn'?t|aren'?t|ei|nicht|kein|ohne|inte|n[ãa]o)\b[^.\n]{0,40}\b(need|require|necessary|must|"
+    r"vaadi|tarvitse|edellyt|erforderlich|voraussetzung|notwendig|krävs|"
+    r"necess[áa]ri[oa]|obrigat[óo]ri|exig|precisa)\w*",
     re.I,
 )
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?•\n])\s+|\s*[•·▪▸►]\s*|\n+")

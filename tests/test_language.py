@@ -30,6 +30,12 @@ SAMPLE_PARAGRAPHS: dict[str, str] = {
         "Kolleginnen und Kollegen zusammen. Wir bieten dir flexible Arbeitszeiten, ein modernes "
         "Büro und viel Raum zum Lernen."
     ),
+    "pt": (
+        "Procuramos um programador júnior para a nossa equipa em Lisboa, que nos ajude a "
+        "desenvolver as nossas aplicações web. Vais trabalhar em conjunto com colegas mais "
+        "experientes na criação de novas funcionalidades do produto. Oferecemos horário "
+        "flexível, um escritório moderno e muitas oportunidades de aprendizagem."
+    ),
     "pl": (
         "Poszukujemy młodszego programisty do naszego zespołu w Warszawie, który pomoże nam "
         "rozwijać nasze aplikacje internetowe. Będziesz pracować w zespole doświadczonych "
@@ -147,3 +153,89 @@ def test_inflected_finnish_language_names_still_match() -> None:
     req = find_language_requirements("Viron kielen sujuva taito vaaditaan. Englannin kielen taito on eduksi.")
     assert "et" in req.required
     assert "en" in req.optional
+
+
+def test_portuguese_requirement_and_advantage_are_separated() -> None:
+    req = find_language_requirements("Inglês fluente obrigatório; alemão é uma mais-valia.")
+    assert req.required == {"en"}
+    assert req.optional == {"de"}
+    assert "en" in req.evidence
+
+
+def test_portuguese_fluency_marks_both_languages_required() -> None:
+    req = find_language_requirements("Fluência em português e inglês.")
+    assert req.required == {"pt", "en"}
+    assert req.optional == set()
+
+
+def test_portuguese_negated_requirement_is_optional_only() -> None:
+    req = find_language_requirements("Não é necessário falar português.")
+    assert "pt" in req.optional
+    assert "pt" not in req.required
+    assert "pt" in req.mentioned
+
+
+def test_portuguese_valued_wording_is_optional() -> None:
+    req = find_language_requirements("Conhecimentos de espanhol valorizados.")
+    assert req.optional == {"es"}
+    assert req.required == set()
+
+
+def test_brazilian_spelling_without_accents_is_required() -> None:
+    req = find_language_requirements("Ingles avancado e requisito para a vaga.")
+    assert req.required == {"en"}
+    assert req.optional == set()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "O francês é desejável.",
+        "Conhecimentos de italiano são uma vantagem.",
+        "Sueco preferencialmente.",
+        "O russo é opcional.",
+        "Falar norueguês não é obrigatório.",
+    ],
+)
+def test_portuguese_optional_wording_variants_are_optional(text: str) -> None:
+    req = find_language_requirements(text)
+    assert req.required == set()
+    assert len(req.optional) == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "code"),
+    [
+        ("Domínio do alemão exigido.", "de"),
+        ("Nível nativo de neerlandês é imprescindível.", "nl"),
+        ("O polaco é essencial para esta função.", "pl"),
+        ("Língua de trabalho: japonês.", "ja"),
+        ("Árabe indispensável.", "ar"),
+        ("Chinês mandarim é um requisito.", "zh"),
+        ("Exige-se dinamarquês fluente.", "da"),
+    ],
+)
+def test_portuguese_requirement_wording_variants_are_required(text: str, code: str) -> None:
+    req = find_language_requirements(text)
+    assert req.required == {code}
+    assert req.optional == set()
+
+
+def test_english_essential_wording_is_unaffected_by_portuguese_words() -> None:
+    """Adding Portuguese vocabulary must not change verdicts on English postings."""
+    req = find_language_requirements(
+        "Fluent English is required. Attention to detail is essential and a plus for the team."
+    )
+    assert req.required == {"en"}
+    assert req.optional == set()
+
+
+def test_portuguese_language_names_do_not_match_inside_english_words() -> None:
+    """'ingles' (Portuguese for English) hides inside 'singles' and 'shingles' — word start only."""
+    req = find_language_requirements(
+        "Our consumer app is popular with singles, and the pricing service is required reading "
+        "for new joiners. The office has a leaking shingles roof that we are fixing this autumn."
+    )
+    assert req.mentioned == set()
+    assert req.required == set()
+    assert req.optional == set()
