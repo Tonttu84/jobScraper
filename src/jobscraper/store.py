@@ -183,16 +183,21 @@ class Store:
         ``readonly`` opens an existing file with ``mode=ro`` (no schema creation, writes fail).
         ``decisions_path`` keeps the ``decisions`` table in a separate, writable sidecar file so
         the web UI can annotate read-only copies and the notes survive swapping the copy.
+
+        ``check_same_thread=False`` lifts sqlite3's own thread guard: the web app opens a Store
+        in one threadpool worker (the dependency's ``__enter__``) and runs the endpoint in
+        another, and hitting the guard there turned into a 500. A Store is still used by one
+        request at a time, never concurrently.
         """
         self.path = Path(path) if path else default_db_path()
         self.readonly = readonly
         if readonly:
             if not self.path.exists():
                 raise FileNotFoundError(self.path)
-            self.conn = sqlite3.connect(_uri(self.path, "ro"), uri=True)
+            self.conn = sqlite3.connect(_uri(self.path, "ro"), uri=True, check_same_thread=False)
         else:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.conn = sqlite3.connect(_uri(self.path, "rwc"), uri=True)
+            self.conn = sqlite3.connect(_uri(self.path, "rwc"), uri=True, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         if not readonly:

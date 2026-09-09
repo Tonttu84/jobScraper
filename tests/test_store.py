@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -423,3 +424,22 @@ def test_stats_includes_decisions_and_reports(store):
     stats = store.stats()
     assert stats["decisions"] == {"applied": 2, "skipped": 1}
     assert stats["reports"] == 1
+
+
+def test_store_survives_being_used_from_another_thread(store):
+    """FastAPI enters a sync generator dependency in one threadpool worker and then calls the
+    endpoint in another, so a connection pinned to its creating thread makes the web app fail
+    with a 500 whenever the two workers differ."""
+    store.upsert_jobs([make_job()])
+    seen: list[object] = []
+
+    def read() -> None:
+        try:
+            seen.append(len(store.jobs()))
+        except Exception as exc:  # the failure mode under test
+            seen.append(exc)
+
+    thread = threading.Thread(target=read)
+    thread.start()
+    thread.join(5)
+    assert seen == [1]

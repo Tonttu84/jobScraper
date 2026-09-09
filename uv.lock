@@ -1199,6 +1199,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -1215,6 +1216,7 @@ requires-dist = [
     { name = "lingua-language-detector", specifier = ">=2.0" },
     { name = "lxml", specifier = ">=5" },
     { name = "pandas", specifier = ">=2" },
+    { name = "playwright", marker = "extra == 'dev'", specifier = ">=1.45" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5" },

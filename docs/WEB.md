@@ -12,7 +12,7 @@ basic auth when sharing it.
 
 | table | purpose |
 |---|---|
-| `job_facets` | deterministic filter attributes per job: posting language, required/optional languages, stack tags, `web_dev` (benefits from Full Stack Open). Computed by `filter`/`report`, no AI. |
+| `job_facets` | deterministic filter attributes per job: posting language, required/optional languages, stack tags, `web_dev` (the posting expects web development, i.e. what Full Stack Open prepares you for). Computed by `filter`/`report`, no AI. |
 | `reports` / `report_items` | one row per `jobscraper report` run: counts, cost, prompt version, and the ordered items of each section (`ranked`, `prefilter`, `review`). |
 | `decisions` | `(job_id, user) → status, note, updated_at`. |
 
@@ -27,7 +27,7 @@ or repeated parameters.
 | method + path | purpose |
 |---|---|
 | `GET /api/meta` | latest report meta, facet values with counts (posting languages, required languages, stacks, countries, remote kinds, sources, sections), known users, decision statuses |
-| `GET /api/jobs` | list `JobView`s (see below) from a report, filtered and sorted by score desc. Params: `report_id` (default latest; if the DB has no report yet the view is built on the fly from the current state), `section`, `langs` (languages the viewer speaks; a job passes when its posting language is unknown or spoken, and every required language is spoken), `stack` (any-of), `web_dev` (`true`/`false`), `country`, `remote`, `source`, `min_score`, `q` (title/company substring), `user` (whose decisions to attach), `decision` (`none` or a status; requires `user`), `limit` (default 200), `offset`. Response `{ "total": n, "items": [...] }` |
+| `GET /api/jobs` | list `JobView`s (see below) from a report, filtered and sorted by score desc. Params: `report_id` (default latest; if the DB has no report yet the view is built on the fly from the current state), `section`, `langs` (languages the viewer speaks; a job passes when its posting language is unknown or spoken, and every required language is spoken), `stack` (any-of), `web_dev` (`true`/`false`; the UI sends `false` only, when the viewer says they have not done Full Stack Open, and omits it otherwise), `country`, `remote`, `source`, `min_score`, `q` (title/company substring), `user` (whose decisions to attach), `decision` (`none` or a status; requires `user`), `limit` (default 200), `offset`. Response `{ "total": n, "items": [...] }` |
 | `GET /api/jobs/{id}` | one `JobView` including `description`; `?user=` attaches that user's decision |
 | `PUT /api/jobs/{id}/decision` | body `{ "user": "...", "status": "applied", "note": "..." }` → stored `Decision` |
 | `DELETE /api/jobs/{id}/decision?user=...` | clear a decision → 204 |

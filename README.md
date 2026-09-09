@@ -87,8 +87,8 @@ version, so re-runs only pay for new jobs. Change `PROMPT_VERSION` in
 the page, and decisions (applied / skipped / interested / interview / rejected / offer) are
 stored per handle, so you each keep your own list over the same jobs. The filters are built for
 that too — tick the languages you actually speak (a posting drops out when it is written in, or
-requires, a language you did not tick) and flip on "Benefits from Full Stack Open" to see only
-the React/Node/TypeScript-ish roles. There is **no authentication**: keep it on localhost, or
+requires, a language you did not tick), and untick "I have done Full Stack Open" if you have
+not, which drops the React/Node/TypeScript-ish roles that expect web development. There is **no authentication**: keep it on localhost, or
 put it behind a tunnel (`cloudflared`, `tailscale funnel`) or a reverse proxy with basic auth
 before sharing the URL. See [docs/WEB.md](docs/WEB.md) for the API and the data model.
 

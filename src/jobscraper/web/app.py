@@ -1,8 +1,10 @@
 """The FastAPI application: a JSON API over one report plus the single-page UI.
 
-SQLite connections are bound to the thread that opened them and FastAPI runs sync endpoints in
-a threadpool, so every request gets its own :class:`~jobscraper.store.Store` through the
-``get_store`` dependency instead of sharing one connection.
+FastAPI runs sync endpoints in a threadpool, so every request gets its own
+:class:`~jobscraper.store.Store` through the ``get_store`` dependency instead of sharing one
+connection. The dependency is entered in one worker and the endpoint may run in another, so the
+Store opens its connection with ``check_same_thread=False``; each one still serves a single
+request at a time.
 """
 
 from __future__ import annotations

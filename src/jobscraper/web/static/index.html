@@ -110,7 +110,7 @@
     <div id="f-langs"></div>
 
     <h2>Stack</h2>
-    <label><input type="checkbox" id="f-webdev"> Benefits from Full Stack Open</label>
+    <label><input type="checkbox" id="f-webdev" checked> I have done Full Stack Open</label>
     <div class="chips" id="f-stacks" style="margin-top:6px"></div>
 
     <h2>Section</h2>
@@ -182,7 +182,9 @@ function query(extra) {
   var p = new URLSearchParams();
   var langs = checkedValues($("f-langs"));
   if (langs.length) { p.set("langs", langs.join(",")); }
-  if ($("f-webdev").checked) { p.set("web_dev", "true"); }
+  // A profile fact, not a filter: someone who has done Full Stack Open can take web jobs, so
+  // ticked means "no web_dev restriction" and unticked drops the postings that expect web work.
+  if (!$("f-webdev").checked) { p.set("web_dev", "false"); }
   var stacks = [];
   var chips = $("f-stacks").querySelectorAll(".chip.on");
   for (var i = 0; i < chips.length; i++) { stacks.push(chips[i].dataset.value); }
@@ -219,8 +221,10 @@ function cardHtml(job) {
   if (facets.posting_language && required.indexOf(facets.posting_language) < 0) {
     tags += '<span class="tag">' + esc(facets.posting_language) + "</span>";
   }
+  var spoken = checkedValues($("f-langs"));
   for (var j = 0; j < required.length; j++) {
-    tags += '<span class="tag req">' + esc(required[j]) + " required</span>";
+    var cls = spoken.indexOf(required[j]) < 0 ? "tag req" : "tag";
+    tags += '<span class="' + cls + '">' + esc(required[j]) + " required</span>";
   }
   var line = [job.company, job.location_raw, job.remote, job.source, "posted " + dateText(job.posted_at)]
     .filter(function (part) { return part; }).map(esc).join(" · ");
@@ -437,14 +441,21 @@ function wire() {
     $("hint").textContent = "";
     reload();
   });
-  ["f-webdev", "f-score", "f-decision"].forEach(function (id) {
+  $("f-webdev").checked = stored("jobscraper.fso", "1") === "1";
+  $("f-webdev").addEventListener("change", function () {
+    store("jobscraper.fso", $("f-webdev").checked ? "1" : "0");
+    reload();
+  });
+  ["f-score", "f-decision"].forEach(function (id) {
     $(id).addEventListener("change", reload);
   });
   $("f-q").addEventListener("input", reload);
+  $("f-score").addEventListener("input", reload);
   $("f-country").addEventListener("change", reload);
   $("f-remote").addEventListener("change", reload);
   $("f-langs").addEventListener("change", function () {
     store("jobscraper.langs", checkedValues($("f-langs")).join(","));
+    reload();
   });
   $("more").addEventListener("click", function () {
     STATE.offset = STATE.shown;
@@ -452,7 +463,7 @@ function wire() {
   });
   $("reset").addEventListener("click", function (event) {
     event.preventDefault();
-    $("f-webdev").checked = false;
+    // Profile facts (spoken languages, Full Stack Open) describe the viewer and survive a reset.
     $("f-score").value = "";
     $("f-q").value = "";
     $("f-decision").value = "";
