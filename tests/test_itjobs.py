@@ -2,9 +2,17 @@ from datetime import UTC, date, datetime
 from urllib.parse import parse_qsl, urlsplit
 
 import httpx
+import pytest
 from conftest import fixture_text
 
-from jobscraper.sources.itjobs import ITJobs, parse_detail, parse_pt_date, parse_search_html
+from jobscraper.http import SourceHTTPError
+from jobscraper.sources.itjobs import (
+    ITJobs,
+    has_next_page,
+    parse_detail,
+    parse_pt_date,
+    parse_search_html,
+)
 
 SEARCH = "/emprego"
 
@@ -93,10 +101,38 @@ def test_itjobs_pages_and_dedupes_by_url(make_ctx):
     ctx = make_ctx(ROUTES, options={**LISTING_ONLY, "max_pages": 3})
     ids = [j.source_id for j in ITJobs().fetch(ctx)]
 
-    # page 2 repeats 516329 and adds one new posting; page 3 is never requested (no new cards)
+    # page 2 repeats 516329 and adds one new posting; its pager has no "next", so page 3 —
+    # which the board would answer with a 404 — is never requested
     assert ids == ["516462", "516600", "516441", "516329", "516777"]
-    assert len(search_calls(ctx)) == 3
+    assert len(search_calls(ctx)) == 2
     assert query(search_calls(ctx)[1])["page"] == "2"
+
+
+def test_itjobs_a_404_past_the_last_page_ends_the_query_quietly(make_ctx):
+    """The board answers 404 for a page beyond the end of a search ("C++" has one page)."""
+    routes = {"page=2": lambda req: httpx.Response(404, text="Not Found"), SEARCH: "itjobs_search.html"}
+    ctx = make_ctx(routes, options={"queries": ["C++", "engenheiro de software"],
+                                    "max_pages": 3, "fetch_details": False})
+    ids = [j.source_id for j in ITJobs().fetch(ctx)]
+
+    assert ids == ["516462", "516600", "516441", "516329"]  # page 1 survives the dead page 2
+    calls = search_calls(ctx)
+    assert [query(c).get("page") for c in calls] == [None, "2", None]
+    assert query(calls[2])["q"] == "engenheiro de software"  # the next query is still fetched
+
+
+def test_itjobs_a_404_on_the_first_page_is_still_an_error(make_ctx):
+    routes = {SEARCH: lambda req: httpx.Response(404, text="Not Found")}
+    ctx = make_ctx(routes, options=LISTING_ONLY)
+    with pytest.raises(SourceHTTPError):
+        list(ITJobs().fetch(ctx))
+
+
+def test_itjobs_a_server_error_on_a_later_page_is_still_an_error(make_ctx):
+    routes = {"page=2": lambda req: httpx.Response(500, text="boom"), SEARCH: "itjobs_search.html"}
+    ctx = make_ctx(routes, options={**LISTING_ONLY, "max_pages": 3})
+    with pytest.raises(SourceHTTPError):
+        list(ITJobs().fetch(ctx))
 
 
 def test_itjobs_accepts_a_single_query_string(make_ctx):
@@ -171,6 +207,16 @@ def test_parse_search_html_reads_the_daily_date_box():
     assert cards[0]["work_model"] == "Híbrido" and cards[0]["location"] == "Coimbra"
     assert cards[3]["location"] is None  # the commented-out schedule icon is not read as text
     assert parse_search_html(None) == [] and parse_search_html("") == []
+
+
+def test_has_next_page_reads_the_pager_and_shrugs_when_there_is_none():
+    page1, page2 = fixture_text("itjobs_search.html"), fixture_text("itjobs_search_p2.html")
+    assert has_next_page(page1, 1) is True       # the pager links to page 2
+    assert has_next_page(page1, 2) is False      # ...and to nothing beyond it
+    assert has_next_page(page2, 2) is False      # the last page only links back
+    # no pager at all (or no page): unknown, so paging must not stop on this signal
+    assert has_next_page("<html><body>Sem resultados</body></html>", 1) is None
+    assert has_next_page(None, 1) is None
 
 
 THIN_CARDS = """

@@ -5,6 +5,10 @@ Search — ``GET https://www.itjobs.pt/emprego`` with the parameters of the site
 * ``q=<query>`` free text, ``page=N`` (1-based; the pager links look exactly like this),
   ``sort=date|relevance`` (the site defaults to ``relevance``; this adapter asks for ``date``
   so ``max_pages`` buys the *newest* ads rather than the most on-topic ones).
+* paging past the last page of a search is a **404**, not an empty result page (observed live
+  2026-09-09: ``?q=C%2B%2B&sort=date&page=2`` — that search has one page). So the pager block at
+  the foot of the results is read first (``has_next_page``) and a 404 on page 2+ is treated as
+  the end of that query rather than as an endpoint failure that would kill the other queries.
 * the sidebar facets are plain query parameters too and are exposed as options:
   ``location=<id>`` (14 Lisboa, 18 Porto, 8 Coimbra, … 29 "International"),
   ``work_model=0|1|2`` (Presencial | Remoto | Híbrido), ``type=1`` (Full-time), ``contract=N``.
@@ -67,7 +71,7 @@ from html import unescape
 from typing import Any
 from urllib.parse import urljoin
 
-from jobscraper.http import strip_html
+from jobscraper.http import SourceHTTPError, strip_html
 from jobscraper.models import Job
 from jobscraper.sources._common import COUNTRY_NAMES, guess_country, guess_remote, parse_date
 from jobscraper.sources.base import SourceContext, register, safe_records
@@ -92,6 +96,7 @@ _HYBRID_PT_RE = re.compile(r"h[íi]brid[oa]", re.I)
 _ONSITE_PT_RE = re.compile(r"presencial", re.I)
 _REL_RE = re.compile(r"h[áa]\s+(\d+)\s*(minuto|hora|dia|semana|m[êe]s|mes)", re.I)
 _DMY_RE = re.compile(r"(\d{1,2})\s*(?:de\s+)?([a-zç]+)\.?(?:\s*(?:de\s+)?(\d{4}))?", re.I)
+_PAGE_PARAM_RE = re.compile(r"[?&]page=(\d+)")
 
 
 def _text(node: Any) -> str | None:
@@ -207,6 +212,27 @@ def parse_search_html(html: str | None) -> list[dict[str, Any]]:
                 }
             )
     return cards
+
+
+def has_next_page(html: str | None, page: int) -> bool | None:
+    """Does the page's own pager link past ``page``? ``None`` when there is no pager to ask.
+
+    The pager is ``div.pagination-container > ul.pagination`` with one ``<li>`` per page — the
+    current one a bare ``<span>``, the others ``<a href="?q=…&page=N">`` plus a "Seguinte »"
+    arrow pointing at the same next page. Trusting it keeps us from asking for a page the board
+    does not have: itjobs.pt answers **404** past the last page of a search, not an empty list.
+    """
+    if not html:
+        return None
+    from bs4 import BeautifulSoup
+
+    pager = BeautifulSoup(html, "lxml").select_one("ul.pagination, .pagination-container")
+    if pager is None:
+        return None  # unknown (a "no results" page, or a markup change): let the 404 decide
+    return any(
+        (match := _PAGE_PARAM_RE.search(str(a.get("href")))) and int(match.group(1)) > page
+        for a in pager.select("a[href]")
+    )
 
 
 # ------------------------------------------------------------------------------ posting page
@@ -406,6 +432,23 @@ class ITJobs:
                 params[key] = value
         return params
 
+    def _search_html(self, ctx: SourceContext, query: str, page: int) -> str | None:
+        """One search page, or ``None`` when the board says that page is past the end.
+
+        A search with fewer pages than ``max_pages`` (the "C++" query has exactly one) answers
+        **404** for the pages that do not exist. Past page 1 that is the end of *this* query, not
+        an endpoint failure: it must not abort the source and take the other queries with it.
+        Page 1 is different — a 404 there means the search URL itself broke — and every other
+        error status still raises, whatever the page.
+        """
+        try:
+            return ctx.http.get_text(SEARCH_URL, params=self._params(ctx, query, page))
+        except SourceHTTPError as exc:
+            if page > 1 and exc.status == 404:
+                log.debug("%s: %r has no page %d (HTTP 404) — end of that search", self.name, query, page)
+                return None
+            raise
+
     def _iter_cards(self, ctx: SourceContext) -> Iterator[dict[str, Any]]:
         """Search cards for every query, deduped by posting URL. Lazy, so ``limit`` stops early."""
         queries = ctx.opt("queries", DEFAULT_QUERIES) or DEFAULT_QUERIES
@@ -416,7 +459,10 @@ class ITJobs:
 
         for query in queries:
             for page in range(1, max_pages + 1):
-                cards = parse_search_html(ctx.http.get_text(SEARCH_URL, params=self._params(ctx, query, page)))
+                html = self._search_html(ctx, query, page)
+                if html is None:
+                    break
+                cards = parse_search_html(html)
                 if not cards:
                     if page == 1:
                         log.warning("%s: no job cards for %r (no results, or markup change)", self.name, query)
@@ -426,6 +472,8 @@ class ITJobs:
                     break  # the page only repeated what we already have
                 seen.update(c["url"] for c in fresh)
                 yield from fresh
+                if has_next_page(html, page) is False:
+                    break  # the pager itself says this was the last page; don't earn a 404
 
 
 register(ITJobs())
