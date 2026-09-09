@@ -54,6 +54,13 @@ def _location_rule(loc: LocationPolicy) -> str:
     return text + ". Remote roles count only when their stated region overlaps those countries."
 
 
+def _weak_line(lang: LanguagePolicy) -> str:
+    """" Weak: sv (basic, …)" or nothing when the candidate has no weak languages."""
+    if not lang.weak:
+        return ""
+    return f" Weak: {', '.join(lang.weak)} (basic, not usable as the main working language)."
+
+
 def _policy_block(profile: Profile) -> str:
     sen = profile.seniority
     bullets = [
@@ -70,7 +77,7 @@ Name: {profile.name}
 Summary: {profile.summary.strip()}
 Skills: {", ".join(profile.skills)}
 Wants to learn / interests: {", ".join(profile.interests)}
-Working languages: {", ".join(profile.languages.ok)} (fluent). Weak: {", ".join(profile.languages.weak)} (basic, not usable as the main working language).
+Working languages: {", ".join(profile.languages.ok)} (fluent).{_weak_line(profile.languages)}
 
 WHAT COUNTS AS A MATCH
 """ + "\n".join(bullets) + "\n"

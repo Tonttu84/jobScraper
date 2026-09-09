@@ -87,3 +87,12 @@ def test_the_owners_wording_survives_the_move_into_yaml(settings):
     assert "AE" in text and "(work rights via employer)" in text
     rank = system_prompt("rank", settings.profile)
     assert "FULL CV" in rank and "Hive" in rank
+
+
+def test_no_weak_languages_means_no_weak_line():
+    profile = senior_profile()
+    assert "Weak: es" in system_prompt("prefilter", profile)
+    profile.languages.weak = []
+    text = system_prompt("prefilter", profile)
+    assert "Weak:" not in text
+    assert "Working languages: pt, en (fluent)." in text
