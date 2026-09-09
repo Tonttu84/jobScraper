@@ -101,7 +101,7 @@ def test_job_meta_is_none_for_unknown_job(store):
 
 
 def test_filter_results_round_trip_and_status_filter(store):
-    keep = FilterResult(job_id="a", status="keep", signals={"seniority": "entry_by_title"},
+    keep = FilterResult(job_id="a", status="keep", signals={"seniority": "kept_by_title"},
                         location_tier=1)
     review = FilterResult(job_id="b", status="review", reasons=["asks for 3 years"],
                           location_tier=2)
@@ -110,7 +110,7 @@ def test_filter_results_round_trip_and_status_filter(store):
 
     everything = store.filter_results()
     assert set(everything) == {"a", "b", "c"}
-    assert everything["a"].signals == {"seniority": "entry_by_title"}
+    assert everything["a"].signals == {"seniority": "kept_by_title"}
     assert everything["a"].location_tier == 1
     assert everything["b"].reasons == ["asks for 3 years"]
 

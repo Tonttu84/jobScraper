@@ -16,7 +16,7 @@ from jobscraper.filters.language import detect_language, find_language_requireme
 from jobscraper.models import FilterResult, Job
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-09-09.1"
+RULES_VERSION = "2026-09-09.2"
 
 _YEARS_RE = re.compile(
     r"(?:(?:at least|minimum|min\.?|minimum of|over|more than|vähintään|yli|mindestens|mind\.|über|"
@@ -121,10 +121,10 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
     keep_sen = _compile_terms(sen.keep_title_terms)
     drop_label = _compile_terms(sen.drop_label_terms)
     if keep_sen and keep_sen.search(title):
-        signals["seniority"] = "entry_by_title"
+        signals["seniority"] = "kept_by_title"
     elif drop_sen and drop_sen.search(title):
         reasons.append(f"title level excluded by profile: {title!r}")
-        signals["seniority"] = "senior_by_title"
+        signals["seniority"] = "excluded_by_title"
     else:
         signals["seniority"] = "unlabeled"
         # Boards label seniority separately from the title (justjoin "mid", nofluffjobs "Mid",
@@ -135,12 +135,12 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
             (drop_sen and drop_sen.search(label)) or (drop_label and drop_label.search(label))
         ):
             reasons.append(f"seniority label {label!r} excluded by profile")
-            signals["seniority"] = "senior_by_label"
+            signals["seniority"] = "excluded_by_label"
     years = _years_required(text)
     if years is not None:
         signals["years_required"] = years
         if years > sen.max_years_review:
-            if signals["seniority"] != "entry_by_title":
+            if signals["seniority"] != "kept_by_title":
                 reasons.append(f"asks for {years}+ years of experience")
             else:
                 review.append(f"entry-level title but mentions {years} years")

@@ -58,7 +58,7 @@ def test_junior_in_helsinki_is_kept(settings):
     assert res.status == "keep"
     assert res.reasons == []
     assert res.location_tier == 1
-    assert res.signals["seniority"] == "entry_by_title"
+    assert res.signals["seniority"] == "kept_by_title"
 
 
 def test_bare_junior_developer_title_passes_role_gate(settings):
@@ -66,7 +66,7 @@ def test_bare_junior_developer_title_passes_role_gate(settings):
     res = evaluate(job, settings.profile)
     assert res.status == "keep"
     assert res.location_tier == 1
-    assert res.signals["seniority"] == "entry_by_title"
+    assert res.signals["seniority"] == "kept_by_title"
 
 
 def test_senior_title_is_dropped(settings):
@@ -74,7 +74,7 @@ def test_senior_title_is_dropped(settings):
     res = evaluate(job, settings.profile)
     assert res.status == "drop"
     assert any("senior" in r.lower() for r in res.reasons)
-    assert res.signals["seniority"] == "senior_by_title"
+    assert res.signals["seniority"] == "excluded_by_title"
 
 
 def test_three_years_experience_is_dropped(settings):
@@ -130,12 +130,12 @@ def test_a_senior_profile_inverts_the_seniority_terms(settings):
     })
     junior = evaluate(make_job(title="Junior Developer", country="FI"), senior)
     assert junior.status == "drop"
-    assert junior.signals["seniority"] == "senior_by_title"
+    assert junior.signals["seniority"] == "excluded_by_title"
     assert any("excluded by profile" in r for r in junior.reasons)
 
     kept = evaluate(make_job(title="Senior C++ Engineer", country="FI"), senior)
     assert kept.status == "keep"
-    assert kept.signals["seniority"] == "entry_by_title"
+    assert kept.signals["seniority"] == "kept_by_title"
 
     labelled = evaluate(make_job(title="C++ Engineer", seniority_raw="Junior", country="FI"), senior)
     assert labelled.status == "drop"
@@ -143,6 +143,37 @@ def test_a_senior_profile_inverts_the_seniority_terms(settings):
     # keep_title_terms still win over an excluded label, as they do for the owner's profile
     assert evaluate(make_job(title="Senior C++ Engineer", seniority_raw="Junior", country="FI"),
                     senior).status != "drop"
+
+
+def test_seniority_signal_names_are_policy_neutral(settings):
+    """The signal reaches the AI prompt verbatim, so it must not name a seniority level.
+
+    A senior profile keeps "Senior C++ Engineer" via ``keep_title_terms``; calling that
+    ``entry_by_title`` told the AI stage the opposite of the truth.
+    """
+    senior = settings.profile.model_copy(update={
+        "seniority": SeniorityPolicy(max_years_keep=15, max_years_review=20,
+                                     drop_title_terms=["junior", "intern", "trainee"],
+                                     keep_title_terms=["senior"],
+                                     drop_label_terms=["junior"]),
+    })
+    assert evaluate(make_job(title="Senior C++ Engineer", country="FI"),
+                    senior).signals["seniority"] == "kept_by_title"
+    assert evaluate(make_job(title="Junior C++ Engineer", country="FI"),
+                    senior).signals["seniority"] == "excluded_by_title"
+    assert evaluate(make_job(title="C++ Engineer", seniority_raw="Junior", country="FI"),
+                    senior).signals["seniority"] == "excluded_by_label"
+
+    # ... and the owner's junior policy reports the same names for the mirror-image cases.
+    junior = settings.profile
+    assert evaluate(make_job(title="Junior C++ Engineer", country="FI"),
+                    junior).signals["seniority"] == "kept_by_title"
+    assert evaluate(make_job(title="Senior C++ Engineer", country="FI"),
+                    junior).signals["seniority"] == "excluded_by_title"
+    assert evaluate(make_job(title="C++ Engineer", seniority_raw="Mid", country="FI"),
+                    junior).signals["seniority"] == "excluded_by_label"
+    assert evaluate(make_job(title="C++ Engineer", country="FI"),
+                    junior).signals["seniority"] == "unlabeled"
 
 
 def test_empty_drop_label_terms_never_drop_on_a_label():
@@ -282,7 +313,7 @@ def test_entry_level_compound_titles_are_kept(settings, title, country):
     job = make_job(title=title, country=country)
     res = evaluate(job, settings.profile)
     assert res.status == "keep"
-    assert res.signals["seniority"] == "entry_by_title"
+    assert res.signals["seniority"] == "kept_by_title"
 
 
 # ------------------------------------------------------------------ dedupe
