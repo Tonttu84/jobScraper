@@ -128,6 +128,11 @@ uv run python scripts/ai_batches.py import rank
 uv run jobscraper report
 ```
 
+Every action takes `--profile NAME` (or `$JOBSCRAPER_PROFILE`), like the CLI: config, database and
+exports all move under that candidate's directories. `export` also takes `--sample N`, which keeps
+every N-th candidate (positions 0, N, 2N, … after `--top`), so `export prefilter --sample 20` is a
+"1 in 20" sanity run through the whole loop before committing a few hundred postings to it.
+
 Each verdict line is `{"job_id", "relevant", "score", "language_ok", "seniority_ok", "location_ok",
 "summary", "concerns"[, "why_apply"]}`. Import validates against the stage schema and stores the rows
 under the current `PROMPT_VERSION`, so `report` renders them like an API run. On 2026-09-07 the cheap

@@ -1,10 +1,13 @@
 """Run the AI stages without the API: export prompt batches for subagents, import their verdicts.
 
     python scripts/ai_batches.py hydrate linkedin [--top 120] [--max-fetch 120]
-    python scripts/ai_batches.py export prefilter [--chunk 100] [--max-chars 1500] [--all]
+    python scripts/ai_batches.py export prefilter [--chunk 100] [--max-chars 1500] [--all] [--sample 20]
     python scripts/ai_batches.py import prefilter|rank
-    python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60]
+    python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60] [--sample 20]
     python scripts/ai_batches.py boost
+
+Every action takes ``--profile NAME`` (or ``$JOBSCRAPER_PROFILE``), the same switch the CLI has:
+it moves the config, the database and the exports into that candidate's own directories.
 
 Intended sequence for one round:
 ``hydrate linkedin`` → ``export prefilter`` → (Sonnet subagent) → ``import prefilter`` →
@@ -20,6 +23,10 @@ schemas and stores them as ``AIVerdict`` rows, so ``jobscraper report`` renders 
 the current prompt version, so after a hydration round only the cleared rows go back to Sonnet
 (``--all`` forces the old export-everything behaviour).
 
+``--sample N`` thins whatever the stage was going to export down to every N-th candidate
+(positions 0, N, 2N, … of the ordered list, after ``--top``), so one round of the whole loop can be
+tried on a handful of postings before committing a few hundred to it.
+
 Descriptions: the scrape leaves LinkedIn rows title-only (per-job fetches are slow and
 rate-limited). ``export rank`` tops up the few dozen jobs it is about to rank. ``hydrate
 linkedin`` goes wider and earlier: it walks the best ``--top`` prefilter survivors, fetches the
@@ -34,12 +41,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from jobscraper import config  # noqa: E402
 from jobscraper.ai.prompts import PROMPT_VERSION, job_prompt, system_prompt  # noqa: E402
 from jobscraper.ai.schemas import Ranking, Screening  # noqa: E402
 from jobscraper.config import load_settings, paths  # noqa: E402
@@ -188,7 +197,8 @@ def hydrate_linkedin(store: Store, todo: list[Job], max_fetch: int) -> None:
     print(f"hydrated {hydrated}/{len(batch)} linkedin descriptions")
 
 
-def export(stage: str, chunk: int, max_chars: int, top: int, max_fetch: int = 0, export_all: bool = False) -> None:
+def export(stage: str, chunk: int, max_chars: int, top: int, max_fetch: int = 0, export_all: bool = False,
+           sample: int = 1) -> None:
     settings = load_settings()
     store = Store()
     jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
@@ -206,6 +216,11 @@ def export(stage: str, chunk: int, max_chars: int, top: int, max_fetch: int = 0,
         already = set(store.verdicts("rank", PROMPT_VERSION))
         ranked = _survivors(store, settings, filters)
         todo = [jobs[v.job_id] for v in ranked[:top] if v.job_id in jobs and v.job_id not in already]
+    candidates = len(todo)
+    if sample > 1:
+        todo = todo[::sample]  # positions 0, N, 2N, ... of the stage's ordered candidate list
+    if stage == "rank":
+        # After sampling: a job that is not going to be exported is not worth a description fetch.
         hydrate_linkedin(store, todo, max_fetch)
     out = _out_dir(stage)
     for old in out.glob("chunk-*.json"):
@@ -215,7 +230,8 @@ def export(stage: str, chunk: int, max_chars: int, top: int, max_fetch: int = 0,
     for n, start in enumerate(range(0, len(todo), chunk), start=1):
         batch = [{"job_id": j.id, "prompt": job_prompt(j, filters.get(j.id), max_chars)} for j in todo[start : start + chunk]]
         (out / f"chunk-{n:02d}.json").write_text(json.dumps(batch, ensure_ascii=False, indent=0), encoding="utf-8")
-    print(f"{stage}: {len(todo)} jobs → {n} chunks of ≤{chunk} in {out}")
+    sampled = f" (1 in {sample} of {candidates} candidates)" if sample > 1 else f" of {candidates} candidates"
+    print(f"{stage}: {len(todo)} jobs{sampled} → {n} chunks of ≤{chunk} in {out}")
 
 
 def import_verdicts(stage: str) -> None:
@@ -272,7 +288,15 @@ def main() -> None:
     ap.add_argument("--top", type=int, default=None, help="export rank: 60; hydrate linkedin: 120")
     ap.add_argument("--max-fetch", type=int, default=None,
                     help="how many missing LinkedIn descriptions to fetch (0 disables); rank: 60, hydrate: 120")
+    ap.add_argument("--sample", type=int, default=1, metavar="N",
+                    help="export only: keep every N-th candidate (positions 0, N, 2N, ... after --top); 1 = all")
+    ap.add_argument("--profile", default=os.environ.get("JOBSCRAPER_PROFILE") or None, metavar="NAME",
+                    help="candidate profile: config/profiles/NAME, data/profiles/NAME (default $JOBSCRAPER_PROFILE)")
     a = ap.parse_args()
+    if a.sample < 1:
+        ap.error("--sample needs a positive integer")
+    # Before anything opens a Store or reads settings: every directory below is profile-relative.
+    config.use_profile(a.profile)
     if a.action == "boost":
         boost()
         return
@@ -286,7 +310,8 @@ def main() -> None:
     if a.action == "export":
         chunk = a.chunk or (100 if a.stage == "prefilter" else 15)
         max_chars = a.max_chars or (1500 if a.stage == "prefilter" else 6000)
-        export(a.stage, chunk, max_chars, a.top or 60, 60 if a.max_fetch is None else a.max_fetch, a.all)
+        export(a.stage, chunk, max_chars, a.top or 60, 60 if a.max_fetch is None else a.max_fetch, a.all,
+               a.sample)
     else:
         import_verdicts(a.stage)
 

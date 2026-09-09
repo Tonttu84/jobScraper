@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from jobscraper import config
 from jobscraper import store as store_mod
 from jobscraper.ai.prompts import PROMPT_VERSION
 from jobscraper.models import AIVerdict, FilterResult, Job
@@ -526,3 +527,182 @@ def test_boost_without_a_single_ranked_job(data_dir, monkeypatch, capsys):
 def test_boost_without_a_hydration_log(data_dir, monkeypatch, capsys):
     _run(monkeypatch, "boost")
     assert "no hydration" in capsys.readouterr().out.lower()
+
+
+# ------------------------------------------------------------------ named profiles
+# The script has no Typer callback of its own, so `--profile NAME` (or $JOBSCRAPER_PROFILE) has to
+# switch `jobscraper.config` before anything opens a Store or reads settings.
+
+PROFILE_YAML = """\
+name: Felipe
+summary: A second candidate.
+prompt:
+  role_label: embedded systems engineer
+"""
+PROFILE_SOURCES_YAML = "sources:\n  arbeitnow:\n    enabled: true\n"
+
+
+@pytest.fixture
+def profile_dirs(tmp_path, monkeypatch):
+    """Base config/data under tmp_path plus one complete profile directory named 'x'."""
+    monkeypatch.setenv("JOBSCRAPER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("JOBSCRAPER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(store_mod, "DB_OVERRIDE", None)
+    monkeypatch.delenv("JOBSCRAPER_DB", raising=False)
+    d = tmp_path / "config" / "profiles" / "x"
+    d.mkdir(parents=True)
+    (d / "profile.yaml").write_text(PROFILE_YAML, encoding="utf-8")
+    (d / "sources.yaml").write_text(PROFILE_SOURCES_YAML, encoding="utf-8")
+    return tmp_path
+
+
+def _seed_in_profile(name: str, jobs: list[Job], statuses: list[str]) -> None:
+    """Seed the profile's own database, then leave the process without an active profile."""
+    config.use_profile(name)
+    try:
+        _seed(jobs, statuses)
+    finally:
+        config.use_profile(None)
+
+
+def test_export_uses_the_named_profiles_data_dir_and_prompts(profile_dirs, monkeypatch, capsys):
+    jobs = [_job(1, "Junior Go Developer"), _job(2, "Graduate Backend Engineer")]
+    _seed_in_profile("x", jobs, ["keep", "keep"])
+
+    _run(monkeypatch, "export", "prefilter", "--profile", "x")
+
+    out = profile_dirs / "data" / "profiles" / "x" / "exports" / "ai" / "prefilter"
+    assert (out / "system.txt").read_text(encoding="utf-8").startswith(
+        "You are screening job postings for a specific embedded systems engineer."
+    )
+    assert {e["job_id"] for e in _chunk_entries(out)} == {j.id for j in jobs}
+    assert not (profile_dirs / "data" / "exports").exists()  # nothing under the default profile
+    assert "2 jobs" in capsys.readouterr().out
+
+
+def test_the_profile_can_come_from_the_environment(profile_dirs, monkeypatch, capsys):
+    _seed_in_profile("x", [_job(1, "Junior Go Developer")], ["keep"])
+    monkeypatch.setenv("JOBSCRAPER_PROFILE", "x")
+
+    _run(monkeypatch, "export", "prefilter")
+
+    out = profile_dirs / "data" / "profiles" / "x" / "exports" / "ai" / "prefilter"
+    assert len(_chunk_entries(out)) == 1
+    assert "1 jobs" in capsys.readouterr().out
+
+
+def test_an_unknown_profile_is_a_clear_error(profile_dirs, monkeypatch):
+    with pytest.raises(config.ProfileError) as exc:
+        _run(monkeypatch, "export", "prefilter", "--profile", "ghost")
+    assert "ghost" in str(exc.value)
+
+
+def test_import_and_boost_also_follow_the_profile(profile_dirs, monkeypatch, capsys):
+    job = _job(1, "Junior Go Developer")
+    _seed_in_profile("x", [job], ["keep"])
+    _run(monkeypatch, "export", "prefilter", "--profile", "x")
+    capsys.readouterr()
+
+    verdicts = profile_dirs / "data" / "profiles" / "x" / "exports" / "ai" / "prefilter" / "verdicts"
+    verdicts.mkdir(parents=True, exist_ok=True)
+    (verdicts / "chunk-01.jsonl").write_text(
+        json.dumps({"job_id": job.id, "relevant": True, "score": 72, "language_ok": True,
+                    "seniority_ok": True, "location_ok": True, "summary": "fits"}) + "\n",
+        encoding="utf-8",
+    )
+
+    _run(monkeypatch, "import", "prefilter", "--profile", "x")
+    assert "imported 1 verdicts" in capsys.readouterr().out
+
+    config.use_profile("x")
+    try:
+        store = store_mod.Store()
+        try:
+            assert list(store.verdicts("prefilter", PROMPT_VERSION)) == [job.id]
+        finally:
+            store.close()
+    finally:
+        config.use_profile(None)
+
+    _run(monkeypatch, "boost", "--profile", "x")
+    out = capsys.readouterr().out
+    assert "no hydration log yet" in out
+    assert str(profile_dirs / "data" / "profiles" / "x") in out
+
+
+def test_hydrate_follows_the_profile(profile_dirs, monkeypatch, capsys):
+    li = _bare("linkedin", 91, "https://www.linkedin.com/jobs/view/91")
+    config.use_profile("x")
+    try:
+        _seed([li], ["keep"])
+        _prefilter_scores([li], [90])
+    finally:
+        config.use_profile(None)
+    monkeypatch.setattr(ai_batches, "fetch_description", lambda http, url: "Go, Kubernetes, English.")
+
+    _run(monkeypatch, "hydrate", "linkedin", "--profile", "x")
+
+    log = profile_dirs / "data" / "profiles" / "x" / "exports" / "ai" / "hydration.jsonl"
+    assert [json.loads(line)["job_id"] for line in log.read_text(encoding="utf-8").splitlines()] == [li.id]
+    assert "hydrated 1/1 linkedin descriptions" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------------ --sample
+# A "1 in N" sanity run: keep positions 0, N, 2N, ... of the stage's ordered candidate list, so a
+# handful of postings can be pushed through the whole subagent loop before committing to it.
+
+
+def test_export_prefilter_sample_keeps_every_nth_candidate(data_dir, monkeypatch, capsys):
+    jobs = [_job(n, f"Junior Developer {n:02d}") for n in range(45)]  # titles sort like the index
+    _seed(jobs, ["keep"] * 45)
+
+    _run(monkeypatch, "export", "prefilter", "--sample", "20")
+
+    out = data_dir / "exports" / "ai" / "prefilter"
+    assert [e["job_id"] for e in _chunk_entries(out)] == [jobs[0].id, jobs[20].id, jobs[40].id]
+    printed = capsys.readouterr().out
+    assert "3 jobs" in printed
+    assert "45" in printed  # how many candidates the 3 were sampled out of
+
+
+def test_export_prefilter_sample_one_exports_everything(data_dir, monkeypatch, capsys):
+    jobs = [_job(n, f"Junior Developer {n:02d}") for n in range(5)]
+    _seed(jobs, ["keep"] * 5)
+
+    _run(monkeypatch, "export", "prefilter", "--sample", "1")
+
+    assert len(_chunk_entries(data_dir / "exports" / "ai" / "prefilter")) == 5
+    assert "5 jobs" in capsys.readouterr().out
+
+
+def test_export_rank_sample_applies_after_top(data_dir, monkeypatch, capsys):
+    jobs = [_job(n, f"Junior Developer {n:02d}", LONG_DESCRIPTION) for n in range(10)]
+    _seed(jobs, ["keep"] * 10)
+    _prefilter_scores(jobs, list(range(99, 89, -1)))  # jobs[0] best, jobs[9] worst
+
+    _run(monkeypatch, "export", "rank", "--top", "6", "--sample", "3")
+
+    entries = _chunk_entries(data_dir / "exports" / "ai" / "rank")
+    assert [e["job_id"] for e in entries] == [jobs[0].id, jobs[3].id]  # positions 0 and 3 of the top 6
+    printed = capsys.readouterr().out
+    assert "2 jobs" in printed and "6" in printed
+
+
+def test_export_rank_sample_bounds_the_description_fetches(data_dir, monkeypatch, capsys):
+    """Sampling happens before hydration: a job that is not exported is not fetched either."""
+    jobs = [_bare("linkedin", n, f"https://www.linkedin.com/jobs/view/{n}") for n in range(101, 105)]
+    _seed(jobs, ["keep"] * 4)
+    _prefilter_scores(jobs, [93, 92, 91, 90])
+
+    fetched: list[str] = []
+
+    def fake_fetch(http, url):
+        fetched.append(url)
+        return "Fetched description text."
+
+    monkeypatch.setattr(ai_batches, "fetch_description", fake_fetch)
+
+    _run(monkeypatch, "export", "rank", "--top", "4", "--sample", "2")
+
+    assert fetched == [jobs[0].url, jobs[2].url]
+    assert "2 jobs" in capsys.readouterr().out
