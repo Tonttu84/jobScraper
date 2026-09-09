@@ -244,3 +244,15 @@ def test_netempregos_reads_the_portuguese_remote_wording(text, expected):
     job = parse_detail(None, "https://www.net-empregos.com/3/z/", {"title": text})
     assert job.remote == expected
     assert job.country == "PT"
+
+
+def test_get_html_decodes_windows_1252_when_utf8_fails():
+    """The site's bytes are Windows-1252 (a superset of ISO-8859-1): 0x96 is an en dash, not a
+    control character, and accents still round-trip."""
+    from conftest import FakeHttp
+
+    from jobscraper.sources.netempregos import get_html
+
+    raw = "Engineer III/IV – Smart Connected · Sénior".encode("cp1252")
+    http = FakeHttp({"net-empregos.com/x": lambda req: httpx.Response(200, content=raw, headers={"content-type": "text/html"})})
+    assert get_html(http, "https://www.net-empregos.com/x") == "Engineer III/IV – Smart Connected · Sénior"

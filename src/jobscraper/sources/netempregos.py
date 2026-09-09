@@ -57,7 +57,7 @@ UTC). :func:`parse_pt_date` reads both; ``_common.parse_date`` reads neither.
 Encoding: the server answers ``Content-Type: text/html`` with **no charset** while the bytes
 are ISO-8859-1 (the document's own ``<meta>`` says so). httpx then decodes as UTF-8 and every
 Portuguese accent turns into U+FFFD, which is why :func:`get_html` decodes the raw bytes
-itself — UTF-8 first (so fixtures and the on-disk HTTP cache still work), ISO-8859-1 when that
+itself — UTF-8 first (so fixtures and the on-disk HTTP cache still work), Windows-1252 when that
 fails.
 
 Location: a posting open to the whole country writes the placeholder ``( Todas as Zonas )``
@@ -83,7 +83,7 @@ log = logging.getLogger(__name__)
 
 BASE = "https://www.net-empregos.com/"
 SEARCH_URL = "https://www.net-empregos.com/pesquisa-empregos.asp"
-FALLBACK_ENCODING = "iso-8859-1"
+FALLBACK_ENCODING = "cp1252"  # superset of ISO-8859-1: 0x80-0x9F become dashes and quotes, not control chars
 
 # The ``categoria`` select, Informática rows only (read from the live form 2026-09-09).
 IT_CATEGORIES: dict[str, int] = {
