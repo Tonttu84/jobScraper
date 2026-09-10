@@ -115,6 +115,7 @@ class FacetsView(BaseModel):
     languages_optional: list[str] = Field(default_factory=list)
     stacks: list[str] = Field(default_factory=list)
     web_dev: bool = False
+    evergreen: bool = False
 
 
 class DecisionView(BaseModel):
@@ -147,6 +148,8 @@ class JobView(BaseModel):
     #: Lifted out of ``filter.signals`` so a card can show the closing date without digging.
     deadline: str | None = None
     closes_in_days: int | None = None
+    #: Lifted out of ``facets`` for the same reason: the card tags it without digging.
+    evergreen: bool = False
     prefilter: VerdictView | None = None
     rank: VerdictView | None = None
     refine: VerdictView | None = None
@@ -202,6 +205,10 @@ class Meta(BaseModel):
     countries: dict[str, int] = Field(default_factory=dict)
     remote: dict[str, int] = Field(default_factory=dict)
     sources: dict[str, int] = Field(default_factory=dict)
+    evergreen: int = Field(
+        0, description="Postings that advertise a pipeline rather than a live vacancy, for the "
+                       "count next to the sidebar's 'hide evergreen adverts' box",
+    )
     users: list[str] = Field(default_factory=list)
     decision_statuses: list[str] = Field(default_factory=list)
     ui: UIConfig = Field(default_factory=UIConfig)
@@ -304,7 +311,7 @@ def _facets_view(view: View, job: Job) -> FacetsView:
     return FacetsView(posting_language=f.posting_language,
                       languages_required=list(f.languages_required),
                       languages_optional=list(f.languages_optional),
-                      stacks=list(f.stacks), web_dev=f.web_dev)
+                      stacks=list(f.stacks), web_dev=f.web_dev, evergreen=f.evergreen)
 
 
 def _job_view(view: View, job: Job, section: str | None, position: int | None,
@@ -315,6 +322,7 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
     # The AI score the list orders by: the two passes averaged, else whichever one spoke.
     score = effective_score(rank, refine)
     decision = view.decisions.get(job.id)
+    facets = _facets_view(view, job)
     fields: dict[str, Any] = {
         "id": job.id,
         "title": job.title,
@@ -337,10 +345,11 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
                              reasons=list(fr.reasons), signals=dict(fr.signals)) if fr else None,
         "deadline": fr.signals.get("deadline") if fr else None,
         "closes_in_days": closes_in(fr),
+        "evergreen": facets.evergreen,
         "prefilter": _verdict_view(pre),
         "rank": _verdict_view(rank),
         "refine": _verdict_view(refine),
-        "facets": _facets_view(view, job),
+        "facets": facets,
         "decision": DecisionView(status=decision.status, note=decision.note,
                                  updated_at=decision.updated_at) if decision else None,
     }
@@ -377,13 +386,16 @@ def _codes(values: list[str] | None, *, upper: bool = False) -> list[str]:
 
 def _matches(view: View, job: JobView, *, langs: list[str], stack: list[str], section: list[str],
              country: list[str], remote: list[str], source: list[str], web_dev: bool | None,
-             min_score: int | None, q: str | None, decision: list[str]) -> bool:
+             evergreen: bool | None, min_score: int | None, q: str | None,
+             decision: list[str]) -> bool:
     facets = job.facets
     if langs and not view.facets[job.id].language_ok(langs):
         return False
     if stack and not set(stack) & set(facets.stacks):
         return False
     if web_dev is not None and facets.web_dev is not web_dev:
+        return False
+    if evergreen is not None and facets.evergreen is not evergreen:
         return False
     if section and (job.section or "") not in section:
         return False
@@ -464,6 +476,7 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
             countries=_counter(j.country for j in jobs),
             remote=_counter(j.remote for j in jobs),
             sources=_counter(j.source for j in jobs),
+            evergreen=sum(1 for j in jobs if j.evergreen),
             users=store.decision_users(),
             decision_statuses=DECISION_STATUSES,
             ui=ui,
@@ -482,6 +495,7 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
         remote: list[str] | None = Query(None),
         source: list[str] | None = Query(None),
         web_dev: bool | None = None,
+        evergreen: bool | None = None,
         min_score: int | None = None,
         q: str | None = None,
         user: str | None = None,
@@ -497,8 +511,8 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
             j for j in _sorted_views(view)
             if _matches(view, j, langs=_codes(langs), stack=_codes(stack), section=_codes(section),
                         country=_codes(country, upper=True), remote=_codes(remote),
-                        source=_codes(source), web_dev=web_dev, min_score=min_score, q=q,
-                        decision=decisions)
+                        source=_codes(source), web_dev=web_dev, evergreen=evergreen,
+                        min_score=min_score, q=q, decision=decisions)
         ]
         return JobList(total=len(jobs), items=jobs[offset:offset + limit])
 

@@ -63,6 +63,17 @@ def test_a_posting_without_a_deadline_adds_nothing_to_the_signal_line():
     assert "deadline" not in job_prompt(_job(), fr, 400)
 
 
+def test_the_prompt_names_an_evergreen_advert_and_the_phrase_that_gave_it_away():
+    """Both AI passes have to discount a pipeline advert the same way, or scores swing."""
+    fr = FilterResult(job_id="x", status="keep", signals={"evergreen": "talent pool"})
+    assert 'evergreen advert ("talent pool")' in job_prompt(_job(), fr, 400)
+
+
+def test_a_live_vacancy_says_nothing_about_evergreen_adverts():
+    fr = FilterResult(job_id="x", status="keep", signals={"years_required": 3})
+    assert "evergreen" not in job_prompt(_job(), fr, 400)
+
+
 def test_judge_maps_structured_output(stage, monkeypatch):
     calls = {}
 

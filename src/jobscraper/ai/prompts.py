@@ -174,6 +174,13 @@ def _deadline_note(signals: dict) -> str:
     return f"; deadline: {deadline} (" + ("today" if days == 0 else f"in {days} days") + ")"
 
 
+def _evergreen_note(signals: dict) -> str:
+    """Spelled out for the same reason: a pipeline advert has to be discounted the same amount
+    by both AI passes, or the shortlist swings on which pass happened to notice the wording."""
+    cue = signals.get("evergreen")
+    return f'; evergreen advert ("{cue}")' if cue else ""
+
+
 def job_prompt(job: Job, fr: FilterResult | None, max_chars: int) -> str:
     desc = (job.description or "")[:max_chars]
     if job.description and len(job.description) > max_chars:
@@ -190,7 +197,8 @@ def job_prompt(job: Job, fr: FilterResult | None, max_chars: int) -> str:
     ]
     if fr:
         meta.append(f"Rule-filter status: {fr.status}; notes: {'; '.join(fr.reasons) or '-'}")
-        meta.append(f"Detected signals: {fr.signals}{_deadline_note(fr.signals)}")
+        meta.append(f"Detected signals: {fr.signals}{_deadline_note(fr.signals)}"
+                    f"{_evergreen_note(fr.signals)}")
     return "JOB POSTING\n" + "\n".join(meta) + "\n\nDESCRIPTION\n" + (desc or "(no description available; judge from the title)")
 
 

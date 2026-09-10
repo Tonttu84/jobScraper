@@ -351,6 +351,28 @@ def test_compute_all_returns_one_facets_per_job() -> None:
     assert "data" in facets[2].stacks
 
 
+def test_compute_all_marks_the_evergreen_adverts() -> None:
+    """A pipeline advert is a facet the UI can hide, not a rule the filter may drop on."""
+    jobs = [
+        make_job("Register Your Interest", "We hire graduates every autumn.", source_id="1"),
+        make_job("Junior Developer", "We are building a talent pool for future openings.",
+                 source_id="2"),
+        make_job("Junior Developer", "A live vacancy on our platform team.", source_id="3"),
+    ]
+    # the first job's verdict comes from the rule filter, the other two are re-derived from text
+    fr = FilterResult(job_id=jobs[0].id, status="keep",
+                      signals={"evergreen": "register your interest"})
+    facets = compute_all(jobs, {fr.job_id: fr})
+    assert [f.evergreen for f in facets] == [True, True, False]
+
+
+def test_a_filter_result_that_saw_no_cue_settles_it() -> None:
+    """The rules already read the whole posting; their silence is an answer, not a gap."""
+    job = make_job("Junior Developer", "We are building a talent pool.", source_id="4")
+    fr = FilterResult(job_id=job.id, status="keep", signals={"evergreen": None})
+    assert compute_facets(job, fr).evergreen is False
+
+
 def test_compute_all_with_no_filter_results() -> None:
     jobs = [make_job("Rust Engineer", "We write Rust.", source_id="9")]
     facets = compute_all(jobs, {})

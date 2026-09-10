@@ -60,6 +60,8 @@
   .tag.req { border-color: #fca5a5; color: #b91c1c; background: #fef2f2; }
   /* A closing date within the week: a deadline the reader has to act on, not a property of the job. */
   .tag.urgent { border-color: #fdba74; color: #c2410c; background: #fff7ed; }
+  /* Not a live vacancy. Deliberately grey: a caveat to read, not an alarm to act on. */
+  .tag.evergreen { border-color: #d4d4d8; color: #52525b; background: #f4f4f5; }
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
     padding: 12px 14px; margin-bottom: 10px;
@@ -136,6 +138,9 @@
 
     <h2>Section</h2>
     <div id="f-sections"></div>
+
+    <h2>Not a live vacancy</h2>
+    <label><input type="checkbox" id="f-evergreen"> <span id="f-evergreen-label">hide evergreen adverts</span></label>
 
     <h2>Country</h2>
     <select id="f-country" multiple></select>
@@ -265,6 +270,9 @@ function query(extra) {
   if (stacks.length) { p.set("stack", stacks.join(",")); }
   var sections = checkedValues($("f-sections"));
   if (sections.length) { p.set("section", sections.join(",")); }
+  // Evergreen adverts are shown by default — they are a caveat, not a mistake. The box is the
+  // reader saying "only postings I can actually apply to today".
+  if ($("f-evergreen").checked) { p.set("evergreen", "false"); }
   var countries = selectedValues($("f-country"));
   if (countries.length) { p.set("country", countries.join(",")); }
   var remotes = selectedValues($("f-remote"));
@@ -352,6 +360,7 @@ function cardHtml(job) {
   if (closes && job.closes_in_days <= CLOSING_SOON_DAYS) {
     tags += '<span class="tag urgent">' + esc(closes) + "</span>";
   }
+  if (job.evergreen) { tags += '<span class="tag evergreen">evergreen advert</span>'; }
   var line = [job.company, job.location_raw, job.remote, job.source,
               "posted " + dateText(job.posted_at), closes]
     .filter(function (part) { return part; }).map(esc).join(" · ");
@@ -634,6 +643,11 @@ function buildFilters(meta) {
     chips.appendChild(chip);
   });
 
+  // How many of the listed postings are advertising rather than a vacancy, so the reader can
+  // judge whether hiding them is worth it before ticking the box.
+  $("f-evergreen-label").textContent =
+    "hide evergreen adverts (" + (meta.evergreen || 0) + ")";
+
   // Same three stops as the stage pill on each card: rules → prefilter (Sonnet) → rank (Opus).
   var sections = ["ranked", "prefilter", "review"];
   checkboxes($("f-sections"), sections, sections,
@@ -689,6 +703,7 @@ function wire() {
       reload();
     });
   }
+  $("f-evergreen").addEventListener("change", reload);
   $("f-score").addEventListener("change", reload);
   $("f-decision").addEventListener("change", function () {
     store("jobscraper.decisions", selectedValues($("f-decision")).join(","));
@@ -711,6 +726,7 @@ function wire() {
     // Profile facts (spoken languages, Full Stack Open) describe the viewer and survive a reset.
     $("f-score").value = "";
     $("f-q").value = "";
+    $("f-evergreen").checked = false;
     // "Reset" means the default view, which is not "all": the dead ends stay out.
     resetDecisions();
     var chips = $("f-stacks").querySelectorAll(".chip");

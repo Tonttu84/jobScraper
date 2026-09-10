@@ -96,7 +96,8 @@ def _seed(db_path, *, save_report: bool = True, save_facets: bool = True) -> dic
         "rev-1",
         "Software Engineer",
         company="Nordic AB",
-        description="Java and Spring Boot backend work.",
+        description="Java and Spring Boot backend work. "
+                    "We are building a talent pool for future openings.",
         country="SE",
         city="Stockholm",
         location_raw="Stockholm, Sweden",
@@ -134,9 +135,11 @@ def _seed(db_path, *, save_report: bool = True, save_facets: bool = True) -> dic
             status="review",
             location_tier=2,
             reasons=["asks for 5 years of experience"],
-            # the one seeded posting whose text stated a closing date
+            # the one seeded posting whose text stated a closing date — and the one that is a
+            # talent pool rather than a vacancy
             signals={"posting_language": "en", "languages_required": [],
-                     "deadline": "2026-09-13", "closes_in_days": 3},
+                     "deadline": "2026-09-13", "closes_in_days": 3,
+                     "evergreen": "talent pool"},
         ),
     }
     prefilter = {
@@ -245,6 +248,7 @@ def test_meta_reports_counts_facets_and_users(seeded):
     assert meta["countries"] == {"FI": 1, "DE": 1, "PT": 1, "SE": 1}
     assert meta["remote"] == {"hybrid": 1, "onsite": 1, "remote": 1, "unknown": 1}
     assert meta["sources"] == {"teamtailor": 4}
+    assert meta["evergreen"] == 1  # the talent-pool leftover, for the sidebar's count
     assert meta["users"] == ["ada"]
     assert set(meta["decision_statuses"]) == {
         "interested", "applied", "skipped", "interview", "rejected", "offer"
@@ -329,6 +333,8 @@ def test_jobs_default_ordering_and_shape(seeded):
     assert first["decision"] is None
     assert first["deadline"] is None  # this posting stated no closing date
     assert first["closes_in_days"] is None
+    assert first["evergreen"] is False  # and it is a real vacancy
+    assert first["facets"]["evergreen"] is False
     assert "description" not in first
 
     # the review leftover has no AI score at all
@@ -341,6 +347,9 @@ def test_jobs_default_ordering_and_shape(seeded):
     # the closing date is lifted out of the signal dict so the card can show it without digging
     assert last["deadline"] == "2026-09-13"
     assert last["closes_in_days"] == 3
+    # and so is the talent-pool verdict, which is a facet as well so the sidebar can hide it
+    assert last["evergreen"] is True
+    assert last["facets"]["evergreen"] is True
 
 
 def test_list_items_carry_the_verdict_summaries_the_teaser_needs(seeded):
@@ -423,6 +432,16 @@ def test_filter_by_web_dev_stack_country_and_remote(seeded):
     assert ids(client.get("/api/jobs?source=teamtailor").json()) == [
         jobs["web"].id, jobs["py"].id, jobs["cpp"].id, jobs["rev"].id]
     assert ids(client.get("/api/jobs?source=duunitori").json()) == []
+
+
+def test_filter_out_the_evergreen_adverts(seeded):
+    """``evergreen=false`` is the sidebar's "hide evergreen adverts"; nothing is dropped by default."""
+    client, jobs = seeded
+    assert ids(client.get("/api/jobs").json()) == [
+        jobs["web"].id, jobs["py"].id, jobs["cpp"].id, jobs["rev"].id]
+    assert ids(client.get("/api/jobs?evergreen=false").json()) == [
+        jobs["web"].id, jobs["py"].id, jobs["cpp"].id]
+    assert ids(client.get("/api/jobs?evergreen=true").json()) == [jobs["rev"].id]
 
 
 def test_filter_by_section_min_score_and_query(seeded):

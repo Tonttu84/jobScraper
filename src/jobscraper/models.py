@@ -185,6 +185,7 @@ class JobFacets(BaseModel):
     languages_optional: list[str] = Field(default_factory=list, description="ISO-639-1 codes mentioned as a plus")
     stacks: list[str] = Field(default_factory=list, description="Sorted stack tags, see facets.STACKS")
     web_dev: bool = Field(False, description="True when the stack overlaps Full Stack Open (React/Node/TS web work)")
+    evergreen: bool = Field(False, description="True when the posting advertises a pipeline (talent pool, register your interest) rather than a live vacancy")
 
     def language_ok(self, spoken: set[str] | list[str]) -> bool:
         """True when someone who speaks ``spoken`` can work this job: the posting language (if

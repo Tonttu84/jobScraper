@@ -169,6 +169,36 @@ def test_write_report_says_nothing_about_a_job_with_no_known_deadline(tmp_path, 
     assert "closes" not in _with_deadline(state, None, tmp_path)
 
 
+def _with_signals(state, signals: dict, tmp_path):
+    """The report text with the ranked job's filter result carrying ``signals``."""
+    jobs, filters, prefilter, ranked = state
+    filters[jobs[0].id] = FilterResult(job_id=jobs[0].id, status="keep", location_tier=1,
+                                       signals=signals)
+    return write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_write_report_flags_an_evergreen_advert_in_the_heading_and_a_bullet(tmp_path, state):
+    """A pipeline advert is not a live vacancy: the reader should see that above the summary."""
+    text = _with_signals(state, {"evergreen": "talent pool"}, tmp_path)
+    assert "· evergreen advert*" in text
+    assert '- **Evergreen advert:** not a live vacancy ("talent pool")' in text
+
+
+def test_an_evergreen_advert_with_a_deadline_says_both(tmp_path, state):
+    text = _with_signals(
+        state, {"deadline": "2026-09-13", "closes_in_days": 3, "evergreen": "talent pool"}, tmp_path
+    )
+    assert "· closes in 3 days · evergreen advert*" in text
+    assert "- **Closes in 3 days**" in text
+    assert '- **Evergreen advert:** not a live vacancy ("talent pool")' in text
+
+
+def test_write_report_says_nothing_about_a_live_vacancy(tmp_path, state):
+    assert "evergreen" not in _with_signals(state, {"years_required": 3}, tmp_path)
+
+
 def test_write_report_ignores_verdicts_whose_job_is_gone(tmp_path, state):
     """A verdict can outlive its job row (a re-scrape that dropped the posting)."""
     jobs, filters, prefilter, ranked = state

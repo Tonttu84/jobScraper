@@ -81,6 +81,10 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
         slug = reason_category(next(iter(result.reasons), ""))  # the primary (first) reason
         drops[slug] = drops.get(slug, 0) + 1
 
+    # Evergreen adverts are never dropped, so they appear nowhere in ``drops``: counting them
+    # across every status is the only way to see how much of the funnel is not a live vacancy.
+    evergreen = sum(1 for r in store.filter_results().values() if r.signals.get("evergreen"))
+
     ai = settings.profile.ai
     prefiltered = store.verdicts("prefilter", snapshot.prompt_version)
     passed = sum(1 for v in prefiltered.values() if v.relevant and v.score >= ai.prefilter_min_score)
@@ -98,7 +102,8 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
         # ``deadline_passed`` rides along with the statuses: it is the one drop reason that says
         # the vacancy is shut rather than that the profile said no, so it reads as a funnel step.
         "rules": {**{name: counts.get(name, 0) for name in ("keep", "review", "drop")},
-                  "deadline_passed": drops.get("deadline_passed", 0)},
+                  "deadline_passed": drops.get("deadline_passed", 0),
+                  "evergreen": evergreen},
         "drops_by_category": dict(sorted(drops.items())),
         "prefilter": {"prefiltered": len(prefiltered), "passed": passed},
         "ranked": counts.get("ranked", 0),

@@ -197,6 +197,23 @@ def test_a_closing_posting_says_so_in_the_meta_line_and_wears_an_urgent_tag(page
     expect(web.locator(".tag.urgent")).to_have_count(0)
 
 
+def test_an_evergreen_advert_wears_a_tag_and_can_be_hidden(page, site):
+    """The seeded review leftover is a talent pool; the box that hides it starts unticked."""
+    _, jobs = site
+    expect(card(page, jobs["rev"]).locator(".tag.evergreen")).to_have_text("evergreen advert")
+    expect(card(page, jobs["web"]).locator(".tag.evergreen")).to_have_count(0)
+
+    box = page.locator("#f-evergreen")
+    expect(box).not_to_be_checked()
+    expect(page.locator("label:has(#f-evergreen)")).to_contain_text("hide evergreen adverts (1)")
+    box.check()
+    expect(count(page)).to_have_text("2 of 2")
+    expect(card(page, jobs["rev"])).to_have_count(0)
+    page.locator("#reset").click()
+    expect(box).not_to_be_checked()
+    expect(count(page)).to_have_text("3 of 3")
+
+
 def test_detail_opens_on_click_with_rank_summary_and_description(page, site):
     _, jobs = site
     web = card(page, jobs["web"])

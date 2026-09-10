@@ -13,11 +13,12 @@ from datetime import UTC, date, datetime
 
 from jobscraper.config import Profile
 from jobscraper.filters.deadline import find_deadline
+from jobscraper.filters.evergreen import is_evergreen
 from jobscraper.filters.language import detect_language, find_language_requirements
 from jobscraper.models import FilterResult, Job
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-09-10c"
+RULES_VERSION = "2026-09-10d"
 
 #: A deadline this near is worth putting in front of the reader (report bullet, UI tag).
 CLOSING_SOON_DAYS = 7
@@ -222,6 +223,15 @@ def evaluate(job: Job, profile: Profile, today: date | None = None) -> FilterRes
             reasons.append(f"application deadline passed on {deadline.isoformat()}")
         else:
             signals["closes_in_days"] = (deadline - today).days
+
+    # ------------------------------------------------------------- evergreen
+    # A pipeline advert, a talent pool or a register-your-interest form is not a vacancy anyone
+    # can start on Monday. Never a drop and never a review: the same wording turns up on pages
+    # that do list a real opening, and the AI stages read a posting better than a phrase list.
+    # It travels as a signal so the ranker, the refiner, the report and the UI agree on it.
+    cue = is_evergreen(title, text)
+    if cue:
+        signals["evergreen"] = cue
 
     status = "drop" if reasons else ("review" if review else "keep")
     return FilterResult(job_id=job.id, status=status, reasons=reasons + review, signals=signals, location_tier=tier)

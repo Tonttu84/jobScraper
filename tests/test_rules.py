@@ -13,6 +13,7 @@ import pytest
 
 from jobscraper.config import Profile, SeniorityPolicy
 from jobscraper.filters.deadline import find_deadline
+from jobscraper.filters.evergreen import CUES, is_evergreen
 from jobscraper.filters.rules import classify_remote_region, dedupe, evaluate
 from jobscraper.models import Job
 
@@ -668,3 +669,66 @@ def test_evaluate_defaults_to_the_real_today(settings):
     res = evaluate(job, settings.profile)
     assert res.signals["deadline"] == ahead.isoformat()
     assert res.signals["closes_in_days"] > 0
+
+
+# ------------------------------------------------------------------ evergreen adverts
+
+
+@pytest.mark.parametrize("cue", CUES)
+def test_every_evergreen_cue_is_recognised(cue: str) -> None:
+    """Each cue, dropped into a sentence, reports itself back as the evidence."""
+    assert is_evergreen("Software Engineer", f"About the role. {cue} in our team.") == cue
+
+
+def test_the_cue_is_reported_in_its_canonical_spelling() -> None:
+    """Boards shout and wrap lines; the signal has to stay a small, stable vocabulary."""
+    assert is_evergreen("x", "We keep a TALENT\n  POOL of graduates.") == "talent pool"
+    assert is_evergreen("x", "Bitte senden Sie eine initiativbewerbung.") == "Initiativbewerbung"
+
+
+def test_a_cue_in_the_title_is_enough() -> None:
+    title = "Register Your Interest – Graduates"
+    assert is_evergreen(title, f"{title}\nWe hire graduates every autumn.") \
+        == "register your interest"
+
+
+def test_the_title_decides_when_the_body_names_another_cue() -> None:
+    """A long description would otherwise pick the cue; the heading is the whole story."""
+    assert is_evergreen("Register Your Interest", "We are building a talent pool.") \
+        == "register your interest"
+
+
+@pytest.mark.parametrize("text", [
+    "You will join a talented team of engineers.",
+    "Great career opportunities and a clear growth path.",
+    "We offer real opportunities to grow your talent.",
+    "The talent acquisition team will contact you.",
+    "",
+])
+def test_ordinary_recruiting_words_are_not_evergreen(text: str) -> None:
+    assert is_evergreen("Junior Software Developer", text) is None
+
+
+def test_an_evergreen_advert_is_signalled_but_never_dropped(settings):
+    """Not a live vacancy is a concern for the AI stages, not a verdict the rules may pass."""
+    job = make_job(location_raw="Helsinki, Finland", country="FI",
+                   description=ENGLISH_DESC + " This posting is to advertise potential job "
+                                              "opportunities at our company.")
+    res = evaluate(job, settings.profile, today=TODAY)
+    assert res.status == "keep"
+    assert res.signals["evergreen"] == "advertise potential job opportunities"
+
+
+def test_an_evergreen_title_signals_on_a_posting_the_rules_send_to_review(settings):
+    """The signal rides along whatever else the rules made of the posting."""
+    job = make_job(title="Register Your Interest – Graduate Software Engineer",
+                   location_raw="Helsinki, Finland", country="FI",
+                   description=ENGLISH_DESC + " We ask for at least 5 years of experience.")
+    res = evaluate(job, settings.profile, today=TODAY)
+    assert res.status == "review"
+    assert res.signals["evergreen"] == "register your interest"
+
+
+def test_an_ordinary_posting_carries_no_evergreen_signal(settings):
+    job = make_job(location_raw="Helsinki, Finland", country="FI")
+    assert "evergreen" not in evaluate(job, settings.profile, today=TODAY).signals

@@ -9,6 +9,9 @@ Two axes:
 2. **Tech stack** — a small set of coarse tags (see :data:`STACKS`) matched with regexes over
    title + description + tags, plus the ``web_dev`` flag that says whether the posting overlaps
    what the Full Stack Open course teaches (React/Node/TypeScript web development).
+3. **Evergreen** — whether the posting advertises a pipeline (talent pool, register your
+   interest) instead of a vacancy anyone can start on Monday. Same source as the languages: the
+   rule filter's signal when there is one, the posting's own words otherwise.
 
 No AI, no network: the same input always yields the same facets, so the UI can filter cheaply
 and results can be recomputed for old rows by bumping :data:`FACETS_VERSION`.
@@ -19,10 +22,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from jobscraper.filters.evergreen import is_evergreen
 from jobscraper.filters.language import detect_language, find_language_requirements
 from jobscraper.models import FilterResult, Job, JobFacets
 
-FACETS_VERSION = "2026-09-08.1"
+FACETS_VERSION = "2026-09-10.1"
 
 # Programming-language names that make a neighbouring bare "C" credible ("C, Python and Rust",
 # "Python or C"). Ordered longest-first where one is a prefix of another.
@@ -129,6 +133,13 @@ def compute_facets(job: Job, fr: FilterResult | None = None) -> JobFacets:
         optional = _codes(req.optional)
     optional = [code for code in optional if code not in required]
 
+    # The rules already read the whole posting, so their verdict settles it — including a "no".
+    # Only a result from before the rule existed (no key at all) is re-derived here.
+    if "evergreen" in signals:
+        evergreen = bool(signals["evergreen"])
+    else:
+        evergreen = is_evergreen(job.title, job.text) is not None
+
     stacks = detect_stacks("\n".join([job.title, job.description or "", " ".join(job.tags)]))
     return JobFacets(
         job_id=job.id,
@@ -138,6 +149,7 @@ def compute_facets(job: Job, fr: FilterResult | None = None) -> JobFacets:
         languages_optional=optional,
         stacks=stacks,
         web_dev=bool(set(stacks) & WEB_STACKS),
+        evergreen=evergreen,
     )
 
 

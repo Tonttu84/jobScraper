@@ -114,7 +114,8 @@ def test_collect_builds_one_flat_anonymous_row(state, settings):
     assert row["profile"] == "default"
     assert row["jobs_total"] == 4
     assert row["by_source"] == {"arbeitnow": 2, "jobly": 2}
-    assert row["rules"] == {"keep": 1, "review": 1, "drop": 2, "deadline_passed": 0}
+    assert row["rules"] == {"keep": 1, "review": 1, "drop": 2, "deadline_passed": 0,
+                            "evergreen": 0}
     assert row["drops_by_category"] == {"not_software_title": 1, "too_old": 1}
     assert row["prefilter"] == {"prefiltered": 2, "passed": 1}
     assert row["ranked"] == 1
@@ -139,6 +140,22 @@ def test_collect_counts_the_postings_dropped_for_a_passed_deadline(state, settin
     row = runstats.collect(state, snapshot_for(state), settings, profile=None, usage_path=None)
     assert row["rules"]["deadline_passed"] == 1
     assert row["drops_by_category"]["deadline_passed"] == 1
+
+
+def test_collect_counts_evergreen_adverts_whatever_the_rules_made_of_them(state, settings):
+    """Never a drop, so they are nowhere in ``drops``: how much of the funnel is not a vacancy."""
+    kept = make_job("jobly", "5", title="Junior Developer")
+    reviewed = make_job("jobly", "6", title="Junior Developer")
+    state.upsert_jobs([kept, reviewed])
+    state.save_filter_results(
+        [FilterResult(job_id=kept.id, status="keep", signals={"evergreen": "talent pool"}),
+         FilterResult(job_id=reviewed.id, status="review",
+                      signals={"evergreen": "register your interest"})],
+        "rules-test",
+    )
+    row = runstats.collect(state, snapshot_for(state), settings, profile=None, usage_path=None)
+    assert row["rules"]["evergreen"] == 2
+    assert "evergreen" not in row["drops_by_category"]
 
 
 def test_collect_never_writes_posting_text(state, settings):

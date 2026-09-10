@@ -70,6 +70,12 @@ def closes_text(days: int) -> str:
     return "closes today" if days == 0 else f"closes in {days} days"
 
 
+def evergreen_cue(fr: FilterResult | None) -> str | None:
+    """The phrase that gave the posting away as an evergreen advert, if the rules found one."""
+    cue = fr.signals.get("evergreen") if fr else None
+    return cue if isinstance(cue, str) and cue else None
+
+
 def ranked_block(job: Job, score: int | None, verdict: AIVerdict | None = None,
                  fr: FilterResult | None = None, refine: AIVerdict | None = None) -> list[str]:
     """The markdown block for one ranked job — shared by the report and the diff."""
@@ -77,11 +83,16 @@ def ranked_block(job: Job, score: int | None, verdict: AIVerdict | None = None,
     both = f" (rank {verdict.score} · refine {refine.score})" if verdict is not None and refine is not None else ""
     days = closes_in(fr)
     closing = f" · {closes_text(days)}" if days is not None else ""
+    cue = evergreen_cue(fr)
+    advert = " · evergreen advert" if cue else ""
     lines = [f"### {score}{both} · [{job.title}]({job.url}) — {job.company or '?'}",
-             f"*{loc} · {job.source} · posted {job.posted_at.date() if job.posted_at else '?'}{closing}*  "]
+             f"*{loc} · {job.source} · posted {job.posted_at.date() if job.posted_at else '?'}{closing}{advert}*  "]
     # A deadline this close outranks everything the AI has to say about the job.
     if days is not None and days <= CLOSING_SOON_DAYS:
         lines.append(f"- **{closes_text(days).capitalize()}**")
+    # And so does "there may be no job here at all", which the score cannot express on its own.
+    if cue:
+        lines.append(f'- **Evergreen advert:** not a live vacancy ("{cue}")')
     if verdict is not None:
         lines.append(verdict.summary)
         if refine is not None:
