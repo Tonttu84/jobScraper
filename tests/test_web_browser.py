@@ -15,8 +15,9 @@ from contextlib import contextmanager
 
 import pytest
 import uvicorn
-from test_web import _seed  # tests/ is on sys.path (no package)
+from test_web import _seed, make_verdict  # tests/ is on sys.path (no package)
 
+from jobscraper.store import Store
 from jobscraper.web.app import create_app
 
 playwright_api = pytest.importorskip("playwright.sync_api")
@@ -103,6 +104,27 @@ def tailored_page(browser, tailored_site):
         yield page
 
 
+@pytest.fixture
+def refined_site(tmp_path):
+    """The seeded database plus a refine verdict on the ranked job (the second AI pass)."""
+    db = tmp_path / "jobs.db"
+    jobs = _seed(db)
+    store = Store(db)
+    store.save_verdict(make_verdict(
+        jobs["web"].id, "refine", 85, model="claude-fable-5-1", position=1,
+        summary="The best React and Node fit of the shortlist, ahead of the two backend roles.",
+    ))
+    store.close()
+    with _serving(create_app(db, languages=["en", "pt"])) as base_url:
+        yield base_url, jobs
+
+
+@pytest.fixture
+def refined_page(browser, refined_site):
+    with _visiting(browser, refined_site[0]) as page:
+        yield page
+
+
 def card(page, job):
     return page.locator(f'.card[data-id="{job.id}"]')
 
@@ -184,6 +206,46 @@ def test_the_card_main_area_looks_clickable(page, site):
     cursor = card(page, jobs["web"]).locator(".card-main").evaluate(
         "el => getComputedStyle(el).cursor")
     assert cursor == "pointer"
+
+
+# ------------------------------------------------------------------ refine
+
+
+def test_a_refined_card_explains_the_score_box_with_both_component_scores(refined_page, refined_site):
+    """The box holds the mean of the two AI passes, so the card says what went into it."""
+    base_url, jobs = refined_site
+    web = card(refined_page, jobs["web"])
+    expect(web.locator(".rank")).to_have_text("#1")
+    expect(web.locator(".parts")).to_have_text("rank 91 · refine 85")
+    payload = refined_page.request.get(f"{base_url}/api/jobs/{jobs['web'].id}").json()
+    assert payload["score"] == 88  # round((91 + 85) / 2)
+    expect(web.locator(".score")).to_have_text(str(payload["score"]))
+    # a job the refine pass never saw has one score only, and nothing to explain
+    expect(card(refined_page, jobs["py"]).locator(".parts")).to_have_count(0)
+
+
+def test_a_card_without_a_refine_verdict_has_no_parts_line(page, site):
+    _, jobs = site
+    expect(card(page, jobs["web"]).locator(".score")).to_have_text("91")
+    expect(card(page, jobs["web"]).locator(".parts")).to_have_count(0)
+
+
+def test_the_detail_puts_the_refine_verdict_before_the_rank_summary(refined_page, refined_site):
+    """The shortlist-wide judgement is the more specific one, so it is read first."""
+    _, jobs = refined_site
+    web = card(refined_page, jobs["web"])
+    web.locator("button.toggle").click()
+    detail = web.locator(".detail")
+    expect(detail).to_be_visible()
+    expect(detail).to_contain_text("Against the rest of the shortlist")
+    expect(detail).to_contain_text("ahead of the two backend roles")
+    expect(detail).to_contain_text("position 1 of the shortlist")
+    # the rank block, and everything after it, is still there and still in its old order
+    expect(detail).to_contain_text("Strong React and Node fit")
+    expect(detail).to_contain_text("Why apply")
+    headings = detail.locator("h4").all_text_contents()
+    assert headings.index("Against the rest of the shortlist") < headings.index("Rank")
+    assert headings[-1] == "Description"
 
 
 # ------------------------------------------------------------------ details button
