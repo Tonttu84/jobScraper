@@ -115,17 +115,13 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   having, but they list 10 000+ jobs each and mostly cannot fetch a description per posting, so
   enable one at a time and watch the first run. They are commented out in `config/sources.yaml`.
 
-- [ ] **Felipe: finish the incremental screening with the batch API** (2026-09-10). His run DB
-  `data/profiles/felipe/runs/20260909-144443.db` now holds 16,788 jobs (7,635 new from the 81
-  boards + jobly, scraped 2026-09-10). 1,040 of the new rule survivors are screened and
-  imported; **795 are still unscreened** (exported as `chunk-09..16` under
-  `data/profiles/felipe/exports/ai/prefilter/`). Cheapest route, once `ANTHROPIC_API_KEY` is
-  set: `jobscraper --profile felipe prefilter --batch` (only unscreened jobs are sent; results
-  within 24 h, half price), then `python scripts/ai_batches.py --profile felipe export rank
-  --top 90` → Opus subagents or `jobscraper --profile felipe rank` → `import rank` →
-  `jobscraper --profile felipe report` → publish into `data/profiles/felipe/serve/` (the
-  running server picks the newest copy). Alternative without a key: Sonnet subagents on the
-  remaining chunks (the prompt used on 2026-09-10 is in the session notes; ~4 min per 100 jobs).
+- [x] **Felipe: incremental round done 2026-09-10** — 7,635 new jobs from 81 boards + jobly,
+  1,595 rule survivors screened by Sonnet subagents, 37 newly ranked by Opus, report #8
+  (97 ranked) published as `data/profiles/felipe/serve/full-2026-09-10b.db`. The batch API is
+  irrelevant while the AI stages run on the subscription through subagents (it is API-key
+  billing only). Recipe for the next round: scrape → filter → `ai_batches.py export prefilter`
+  (only unscreened jobs) → Sonnet subagents → `import prefilter` → `export rank --top 90` →
+  Opus subagents → `import rank` → `report` → `publish`.
 - [ ] **Rule-filter gap seen while screening**: many boards (Eightfold/Oracle/Workday) leave
   `country` unknown for locations like "Hyderabad, TS, IN" or "2 Locations", so on-site jobs
   in the US/India/China reach the Sonnet screen and are rejected there at cost. Teach
