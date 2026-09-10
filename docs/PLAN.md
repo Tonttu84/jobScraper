@@ -180,6 +180,37 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
 2. **Ranking stability** — `scripts/ai_batches.py stability export|compare` scores the same top-N
    jobs twice in different chunkings and reports score drift, rank correlation and top-10 overlap.
    Decides whether the explicit scoring-weights lever is worth building.
+   **Measured 2026-09-10** (top 30 of report #… on the owner's DB, Opus subagents, two runs
+   with different order and chunking; full table in the private repo under
+   `data/exports/ai/stability/summary.md`):
+
+   | metric | value |
+   |---|---|
+   | median \|A−B\| | 3 points |
+   | 90th percentile \|A−B\| | 8.3 points |
+   | Spearman A vs B | 0.74 |
+   | top-10 overlap (Jaccard) | 0.54 |
+   | relevant flips | 0 of 30 |
+   | re-score vs stored score, mean signed | −5.3 (A), −6.0 (B) |
+   | re-score vs stored score, Spearman | 0.45 (A), 0.62 (B) |
+
+   Reading: two fresh scorings of the same job agree to within a few points and never
+   disagree on relevance, but the *order* inside the top 30 is noisy (about half the top 10 is
+   stable). The stored scores sit 5–6 points above both re-scorings: the ranked list is the top
+   30 *selected* out of ~80 by a noisy score, so the winners carry selection bias
+   (regression to the mean on re-scoring). Consequences: (a) treat differences under ~5 points
+   as ties in the UI/report; (b) a cheap improvement is to re-score the top N once more and
+   average, which removes most of the selection bias for the price of N extra calls; (c) the
+   scoring-weights lever is worth building, since the residual noise is in how each call
+   balances the criteria, not in the hard gates.
+   - [ ] **Refine stage** (agreed 2026-09-10, next coding task): a second pass over the top N
+     (20–40) in ONE call — all shortlisted postings plus the profile in a single request,
+     asked for an ordering and a score per job — so the shortlist is ranked against itself
+     instead of in 15-job chunks. Model configurable (`ai.refine_model`: Opus 5 by default,
+     Fable when the owner wants; through a subagent it is free, via the API a few dollars).
+     Stored as its own stage (`refine`) and combined with the rank score by averaging;
+     override only once the owner's decisions show the refine model is measurably better.
+     Extend `stability compare` so the refine pass is measured the same way.
 3. **Coverage gate to 97%** (adapter error branches).
 4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:
