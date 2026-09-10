@@ -15,6 +15,19 @@ not an override: it fills in the rows whose location string we could not parse (
 "2 Locations", a bare city), because an on-site job with no country reaches the AI screen
 and is paid for there.
 
+A board that lists worldwide may instead declare the countries it is worth fetching from —
+``countries: [FI, SE, …]``, or the source-level ``default_countries`` for the boards that
+don't name their own. It runs after the title filter and *before* any per-posting description
+is fetched, which is the whole point: a JPMorgan or Hitachi listing leaves hundreds of title
+survivors that are in the US or India, and the rule filter only drops them after we have paid
+for their descriptions. It is deliberately permissive — a posting is dropped only when we
+could read a country, that country is not in the list, and the posting is not remote.
+
+Reading that country is the other half. Workday's search rows usually carry no locations list
+and no country, only the rollup "2 Locations" — but their ``externalPath`` spells the place
+out (``/job/Espoo-Finland/Software-Engineer_R12345``), so the slug is parsed back into a
+location string (``slug_location``) that ``guess_country`` can read.
+
 Enterprise boards list thousands of postings, so each board can carry a case-insensitive
 ``include`` / ``exclude`` regex tested against the posting *title* before anything is
 converted (source-level ``default_include`` / ``default_exclude`` cover the boards that
@@ -67,7 +80,10 @@ _REMOTEISH_RE = re.compile(r"\b(remote|anywhere|telecommute|distributed)\b", re.
 
 # Keys a mapping board entry may carry.
 _ENTRY_KEYS = frozenset(
-    {"url", "ats", "slug", "company", "country", "options", "include", "exclude", "lazy_descriptions"}
+    {
+        "url", "ats", "slug", "company", "country", "countries", "options", "include", "exclude",
+        "lazy_descriptions",
+    }
 )
 _MAX_DESCRIPTION = 25_000  # what ats-scrapers' own enrich_descriptions truncates to
 
@@ -121,6 +137,61 @@ def _raw_locations(job: ATSJob) -> list[str]:
     return found
 
 
+#: Workday slug segments that name no place: a rollup, or a posting with no location at all.
+_SLUG_PLACEHOLDERS = frozenset(
+    {"multiple locations", "various locations", "remote", "virtual", "anywhere", "flexible"}
+)
+
+
+def slug_location(external_path: Any) -> str | None:
+    """The location a Workday ``externalPath`` spells out, as a plain location string.
+
+    ``/job/Shanghai-Shanghai-China/Software-Engineer_R12345`` → ``"Shanghai, Shanghai, China"``
+    and ``/job/US-CA-San-Jose/Developer-Intern_R1`` → ``"US, CA, San, Jose"``: either shape is
+    something ``guess_country`` reads, which matters because most Workday tenants send no
+    locations list and no country at all. A rollup placeholder ("Multiple-Locations", "Remote")
+    names no place, and neither does a path that is not a job path.
+    """
+    if not isinstance(external_path, str):
+        return None
+    parts = [p for p in external_path.split("/") if p.strip()]
+    if len(parts) < 2 or parts[0].lower() != "job":
+        return None
+    tokens = [t.strip() for t in parts[1].split("-") if t.strip()]
+    if not tokens or " ".join(tokens).lower() in _SLUG_PLACEHOLDERS:
+        return None
+    return ", ".join(tokens)
+
+
+def _job_slug_location(job: ATSJob) -> str | None:
+    raw = job.raw if isinstance(job.raw, dict) else {}
+    return slug_location(raw.get("externalPath"))
+
+
+def _location_text(job: ATSJob) -> str | None:
+    """The row's own location string, or the one its Workday slug spells out."""
+    return job.location or _job_slug_location(job)
+
+
+def _slug_country(job: ATSJob) -> str | None:
+    """The country of a Workday slug. Both spellings are tried: "Espoo, Finland" is read by
+    the comma rules, "London United Kingdom" by the multi-word country names."""
+    text = _job_slug_location(job)
+    if not text:
+        return None
+    return guess_country(text, text.replace(",", ""))
+
+
+def job_country(job: ATSJob) -> str | None:
+    """The country this listing row states, before any board-level fallback."""
+    return (
+        job.country_iso
+        or guess_country(job.location or None)
+        or guess_country(*_raw_locations(job))
+        or _slug_country(job)
+    )
+
+
 def convert(
     job: ATSJob, company: str | None = None, country: str | None = None
 ) -> Job | None:
@@ -131,7 +202,7 @@ def convert(
     """
     url = str(job.url)
     ats_type = getattr(job.ats_type, "value", job.ats_type)
-    location = job.location or None
+    location = _location_text(job)
     tags = [t for t in (job.department, job.team) if t]
     raw: dict[str, Any] = job.model_dump(mode="json", exclude={"description"})
     return Job(
@@ -142,12 +213,7 @@ def convert(
         company=company or job.company,
         description=clean_description(job.description),
         location_raw=location,
-        country=(
-            job.country_iso
-            or guess_country(location)
-            or guess_country(*_raw_locations(job))
-            or country
-        ),
+        country=job_country(job) or country,
         city=_city(location),
         remote=guess_remote(location, job.title, flag=job.is_remote),
         employment_type=job.employment_type or job.commitment,
@@ -168,6 +234,7 @@ class Board:
     exclude: re.Pattern[str] | None = None
     company: str | None = None
     country: str | None = None  # ISO-2 fallback for rows with no parsable location
+    countries: frozenset[str] | None = None  # worth fetching from; None = every country
     lazy: bool | None = None  # None = decide from the filter + scraper capability
 
     @property
@@ -179,6 +246,20 @@ class Board:
         if self.include is not None and not self.include.search(text):
             return False
         return not (self.exclude is not None and self.exclude.search(text))
+
+    def in_region(self, job: ATSJob) -> bool:
+        """Whether this row is worth the per-posting description it is about to cost.
+
+        Permissive on purpose: only a posting whose country we could actually read, that is
+        not in the list and is not remote, is dropped. An unknown country stays — that call
+        belongs to the rule filter, which sees the description this saves us from fetching.
+        """
+        if not self.countries:
+            return True
+        country = job_country(job) or self.country
+        if country is None or country in self.countries:
+            return True
+        return guess_remote(_location_text(job), job.title, flag=job.is_remote) == "remote"
 
 
 def _compile(pattern: Any, field: str, entry: Any) -> re.Pattern[str] | None:
@@ -192,17 +273,29 @@ def _compile(pattern: Any, field: str, entry: Any) -> re.Pattern[str] | None:
         raise ValueError(f"{NAME}: bad {field!r} regex in board entry {entry!r}: {exc}") from exc
 
 
+def _iso2_code(value: Any, field: str, where: str) -> str:
+    """One ISO-2 country code. A name, a typo or YAML's unquoted ``NO`` (a bool) is a bug."""
+    code = str(value if value is not None else "").strip()
+    if code.lower() not in ISO2_CODES:
+        raise ValueError(
+            f"{NAME}: {field!r} must be an ISO-2 country code (e.g. FI), got {value!r} in {where}"
+        )
+    return code.upper()
+
+
 def _country_code(value: Any, entry: Any) -> str | None:
     """``country: fi`` → ``"FI"``. Anything that is not a real ISO-2 code is a config bug."""
     if value is None:
         return None
-    code = str(value).strip()
-    if code.lower() not in ISO2_CODES:
-        raise ValueError(
-            f"{NAME}: 'country' must be an ISO-2 country code (e.g. FI), got {value!r} "
-            f"in board entry {entry!r}"
-        )
-    return code.upper()
+    return _iso2_code(value, "country", f"board entry {entry!r}")
+
+
+def _country_list(value: Any, field: str, where: str) -> frozenset[str] | None:
+    """``countries: [FI, se]`` → ``{"FI", "SE"}``; unset or empty means no country filter."""
+    if value is None:
+        return None
+    items = value if isinstance(value, list) else [value]
+    return frozenset(_iso2_code(item, field, where) for item in items) or None
 
 
 def _lazy_flag(value: Any, where: str) -> bool | None:
@@ -235,6 +328,7 @@ def make_board(
     *,
     default_include: re.Pattern[str] | None = None,
     default_exclude: re.Pattern[str] | None = None,
+    default_countries: frozenset[str] | None = None,
     default_lazy: bool | None = None,
 ) -> Board:
     """Normalize one ``urls:`` entry (a careers URL or a mapping) into a ``Board``."""
@@ -282,6 +376,9 @@ def make_board(
         else default_exclude,
         company=str(company).strip() or None if company else None,
         country=_country_code(entry.get("country"), entry),
+        countries=_country_list(entry["countries"], "countries", f"board entry {entry!r}")
+        if "countries" in entry
+        else default_countries,
         lazy=_lazy_flag(entry["lazy_descriptions"], f"board entry {entry!r}")
         if "lazy_descriptions" in entry
         else default_lazy,
@@ -375,6 +472,9 @@ class ATSBoards:
         defaults = {
             "default_include": _compile(ctx.opt("default_include"), "default_include", "options"),
             "default_exclude": _compile(ctx.opt("default_exclude"), "default_exclude", "options"),
+            "default_countries": _country_list(
+                ctx.opt("default_countries"), "default_countries", "option 'default_countries'"
+            ),
             "default_lazy": _lazy_flag(ctx.opt("lazy_descriptions"), "option 'lazy_descriptions'"),
         }
         # Malformed config is a bug, not a flaky board: fail before any HTTP happens.
@@ -396,15 +496,18 @@ class ATSBoards:
                 log.warning("%s: board %s failed: %s", self.name, board.label, exc)
                 continue
             kept = [job for job in ats_jobs if board.keep(job.title)]
+            # Country before descriptions: an out-of-region posting must not cost a request.
+            in_region = [job for job in kept if board.in_region(job)]
             log.info(
-                "%s: %s -> %d jobs, %d after title filter",
+                "%s: %s -> %d jobs, %d after title filter%s",
                 self.name,
                 board.label,
                 len(ats_jobs),
                 len(kept),
+                f", {len(in_region)} after country filter" if board.countries else "",
             )
-            _fill_descriptions(kept, describe, board.label)
-            for job in safe_records(kept, partial(convert, company=board.company, country=board.country), self.name):
+            _fill_descriptions(in_region, describe, board.label)
+            for job in safe_records(in_region, partial(convert, company=board.company, country=board.country), self.name):
                 yield job
                 seen += 1
                 if ctx.limit and seen >= ctx.limit:

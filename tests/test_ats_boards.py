@@ -14,7 +14,7 @@ from ats_scrapers.exceptions import ScraperError
 from conftest import fixture_json, fixture_text
 
 from jobscraper.sources import ats_boards
-from jobscraper.sources.ats_boards import ATSBoards, convert
+from jobscraper.sources.ats_boards import ATSBoards, convert, slug_location
 
 GREENHOUSE = "https://boards.greenhouse.io/supercell"
 LEVER = "https://jobs.lever.co/wolt"
@@ -533,9 +533,9 @@ def test_a_failed_cornerstone_detail_fetch_leaves_the_job_without_a_description(
 # --------------------------------------------------------------- per-board default country
 
 
-def located(location, *, ats_id="1", raw=None) -> ATSJob:
+def located(location, *, ats_id="1", raw=None, title="Software Engineer") -> ATSJob:
     """A listing row whose location string is all we know."""
-    job = make_job("Software Engineer", ats_id=ats_id)
+    job = make_job(title, ats_id=ats_id)
     object.__setattr__(job, "location", location)
     if raw is not None:
         object.__setattr__(job, "raw", raw)
@@ -584,3 +584,120 @@ def test_workday_locations_list_resolves_a_rollup_location(monkeypatch, make_ctx
     jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": [GREENHOUSE]})))
 
     assert [j.country for j in jobs] == ["FI", "IN", "IN", "JP", None, None, None]
+
+
+# --------------------------------------------------------------- Workday externalPath slugs
+
+
+def workday_jobs() -> list[ATSJob]:
+    """Workday search rows as the library hands them over: no ``locations`` list, a slug."""
+    return [ATSJob(**rec) for rec in fixture_json("ats_boards_workday.json")]
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/job/Shanghai-Shanghai-China/Software-Engineer_R12345", "Shanghai, Shanghai, China"),
+        ("/job/Espoo-Finland/Software-Engineer_R12345", "Espoo, Finland"),
+        ("/job/US-CA-San-Jose/Developer-Intern_R1", "US, CA, San, Jose"),
+        ("/job/Multiple-Locations/Graduate-Developer_R1", None),  # a rollup names no place
+        ("/job/Remote/Graduate-Developer_R1", None),
+        ("/job/--/Graduate-Developer_R1", None),  # nothing but separators
+        ("/job/", None),  # no location segment at all
+        ("/details/Espoo-Finland/x", None),  # not a job path
+        ("", None),
+        (None, None),
+        (17, None),
+    ],
+)
+def test_slug_location_reads_the_workday_path(path, expected):
+    assert slug_location(path) == expected
+
+
+def test_workday_external_path_names_the_country(monkeypatch, make_ctx):
+    """Most Workday tenants send neither a locations list nor a country — only the slug."""
+    patch_boards(monkeypatch, {GREENHOUSE: workday_jobs()})
+    jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": [GREENHOUSE]})))
+
+    assert [j.country for j in jobs] == ["FI", "CN", None, "US"]
+    assert jobs[0].location_raw == "Espoo, Finland"  # no location string: the slug becomes one
+    assert jobs[0].city == "Espoo"
+    assert jobs[1].location_raw == "2 Locations"  # the rollup the tenant did publish stands
+
+
+# --------------------------------------------------------------- per-board country filter
+
+
+def test_country_filter_drops_out_of_region_before_the_detail_fetch(monkeypatch, make_ctx, caplog):
+    """The point of the filter: an Indian posting never costs a description request."""
+    listing = [
+        located("Helsinki, Finland", ats_id="1", title="Junior Engineer Helsinki"),
+        located("Bengaluru, KA, IN", ats_id="2", title="Junior Engineer Bengaluru"),
+        located("2 Locations", ats_id="3", title="Junior Engineer Somewhere"),
+        located("Remote - United States", ats_id="4", title="Junior Engineer Remote"),
+    ]
+    calls = patch_boards(monkeypatch, {GREENHOUSE: (LazyScraper, listing)})
+    entry = {"url": GREENHOUSE, "countries": ["FI", "de"], "include": "engineer"}
+    with caplog.at_level(logging.INFO, logger="jobscraper.sources.ats_boards"):
+        jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": [entry]})))
+
+    # kept: in-region, unknown country, and remote whatever its country
+    assert calls.made[-1].described == [
+        "Junior Engineer Helsinki",
+        "Junior Engineer Somewhere",
+        "Junior Engineer Remote",
+    ]
+    assert [j.country for j in jobs] == ["FI", None, "US"]
+    assert "4 jobs, 4 after title filter, 3 after country filter" in caplog.text
+
+
+def test_default_countries_apply_only_to_boards_without_their_own(monkeypatch, make_ctx):
+    listing = [located("Helsinki, Finland", ats_id="1"), located("Bengaluru, KA, IN", ats_id="2")]
+    patch_boards(monkeypatch, {GREENHOUSE: listing, LEVER: listing})
+    options = {
+        "urls": [GREENHOUSE, {"url": LEVER, "countries": ["IN"]}],
+        "default_countries": ["FI", "SE"],
+    }
+    jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
+    assert [j.country for j in jobs] == ["FI", "IN"]
+
+
+def test_countries_accepts_a_single_code(monkeypatch, make_ctx):
+    listing = [located("Helsinki, Finland", ats_id="1"), located("Bengaluru, KA, IN", ats_id="2")]
+    patch_boards(monkeypatch, {GREENHOUSE: listing})
+    entry = {"url": GREENHOUSE, "countries": "fi"}
+    jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": [entry]})))
+    assert [j.country for j in jobs] == ["FI"]
+
+
+def test_an_empty_countries_list_filters_nothing(monkeypatch, make_ctx):
+    patch_boards(monkeypatch, {GREENHOUSE: [located("Bengaluru, KA, IN")]})
+    entry = {"url": GREENHOUSE, "countries": []}
+    jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": [entry]})))
+    assert [j.country for j in jobs] == ["IN"]
+
+
+def test_board_country_decides_the_rows_the_filter_cannot_place(monkeypatch, make_ctx):
+    """``country:`` is the board's own fallback, so the country filter reads it too."""
+    listing = [located("2 Locations", ats_id="1"), located("Helsinki", ats_id="2")]
+    patch_boards(monkeypatch, {GREENHOUSE: listing})
+    entry = {"url": GREENHOUSE, "country": "US", "countries": ["FI"]}
+    jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": [entry]})))
+    assert [j.country for j in jobs] == ["FI"]  # the unplaceable row was dropped as US
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"urls": [{"url": GREENHOUSE, "countries": ["Finland"]}]},  # a name, not a code
+        {"urls": [{"url": GREENHOUSE, "countries": [False]}]},  # unquoted NO in YAML
+        {"urls": [{"url": GREENHOUSE, "countries": "nowhere"}]},
+        {"urls": [{"url": GREENHOUSE, "countries": {"fi": True}}]},
+        {"urls": [GREENHOUSE], "default_countries": ["ZZ"]},
+    ],
+)
+def test_bad_countries_value_raises(monkeypatch, make_ctx, options):
+    calls = patch_boards(monkeypatch, {GREENHOUSE: ats_jobs()})
+    with pytest.raises(ValueError, match="ISO-2"):
+        list(ATSBoards().fetch(make_ctx({}, options=options)))
+    assert calls == []  # config bugs fail before any board is opened

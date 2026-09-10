@@ -23,6 +23,23 @@ def test_ats_board_countries_are_iso2_strings(settings):
         assert code == code.upper() and code.lower() in ISO2_CODES, f"{entry}: not an ISO-2 code"
 
 
+def test_ats_board_country_lists_are_iso2_strings(settings):
+    """``countries: [.., NO, ..]`` unquoted is ``False`` — and would silently drop Norway."""
+    from jobscraper.sources._common import ISO2_CODES
+
+    marked = 0
+    for entry in settings.sources["ats_boards"].options.get("urls") or []:
+        if not isinstance(entry, dict) or "countries" not in entry:
+            continue
+        marked += 1
+        codes = entry["countries"]
+        assert isinstance(codes, list) and codes, f"{entry.get('company')}: countries is {codes!r}"
+        for code in codes:
+            assert isinstance(code, str), f"{entry.get('company')}: {code!r} in countries, quote it"
+            assert code == code.upper() and code.lower() in ISO2_CODES, f"{entry}: not an ISO-2 code"
+    assert marked, "no board declares 'countries' any more — the worldwide boards need it"
+
+
 def test_missing_profile_points_at_the_example(tmp_path):
     """A fresh clone has only config/profile.example.yaml; the error must say what to copy."""
     import pytest

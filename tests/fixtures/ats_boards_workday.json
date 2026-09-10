@@ -1,0 +1,45 @@
+[
+  {
+    "url": "https://abb.wd3.myworkdayjobs.com/External_Career_Page/job/Espoo-Finland/Software-Engineer_R12345",
+    "title": "Software Engineer",
+    "company": "ABB",
+    "ats_type": "workday",
+    "ats_id": "R12345",
+    "raw": {
+      "externalPath": "/job/Espoo-Finland/Software-Engineer_R12345",
+      "bullet_fields": ["R12345"]
+    }
+  },
+  {
+    "url": "https://abb.wd3.myworkdayjobs.com/External_Career_Page/job/Shanghai-Shanghai-China/Software-Engineer_R12346",
+    "title": "Software Engineer",
+    "company": "ABB",
+    "ats_type": "workday",
+    "ats_id": "R12346",
+    "location": "2 Locations",
+    "raw": {
+      "externalPath": "/job/Shanghai-Shanghai-China/Software-Engineer_R12346"
+    }
+  },
+  {
+    "url": "https://abb.wd3.myworkdayjobs.com/External_Career_Page/job/Multiple-Locations/Graduate-Developer_R12347",
+    "title": "Graduate Developer",
+    "company": "ABB",
+    "ats_type": "workday",
+    "ats_id": "R12347",
+    "location": "3 Locations",
+    "raw": {
+      "externalPath": "/job/Multiple-Locations/Graduate-Developer_R12347"
+    }
+  },
+  {
+    "url": "https://abb.wd3.myworkdayjobs.com/External_Career_Page/job/US-CA-San-Jose/Developer-Intern_R12348",
+    "title": "Developer Intern",
+    "company": "ABB",
+    "ats_type": "workday",
+    "ats_id": "R12348",
+    "raw": {
+      "externalPath": "/job/US-CA-San-Jose/Developer-Intern_R12348"
+    }
+  }
+]
