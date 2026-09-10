@@ -8,6 +8,8 @@
   subagent output. Don't spend Fable on legwork.
 
 ## Environment facts
+- Things only the owner can run (probes, first batch run, scheduling) are tracked in
+  `docs/PLAN.md` → "TODO on the owner's machine". Add to that list; don't repeat them in chat.
 - The Claude Code cloud sandbox cannot reach any job site (egress allowlist: GitHub, PyPI, npm only).
   Adapters are written against documented/observed payload shapes and tested with fixtures in
   `tests/fixtures/`. Live verification: `jobscraper probe` on the owner's machine.

@@ -75,6 +75,32 @@ the first real run; expect a few to need small parser fixes.
    then run it fully. `uv run jobscraper rank --top 20` → same for Opus.
 6. `uv run jobscraper report` → read `data/reports/…md`. Adjust prompts, bump `PROMPT_VERSION`.
 
+## TODO on the owner's machine (added 2026-09-10, nothing here can run in the sandbox)
+Launch from the desktop; tick items off here (or delete the section) as they are done.
+
+- [ ] **Install the browser once**: `uv sync --extra dev && uv run playwright install chromium`.
+- [ ] **Probe the new sources**: `uv run jobscraper probe ats_boards microsoft jobly -v`.
+  - `ats_boards`: 13 enterprise boards were added unverified (Nokia, Siemens, SAP, Wärtsilä,
+    Volvo, Bosch, Ubisoft, Spotify, Adyen, N26, Celonis, Delivery Hero, Ericsson — see the
+    comments in `config/sources.yaml`). Keep the ones that answer, fix or delete the rest.
+    A failing board is only logged; the source aborts only when *all* boards fail.
+  - `microsoft`: the search/detail endpoint is undocumented; the adapter docstring lists the
+    assumptions (param names, `totalJobs` pagination, `workSiteFlexibility` wording,
+    teaser-vs-full description). If descriptions come back full, set `fetch_details: false`.
+  - `jobly`: disabled; written blind. Expect selector fixes. Enable it in `sources.yaml` once
+    the probe shows real postings.
+- [ ] **One real batch run**: `uv run jobscraper prefilter --batch` on a small DB (or
+  `--max-jobs 20`) to confirm the Message Batches wire format is accepted; then decide whether
+  to set `ai.prefilter_batch: true` in `config/profile.yaml`.
+- [ ] **Check the diff output**: run the pipeline twice (`uv run jobscraper run`, then again
+  next day) and read `results/diff-<date>.md` and the "New since report #N" section at the top
+  of the report.
+- [ ] **Schedule it**: either the crontab line in `scripts/scheduled_run.sh` (with `MAILTO=`) or
+  register a self-hosted runner and set the repository variable `SCHEDULED_RUNS=true` for
+  `.github/workflows/scheduled-run.yml`. See docs/SCHEDULING.md.
+- [ ] **Browser smoke tests**: `uv run pytest tests/test_browser.py tests/test_web_browser.py -q`
+  should no longer skip after the Chromium install.
+
 ## Improving match quality (agreed levers, not yet built)
 The CV is a thin signal. Three additions, in order of expected payoff:
 
