@@ -15,6 +15,7 @@ Written by `jobscraper report`; regenerate from `stats/runs.jsonl` with `jobscra
 
 | date | report | jobs | new | keep | review | drop | prefiltered | passed | ranked | cost | rules | prompt |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 2026-09-10 | #6 | 11,878 | 3,997 | 1,699 | 440 | 9,739 | 2,298 | 1,194 | 78 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 | 2026-09-10 | #5 | 7,881 | 0 | 1,087 | 200 | 6,594 | 2,298 | 1,194 | 80 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 | 2026-09-10 | #4 | 7,881 | 0 | 1,087 | 200 | 6,594 | 2,298 | 1,194 | 80 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 
@@ -30,16 +31,16 @@ Primary drop reason of each profile's newest run.
 
 | profile | category | drops |
 |---|---|---:|
-| default | level_excluded | 1,848 |
-| default | not_software_title | 1,578 |
-| default | seniority_label | 1,331 |
-| default | duplicate | 444 |
-| default | non_software_title_hint | 418 |
-| default | posting_language | 283 |
-| default | too_old | 241 |
-| default | years_required | 222 |
-| default | language_required | 138 |
-| default | location | 91 |
+| default | not_software_title | 2,187 |
+| default | level_excluded | 1,966 |
+| default | seniority_label | 1,326 |
+| default | duplicate | 1,037 |
+| default | too_old | 988 |
+| default | years_required | 648 |
+| default | posting_language | 635 |
+| default | non_software_title_hint | 560 |
+| default | language_required | 248 |
+| default | location | 144 |
 | felipe | duplicate | 2,690 |
 | felipe | too_old | 1,946 |
 | felipe | posting_language | 1,840 |
