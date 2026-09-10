@@ -100,12 +100,15 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   See docs/SCHEDULING.md. Also decide which profiles the schedule covers (`--profile felipe`
   runs are separate).
 - [x] **Browser smoke tests** — see the first item.
-- [ ] **Location-aware board filtering**: Microsoft/Ericsson list every job worldwide and the
-  title filter still leaves ~350/~200 postings whose descriptions are fetched lazily even
-  though most are in the US/India and the rule filter drops them afterwards. A per-board
-  `countries:` filter applied before the detail fetch would cut that. This got a lot more
-  valuable on 2026-09-10: `ats_boards` now has 81 boards, and the probe samples of the big
-  ones came back from Kuala Lumpur, Bengaluru, Portage MI and Petaling Jaya.
+- [x] **Location-aware board filtering** — done 2026-09-10: a board may declare
+  `countries: [..]` (ISO-2) in `config/sources.yaml`, and `ats_boards` skips a posting whose
+  country is readable and outside the list *before* fetching its description (unknown country
+  and remote postings are kept for the rule filter). 47 worldwide boards share the
+  `&target_countries` anchor = the profile's tier1+tier2+tier3; keep it in sync with
+  `config/profile.yaml`. Workday's "N Locations" rollups now resolve their country from the
+  `externalPath` slug (`/job/Shanghai-Shanghai-China/…`). Source-level `default_countries:`
+  exists but is unset on purpose. Felipe's `config/profiles/felipe/sources.yaml` has not
+  been given a list yet (his tiers differ).
 - [ ] **Time one full `ats_boards` run** and decide whether it still fits the schedule. Probing
   the 63 new boards one at a time took ~4 minutes of listing in total, but JPMorgan alone is
   78 s / 7 379 postings and Hitachi 20 s / 4 246, and the descriptions of the title survivors

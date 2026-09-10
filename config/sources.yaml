@@ -108,7 +108,12 @@ sources:
       - ats: oracle                                   # Nokia: Oracle Recruiting Cloud
         slug: https://fa-evmr-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1
         company: Nokia
-        countries: &target_countries [FI, EE, SE, "NO", DK, DE, NL, BE, AT, CH, PL, CZ, PT, ES, IT, FR, IE, GB, LT, LV, AE]
+        # Keep in sync with the location tiers in config/profile.yaml (tier1 + tier2 + tier3): a posting
+        # outside this list is skipped before its description is fetched, so the list must not be
+        # narrower than what the rule filter would keep.
+        countries: &target_countries [FI, EE, AT, BE, BG, HR, CY, CZ, DK, FR, DE, GR, HU, IE, IT, LV, LT, LU, MT, NL,
+                                      PL, PT, RO, SK, SI, ES, SE, "NO", IS, CH, LI,
+                                      AE, GE, AZ, AM, BA, RS, ME, MK, AL, MD, UA, KZ, UZ, KG, TR]  # tier3 minus XK (Kosovo has no ISO-2 code)
       # Siemens (jobs.siemens.com, Avature): NOT usable. The tenant serves 6 postings per page whatever
       # jobRecordsPerPage asks for, and ats-scrapers stops paging at the first short page, so
       # `{ats: avature, slug: https://jobs.siemens.com/en_US/externaljobs}` returns 6 of 999+ jobs.
