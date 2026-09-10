@@ -73,6 +73,25 @@ the first real run; expect a few to need small parser fixes.
    then run it fully. `uv run jobscraper rank --top 20` → same for Opus.
 6. `uv run jobscraper report` → read `data/reports/…md`. Adjust prompts, bump `PROMPT_VERSION`.
 
+## Improving match quality (agreed levers, not yet built)
+The CV is a thin signal. Three additions, in order of expected payoff:
+
+1. **AI-only dossier.** A `dossier` section in `config/profile.yaml`, used only by the Opus
+   ranking stage. It holds what a CV never has room for: each project's real size and the
+   owner's role in it, tools by actual proficiency, domains liked and disliked, deal-breakers
+   (on-call, travel, consultancy placements, B2B contracts), salary floor, preferred company
+   size, what "senior" means to him, whether a mid-level title is acceptable for the right
+   stack. Produced from a ~30-question questionnaire answered in prose, then condensed.
+2. **The owner's own verdicts as anchors.** After 20-30 decisions in the web UI, a handful of
+   "applied" and "skipped" cases with one line of reasoning each go into the ranking prompt as
+   worked examples. Strongest calibration available; also removes chunk-to-chunk variance,
+   since every batch sees the same anchors.
+3. **Explicit scoring weights.** A small rubric in the profile (stack fit, domain, level,
+   location, pay, company type, each with a weight) so the score is composed the same way in
+   every batch instead of each call inventing its own balance.
+
+Trigger: whenever a new CV arrives, offer these (CLAUDE.md → "When the owner hands over a new CV").
+
 ## Later ideas
 - Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.
 - Message Batches API for the prefilter (50% cheaper, async).

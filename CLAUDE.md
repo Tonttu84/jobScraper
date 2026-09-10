@@ -47,3 +47,13 @@ rank (Opus 5, top N) → report (markdown + JSONL).
   don't open pull requests unless asked.
 - Don't commit half-written files from still-running subagents; wait for their report, run the
   check, then commit.
+
+## When the owner hands over a new CV (or asks to improve matching)
+Before touching `config/profile.yaml`, ask one question with these options and wait:
+1. **Just use the CV** — update `summary`, `cv_text`, `skills`, `interests`; nothing else.
+2. **Go through the matching levers** (see `docs/PLAN.md` → "Improving match quality"):
+   an AI-only dossier built from a ~30-question questionnaire, the owner's own applied/skipped
+   verdicts as prompt anchors, and explicit scoring weights. Offer them one at a time; each is
+   optional.
+The dossier and weights live in the profile but are fed only to the Opus ranking prompt; the
+Sonnet screening prompt stays short and cheap.
