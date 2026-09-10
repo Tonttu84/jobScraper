@@ -38,6 +38,25 @@ sources:
     # Verified 2026-09-07 (the slugs guessed in the sandbox were mostly wrong):
     #   wolt, oura, veriff, wise -> Greenhouse; supercell -> Ashby; pipedrive -> Lever.
     #   aiven (aiven.io/careers) and bolt (bolt.eu) front a custom ATS and can't be resolved from a URL.
+    #
+    # A board entry is either a careers URL (above) or a mapping, for custom-domain
+    # enterprise sites the URL can't identify (jobs.siemens.com -> Phenom, Workday, …):
+    #   - ats: phenom                     # ATS name, as ats-scrapers knows it
+    #     slug: https://jobs.siemens.com  # what that scraper's constructor wants (see its docstring)
+    #     company: Siemens                # optional Job.company override
+    #     options: {locale: en_global, country: global}   # optional scraper ctor kwargs
+    #     include: 'engineer|intern'      # optional per-board title regex (case-insensitive)
+    #     exclude: 'senior|manager'       # optional
+    #     lazy_descriptions: auto         # true | false | auto (default)
+    # `url:` may be used instead of `ats`/`slug` when you want include/exclude/company on a
+    # URL-resolved board. An unknown ATS name just fails that one board.
+    #
+    # Title filters run before conversion, so a filtered board never pays for the postings it
+    # drops: when the scraper can fetch descriptions per posting (Workday, Oracle, …), the
+    # listing is fetched without them and only the survivors are detailed. That is what keeps
+    # a thousand-posting enterprise board usable. default_* apply to boards without their own.
+    default_include: 'engineer|developer|software|intern|trainee|graduate|working student|harjoittelija|kehittäjä'
+    default_exclude: 'senior|lead|principal|staff|manager|director|head of|architect|vp\b'
     urls:
       - https://boards.greenhouse.io/wolt
       - https://boards.greenhouse.io/oura
