@@ -106,6 +106,13 @@ def test_advantage_wording_is_optional() -> None:
     assert req.required == set()
 
 
+def test_preference_wording_is_optional_even_next_to_a_fluent_requirement() -> None:
+    """Seen live 2026-09-10 (S&T, Delft): the rule dropped the job as 'requires nl'."""
+    req = find_language_requirements("You are fluent in written and spoken English and Dutch is a preference")
+    assert req.required == {"en"}
+    assert req.optional == {"nl"}
+
+
 def test_native_or_c1_is_required() -> None:
     req = find_language_requirements("Native or C1 Dutch.")
     assert req.required == {"nl"}

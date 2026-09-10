@@ -75,7 +75,7 @@ _REQUIRED_WORDS = re.compile(
     re.I,
 )
 _OPTIONAL_WORDS = re.compile(
-    r"\b(plus|bonus|advantage|asset|nice[- ]to[- ]have|preferred|preferably|appreciated|beneficial|desirable|"
+    r"\b(plus|bonus|advantage|asset|nice[- ]to[- ]have|preferred|preferably|preference|appreciated|beneficial|desirable|"
     r"optional|not required|not necessary|no need|would be|is a merit|helpful|"
     r"eduksi|etu|katsotaan eduksi|plussaa|hyödyksi|ei vaadita|ei edellytetä|"
     r"von vorteil|wünschenswert|nicht erforderlich|kein muss|gerne gesehen|"
@@ -92,7 +92,13 @@ _NOT_NEEDED = re.compile(
     re.I,
 )
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?•\n])\s+|\s*[•·▪▸►]\s*|\n+")
-_CLAUSE_SPLIT = re.compile(r"\s*[;,()/]\s*|\s+[-–—]\s+")
+_ANY_LANGUAGE_NAME = "|".join(re.escape(n.strip()) for names in LANGUAGE_NAMES.values() for n in names)
+# Punctuation and dashes split clauses; so does a conjunction that directly precedes a language
+# name ("fluent English and Dutch is a preference" → "fluent english" | "dutch is a preference"),
+# while "written and spoken English" stays one clause.
+_CLAUSE_SPLIT = re.compile(
+    r"\s*[;,()/]\s*|\s+[-–—]\s+|\s+(?:and|und|ja|och|og|e|y|et)\s+(?=(?:" + _ANY_LANGUAGE_NAME + r"))", re.I,
+)
 
 # lingua is slow to build; restrict to languages that actually show up in EU tech ads.
 _DETECT_LANGS = ["en", "fi", "de", "sv", "nb", "da", "et", "pl", "nl", "fr", "es", "pt", "it", "cs", "sk",
