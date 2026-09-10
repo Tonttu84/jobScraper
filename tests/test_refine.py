@@ -83,6 +83,66 @@ def test_refine_user_prompt_concatenates_the_shortlist(settings):
         assert job.title in text
     assert "asks for 3 years" in text  # the same per-job prompt the rank stage sends
     assert text.count("JOB POSTING") == 2
+    assert text.startswith("SHORTLIST (2 postings)")
+    assert "ALREADY PLACED" not in text  # no anchors: byte-for-byte the pre-feature prompt
+
+
+def _placed(job: Job, score: int, position: int, summary: str = "solid all round") -> AIVerdict:
+    return AIVerdict(job_id=job.id, stage="refine", model="claude-fable-5-1",
+                     prompt_version=PROMPT_VERSION, relevant=True, score=score, position=position,
+                     language_ok=True, seniority_ok=True, location_ok=True, summary=summary)
+
+
+def _anchor_job(n: int, title: str) -> Job:
+    """A job whose description is unmistakable, so a test can prove it was NOT sent."""
+    return Job(source="test", source_id=str(n), url=f"https://example.test/{n}", title=title,
+               company="Anchor Oy", country="FI", location_raw="Helsinki",
+               description="ANCHOR-ONLY-DESCRIPTION: a body no anchored posting should ever resend.")
+
+
+def test_refine_user_prompt_sends_anchors_as_one_liners_and_only_the_new_blocks(settings):
+    placed = [_anchor_job(7, "Placed Backend Engineer"), _anchor_job(8, "Placed Data Engineer")]
+    new = [_job(1, "Junior Go Developer")]
+    anchors = [(placed[0], _placed(placed[0], 88, 1, "carries the list")),
+               (placed[1], _placed(placed[1], 61, 2, "narrow stack"))]
+    text = refine_user_prompt(new, {}, 6000, anchors=anchors)
+
+    assert text.startswith("SHORTLIST (3 postings: 2 already placed, 1 new)")
+    assert "ALREADY PLACED (fixed — do not re-score, do not return these)" in text
+    assert (f"{placed[0].id} · Placed Backend Engineer · Anchor Oy · Helsinki "
+            "· refine score 88 · position 1 · carries the list") in text
+    assert "refine score 61 · position 2 · narrow stack" in text
+
+    # The anchors are one line each: nothing of their own posting block is resent.
+    assert "ANCHOR-ONLY-DESCRIPTION" not in text
+    for job in placed:
+        assert f"### job_id: {job.id}" not in text
+    assert text.count("JOB POSTING") == 1
+    assert f"### job_id: {new[0].id}" in text
+    assert "NEW — score these relative to the placed ones (1 posting)" in text
+
+    # And the answer is asked for in the combined ordering, on the anchors' scale.
+    assert "Return exactly the 1 new job_id" in text
+    assert "1 = best of all" in text
+    assert "same scale as the placed" in text
+
+
+def test_refine_user_prompt_pluralises_the_new_section(settings):
+    new = [_job(1), _job(2)]
+    anchor = _anchor_job(7, "Placed One")
+    text = refine_user_prompt(new, {}, 6000, anchors=[(anchor, _placed(anchor, 70, 1))])
+    assert text.startswith("SHORTLIST (3 postings: 1 already placed, 2 new)")
+    assert "NEW — score these relative to the placed ones (2 postings)" in text
+    assert "Return exactly the 2 new job_ids" in text
+
+
+def test_refine_user_prompt_tolerates_an_anchor_without_a_position(settings):
+    """A verdict stored before positions existed still makes a usable anchor line."""
+    anchor = _anchor_job(7, "Placed One")
+    verdict = _placed(anchor, 70, 1)
+    verdict.position = None
+    text = refine_user_prompt([_job(1)], {}, 6000, anchors=[(anchor, verdict)])
+    assert "refine score 70 · position ? ·" in text
 
 
 # ---------------------------------------------------------------------- one call
@@ -167,6 +227,90 @@ def test_run_with_an_empty_shortlist_never_calls_the_api(stage, monkeypatch):
 
     monkeypatch.setattr(stage.client.messages, "parse", boom)
     assert stage.run([], {}) == []
+
+
+# ------------------------------------------------------------- incremental runs
+# Second and later rounds: only the shortlist members without a refine verdict are scored, and
+# the ones already placed ride along as fixed anchors so the new ones land in the same ordering.
+
+
+def _place(stage_obj, job, score: int, position: int) -> None:
+    stage_obj.store.save_verdict(_placed(job, score, position))
+
+
+def test_run_scores_only_the_new_jobs_and_anchors_the_placed_ones(stage, monkeypatch):
+    jobs = [_job(1, "Placed A"), _job(2, "Placed B"), _job(3, "Brand New")]
+    _place(stage, jobs[0], 88, 1)
+    _place(stage, jobs[1], 61, 2)
+    calls: list[dict] = []
+
+    def fake_parse(**kw):
+        calls.append(kw)
+        return _response(_refinement([jobs[2]], [75]))
+
+    monkeypatch.setattr(stage.client.messages, "parse", fake_parse)
+    verdicts = stage.run(jobs, {})
+
+    prompt = calls[0]["messages"][0]["content"]
+    assert prompt.count("### job_id:") == 1
+    assert f"### job_id: {jobs[2].id}" in prompt
+    assert "ALREADY PLACED" in prompt
+    assert jobs[0].id in prompt and jobs[1].id in prompt  # as anchor lines
+    assert "refine score 88 · position 1" in prompt
+
+    assert [(v.job_id, v.score) for v in verdicts] == [(jobs[2].id, 75)]
+    stored = stage.store.verdicts("refine", PROMPT_VERSION)
+    assert {jid: v.score for jid, v in stored.items()} == {jobs[0].id: 88, jobs[1].id: 61,
+                                                          jobs[2].id: 75}
+
+
+def test_run_does_nothing_when_the_whole_shortlist_is_already_placed(stage, monkeypatch, caplog):
+    jobs = [_job(1), _job(2)]
+    _place(stage, jobs[0], 88, 1)
+    _place(stage, jobs[1], 61, 2)
+
+    def boom(**kw):
+        raise AssertionError("the API was called with nothing new to score")
+
+    monkeypatch.setattr(stage.client.messages, "parse", boom)
+    with caplog.at_level("INFO"):
+        assert stage.run(jobs, {}) == []
+    assert "already placed" in caplog.text
+
+
+def test_run_with_force_re_scores_the_whole_shortlist(stage, monkeypatch):
+    jobs = [_job(1), _job(2)]
+    _place(stage, jobs[0], 88, 1)
+    calls: list[dict] = []
+
+    def fake_parse(**kw):
+        calls.append(kw)
+        return _response(_refinement(jobs, [40, 30]))
+
+    monkeypatch.setattr(stage.client.messages, "parse", fake_parse)
+    verdicts = stage.run(jobs, {}, force=True)
+
+    prompt = calls[0]["messages"][0]["content"]
+    assert prompt.count("### job_id:") == 2
+    assert "ALREADY PLACED" not in prompt
+    assert [v.score for v in verdicts] == [40, 30]
+    assert stage.store.verdicts("refine", PROMPT_VERSION)[jobs[0].id].score == 40
+
+
+def test_run_drops_an_answer_that_re_scores_an_anchor(stage, monkeypatch, caplog):
+    jobs = [_job(1, "Placed A"), _job(2, "Brand New")]
+    _place(stage, jobs[0], 88, 1)
+    answer = Refinement(items=[
+        RefinedJob(job_id=jobs[1].id, position=1, score=92, summary="beats the placed one"),
+        RefinedJob(job_id=jobs[0].id, position=2, score=10, summary="re-scored an anchor"),
+    ])
+    monkeypatch.setattr(stage.client.messages, "parse", lambda **kw: _response(answer))
+    with caplog.at_level("WARNING"):
+        verdicts = stage.run(jobs, {})
+
+    assert [(v.job_id, v.position) for v in verdicts] == [(jobs[1].id, 1)]
+    assert "unknown job_id" in caplog.text
+    assert stage.store.verdicts("refine", PROMPT_VERSION)[jobs[0].id].score == 88  # untouched
 
 
 # ------------------------------------------------------------------- bad answers

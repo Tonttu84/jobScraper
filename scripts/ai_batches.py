@@ -4,7 +4,7 @@
     python scripts/ai_batches.py export prefilter [--chunk 100] [--max-chars 1500] [--all] [--sample 20]
     python scripts/ai_batches.py import prefilter|rank|refine
     python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60] [--sample 20]
-    python scripts/ai_batches.py export refine [--top 20] [--max-chars N] [--force]
+    python scripts/ai_batches.py export refine [--top 20] [--max-chars N] [--force] [--force]
     python scripts/ai_batches.py boost
     python scripts/ai_batches.py stability export [--top 30] [--chunk 15] [--seed 1] [--max-chars N]
     python scripts/ai_batches.py stability compare
@@ -24,10 +24,19 @@ job with the ``Screening``/``Ranking`` fields plus ``job_id``). Import validates
 schemas and stores them as ``AIVerdict`` rows, so ``jobscraper report`` renders them like API runs.
 
 ``refine`` is the odd one out: it is a single request, not a chunked one. ``export refine`` writes
-``refine/system.txt`` and one ``refine/batch.json`` — ``{"prompt": ..., "job_ids": [...]}`` — holding
-the whole shortlist (the best ``--top`` jobs by rank score). The subagent answers with one
+``refine/system.txt`` and one ``refine/batch.json`` — ``{"prompt", "job_ids", "anchors"}`` — over the
+shortlist (the best ``--top`` jobs by rank score). The subagent answers with one
 ``refine/verdicts/batch.json``, a JSON object ``{"items": [{job_id, position, score, summary}, ...]}``
 matching the ``Refinement`` schema, and ``import refine`` stores it exactly as the API path would.
+
+``export refine`` is incremental: shortlist members that already carry a refine verdict under the
+current prompt version are *not* re-scored. They go into the prompt as fixed anchors — one line
+each with the score and position they already have — and their ids go into ``anchors``;
+``job_ids`` holds only the new ones, which is what the subagent answers for and what
+``import refine`` validates against. So a second round after a scrape pays for the jobs that
+joined the shortlist, not for the whole list again. The printed line says how many are new and how
+many are anchored; when nothing is new the export is skipped, and ``--force`` re-scores the whole
+shortlist against itself (useful for measuring drift, or after a prompt change).
 
 ``export prefilter`` is refill-aware: it skips jobs that already carry a prefilter verdict under
 the current prompt version, so after a hydration round only the cleared rows go back to Sonnet
@@ -269,27 +278,34 @@ def _shortlist(store: Store, filters: dict, top: int) -> list[Job]:
 
 
 def export_refine(top: int, max_chars: int, force: bool = False) -> None:
-    """Write the whole shortlist as ONE prompt: the refine pass is a single request, not chunks.
+    """Write the shortlist as ONE prompt: the refine pass is a single request, not chunks.
 
-    The pass compares the shortlist against itself, so it is only worth repeating when the
-    shortlist changed: if every shortlisted job already carries a refine verdict under the
-    current prompt version, nothing new is being compared and the export is skipped
-    (``--force`` re-runs it anyway, e.g. to measure drift).
+    Incremental, like the API path: a shortlisted job that already carries a refine verdict under
+    the current prompt version is not re-scored, it goes into the prompt as a fixed anchor (one
+    line: title, company, its score and position) and its id lands in ``anchors``. ``job_ids``
+    holds the new ones — the ones the subagent has to answer for. When nothing is new there is
+    nothing to compare and the export is skipped; ``--force`` re-scores the whole shortlist
+    against itself, e.g. to measure drift.
     """
     settings = load_settings()
     store = Store()
     filters = store.filter_results()
-    todo = _shortlist(store, filters, top)
-    refined = store.verdicts("refine", PROMPT_VERSION)
-    if todo and not force and all(j.id in refined for j in todo):
-        print(f"refine: all {len(todo)} shortlisted jobs already carry a refine verdict and the shortlist "
-              "has not changed; nothing new to compare (--force re-runs it)")
+    shortlist = _shortlist(store, filters, top)
+    refined = {} if force else store.verdicts("refine", PROMPT_VERSION)
+    todo = [j for j in shortlist if j.id not in refined]
+    anchors = [(j, refined[j.id]) for j in shortlist if j.id in refined]
+    anchors.sort(key=lambda pair: (pair[1].position is None, pair[1].position or 0, -pair[1].score))
+    if shortlist and not todo:
+        print(f"refine: all {len(shortlist)} shortlisted jobs already carry a refine verdict and the "
+              "shortlist has not changed; nothing new to compare (--force re-runs it)")
         return
     out = _out_dir("refine")
     (out / "system.txt").write_text(system_prompt("refine", settings.profile), encoding="utf-8")
-    batch = {"prompt": refine_user_prompt(todo, filters, max_chars), "job_ids": [j.id for j in todo]}
+    batch = {"prompt": refine_user_prompt(todo, filters, max_chars, anchors=anchors or None),
+             "job_ids": [j.id for j in todo], "anchors": [j.id for j, _ in anchors]}
     (out / "batch.json").write_text(json.dumps(batch, ensure_ascii=False, indent=0), encoding="utf-8")
-    print(f"refine: {len(todo)} jobs in one prompt → {out / 'batch.json'}")
+    print(f"refine: {len(todo)} new jobs against {len(anchors)} already placed "
+          f"→ {out / 'batch.json'}")
 
 
 def import_refine() -> None:
@@ -579,7 +595,8 @@ def main() -> None:
     ap.add_argument("--all", action="store_true",
                     help="export prefilter only: export every survivor, not just the unscreened ones")
     ap.add_argument("--force", action="store_true",
-                    help="export refine: re-run even when the shortlist is unchanged since the last refine pass")
+                    help="export refine: re-score every shortlisted job instead of anchoring the "
+                         "ones that already carry a refine verdict")
     ap.add_argument("--top", type=int, default=None,
                     help="export rank: 60; export refine: 20; hydrate linkedin: 480")
     ap.add_argument("--max-fetch", type=int, default=None,

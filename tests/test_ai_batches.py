@@ -757,23 +757,25 @@ def test_export_refine_writes_one_prompt_for_the_whole_shortlist(shortlist, data
 
     batch = json.loads((out / "batch.json").read_text(encoding="utf-8"))
     assert batch["job_ids"] == [shortlist[0].id, shortlist[1].id]  # best two, the drop left out
-    assert set(batch) == {"prompt", "job_ids"}
+    assert set(batch) == {"prompt", "job_ids", "anchors"}
+    assert batch["anchors"] == []  # first round: nothing is placed yet
     for job in shortlist[:2]:
         assert f"### job_id: {job.id}" in batch["prompt"]
     assert shortlist[2].id not in batch["prompt"]
     assert "TAIL-OF-THE-DESCRIPTION" in batch["prompt"]  # the 6000-char budget, as for rank
+    assert "ALREADY PLACED" not in batch["prompt"]
     assert not list(out.glob("chunk-*.json"))
-    assert "2 jobs in one prompt" in capsys.readouterr().out
+    assert "2 new jobs against 0 already placed" in capsys.readouterr().out
 
 
 def _refine_scores(jobs: list[Job], scores: list[int]) -> None:
     store = store_mod.Store()
     try:
-        for job, score in zip(jobs, scores):
+        for position, (job, score) in enumerate(zip(jobs, scores), start=1):
             store.save_verdict(AIVerdict(job_id=job.id, stage="refine", model="claude-fable-5-1 (subagent)",
                                          prompt_version=PROMPT_VERSION, relevant=True, score=score,
-                                         language_ok=True, seniority_ok=True, location_ok=True,
-                                         summary=f"refined {score}"))
+                                         position=position, language_ok=True, seniority_ok=True,
+                                         location_ok=True, summary=f"refined {score}"))
     finally:
         store.close()
 
@@ -786,19 +788,30 @@ def test_export_refine_skips_a_shortlist_that_was_already_refined(shortlist, dat
     assert "already carry a refine verdict" in capsys.readouterr().out
 
 
-def test_export_refine_runs_again_when_the_shortlist_changed(shortlist, data_dir, monkeypatch, capsys):
-    _refine_scores(shortlist[:1], [85])  # the second-best job is new to the shortlist
+def test_export_refine_exports_only_the_new_jobs_and_anchors_the_rest(shortlist, data_dir, monkeypatch, capsys):
+    """The second-best job is new to the shortlist; the best one rides along as a fixed anchor."""
+    _refine_scores(shortlist[:1], [85])
     _run(monkeypatch, "export", "refine", "--top", "2")
+
     batch = json.loads((_refine_dir(data_dir) / "batch.json").read_text(encoding="utf-8"))
-    assert batch["job_ids"] == [shortlist[0].id, shortlist[1].id]
-    assert "2 jobs in one prompt" in capsys.readouterr().out
+    assert batch["job_ids"] == [shortlist[1].id]  # only the new one is scored
+    assert batch["anchors"] == [shortlist[0].id]
+    assert f"### job_id: {shortlist[1].id}" in batch["prompt"]
+    assert f"### job_id: {shortlist[0].id}" not in batch["prompt"]
+    assert "ALREADY PLACED" in batch["prompt"]
+    assert f"{shortlist[0].id} · " in batch["prompt"]  # the anchor's one-liner
+    assert "refine score 85" in batch["prompt"]
+    assert "1 new jobs against 1 already placed" in capsys.readouterr().out
 
 
 def test_export_refine_force_rewrites_an_unchanged_shortlist(shortlist, data_dir, monkeypatch, capsys):
     _refine_scores(shortlist[:2], [85, 75])
     _run(monkeypatch, "export", "refine", "--top", "2", "--force")
-    assert (_refine_dir(data_dir) / "batch.json").exists()
-    assert "2 jobs in one prompt" in capsys.readouterr().out
+    batch = json.loads((_refine_dir(data_dir) / "batch.json").read_text(encoding="utf-8"))
+    assert batch["job_ids"] == [shortlist[0].id, shortlist[1].id]
+    assert batch["anchors"] == []  # --force re-scores everything, so nothing is fixed
+    assert "ALREADY PLACED" not in batch["prompt"]
+    assert "2 new jobs against 0 already placed" in capsys.readouterr().out
 
 
 def test_import_refine_stores_the_answer_like_the_api_path(shortlist, data_dir, monkeypatch, capsys):
@@ -828,6 +841,32 @@ def test_import_refine_stores_the_answer_like_the_api_path(shortlist, data_dir, 
     assert best.summary == "Best against the rest."
     assert stored[shortlist[0].id].score == 60
     assert "imported 2 verdicts of 3 exported" in capsys.readouterr().out
+
+
+
+def test_import_refine_ignores_a_re_scored_anchor(shortlist, data_dir, monkeypatch, capsys):
+    """Only the exported (new) ids are stored; an anchor the subagent tried to re-score is dropped."""
+    _refine_scores(shortlist[:1], [85])
+    _run(monkeypatch, "export", "refine", "--top", "2")
+    capsys.readouterr()
+    answer = {"items": [
+        {"job_id": shortlist[1].id, "position": 1, "score": 91, "summary": "beats the placed one"},
+        {"job_id": shortlist[0].id, "position": 2, "score": 12, "summary": "re-scored an anchor"},
+    ]}
+    verdicts = _refine_dir(data_dir) / "verdicts"
+    verdicts.mkdir(parents=True, exist_ok=True)
+    (verdicts / "batch.json").write_text(json.dumps(answer), encoding="utf-8")
+
+    _run(monkeypatch, "import", "refine")
+
+    store = store_mod.Store()
+    try:
+        stored = store.verdicts("refine", PROMPT_VERSION)
+    finally:
+        store.close()
+    assert stored[shortlist[1].id].score == 91 and stored[shortlist[1].id].position == 1
+    assert stored[shortlist[0].id].score == 85  # the anchor keeps the verdict it already had
+    assert "imported 1 verdicts of 1 exported" in capsys.readouterr().out
 
 
 def test_import_refine_without_an_export_says_so(data_dir, monkeypatch, capsys):

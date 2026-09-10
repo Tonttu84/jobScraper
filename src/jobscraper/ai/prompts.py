@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from jobscraper.config import LanguagePolicy, LocationPolicy, Profile
 from jobscraper.filters.language import LANGUAGE_NAMES
-from jobscraper.models import FilterResult, Job
+from jobscraper.models import AIVerdict, FilterResult, Job
 
 PROMPT_VERSION = "2026-09-09.1"
 
@@ -183,11 +183,51 @@ def job_prompt(job: Job, fr: FilterResult | None, max_chars: int) -> str:
     return "JOB POSTING\n" + "\n".join(meta) + "\n\nDESCRIPTION\n" + (desc or "(no description available; judge from the title)")
 
 
-def refine_user_prompt(jobs: list[Job], filters: dict[str, FilterResult], max_chars: int) -> str:
-    """The whole shortlist as one message: every posting's own ``job_prompt``, keyed by job id.
+#: Tail of the user prompt when part of the shortlist is already placed. The answer covers the
+#: new postings only, but has to position them among the fixed ones, on the fixed ones' scale.
+REFINE_ANCHORS_TAIL = """
+
+Return exactly the {n} new {ids} listed above, each once, and nothing else — the placed postings
+keep the score and position they already have. `position` is the slot in the combined ordering
+with the placed postings included (1 = best of all), so a new posting that beats everything takes
+position 1 and the ones it displaces move down. `score` is on the same scale as the placed scores
+above: a new posting as good as the one placed at 80 scores about 80.
+"""
+
+
+def _anchor_line(job: Job, verdict: AIVerdict) -> str:
+    """One already-placed posting as a single line.
+
+    Enough to judge a new posting against — what the job is, and where the same reader put it —
+    without resending the description it was judged on, which is the whole point of anchoring.
+    """
+    where = job.location_raw or job.country or "unknown"
+    position = verdict.position if verdict.position is not None else "?"
+    return (f"{job.id} · {job.title} · {job.company or 'unknown'} · {where} · "
+            f"refine score {verdict.score} · position {position} · {verdict.summary}")
+
+
+def refine_user_prompt(jobs: list[Job], filters: dict[str, FilterResult], max_chars: int,
+                       anchors: list[tuple[Job, AIVerdict]] | None = None) -> str:
+    """The shortlist as one message: every posting's own ``job_prompt``, keyed by job id.
 
     The id line is what the answer refers back to, so it has to survive verbatim; the rest is
     byte-for-byte what the rank stage sent for that job on its own.
+
+    ``anchors`` are the shortlist members that already carry a refine verdict. Given them, only
+    ``jobs`` (the new ones) get a full block, the anchors are listed as one fixed line each, and
+    the answer is asked for in the combined ordering — so a second round pays for the new
+    postings only. Without anchors the prompt is unchanged, byte for byte.
     """
     blocks = [f"### job_id: {job.id}\n{job_prompt(job, filters.get(job.id), max_chars)}" for job in jobs]
-    return f"SHORTLIST ({len(jobs)} postings)\n\n" + "\n\n".join(blocks)
+    if not anchors:
+        return f"SHORTLIST ({len(jobs)} postings)\n\n" + "\n\n".join(blocks)
+    placed = "\n".join(_anchor_line(job, verdict) for job, verdict in anchors)
+    plural = "posting" if len(jobs) == 1 else "postings"
+    return (f"SHORTLIST ({len(anchors) + len(jobs)} postings: {len(anchors)} already placed, "
+            f"{len(jobs)} new)\n\n"
+            "ALREADY PLACED (fixed — do not re-score, do not return these)\n"
+            f"{placed}\n\n"
+            f"NEW — score these relative to the placed ones ({len(jobs)} {plural})\n\n"
+            + "\n\n".join(blocks)
+            + REFINE_ANCHORS_TAIL.format(n=len(jobs), ids="job_id" if len(jobs) == 1 else "job_ids"))

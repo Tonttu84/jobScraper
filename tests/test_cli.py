@@ -344,13 +344,18 @@ def spy_refine(monkeypatch):
         self.store = store
         self.model = model or profile.ai.refine_model
 
-    def run(self, jobs, filters):
+    def run(self, jobs, filters, *, force=False):
+        """The real stage's split, without the API: already-placed jobs ride along as anchors."""
         calls["jobs"] = list(jobs)
         calls["model"] = [self.model]
+        calls["force"] = force
+        placed = {} if force else self.store.verdicts("refine", PROMPT_VERSION)
+        todo = [j for j in jobs if j.id not in placed]
+        calls["scored"] = [j.id for j in todo]
         out = [AIVerdict(job_id=j.id, stage="refine", model=self.model, prompt_version=PROMPT_VERSION,
                          relevant=True, score=90 - 10 * n, position=n + 1, language_ok=True,
                          seniority_ok=True, location_ok=True, summary=f"place {n + 1}")
-               for n, j in enumerate(jobs)]
+               for n, j in enumerate(todo)]
         for v in out:
             self.store.save_verdict(v)
         return out
@@ -378,7 +383,8 @@ def test_refine_scores_the_shortlist_and_prints_the_table(data_dir, fake_http, s
     assert result.exit_code == 0, result.output
     assert [j.id for j in spy_refine["jobs"]] == [job.id]
     assert spy_refine["model"] == ["claude-fable-5-1"]
-    assert "refine" in result.output and "1 of 1 jobs placed" in result.output
+    assert "refine" in result.output
+    assert "1 of 1 new jobs placed against 0 already refined" in result.output
 
     store = store_mod.Store()
     try:
@@ -421,10 +427,124 @@ def test_refine_with_no_verdicts_back_leaves_the_rank_scores(data_dir, fake_http
     from jobscraper.ai import client as ai_client
 
     _rank_one_job(data_dir)
-    monkeypatch.setattr(ai_client.RefineStage, "run", lambda self, jobs, filters: [])
+    monkeypatch.setattr(ai_client.RefineStage, "run", lambda self, jobs, filters, force=False: [])
     result = runner.invoke(cli_mod.app, ["refine"])
     assert result.exit_code == 0, result.output
     assert "the rank scores stand" in result.output
+
+
+def _rank_two_jobs(data_dir):
+    """Two ranked jobs, the DevOps one the better of the pair."""
+    _scrape_and_filter(data_dir)
+    store = store_mod.Store()
+    try:
+        first, second = _job(store, "DevOps"), _job(store, "Core Developer")
+        _seed_verdict(store, first, "rank", 80)
+        _seed_verdict(store, second, "rank", 70)
+        return first, second
+    finally:
+        store.close()
+
+
+def test_refine_scores_only_the_new_shortlist_members(data_dir, fake_http, spy_refine):
+    """A job that already carries a refine verdict is an anchor, not a second bill."""
+    first, second = _rank_two_jobs(data_dir)
+    store = store_mod.Store()
+    try:
+        _seed_verdict(store, first, "refine", 84, position=1)
+    finally:
+        store.close()
+
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+    assert [j.id for j in spy_refine["jobs"]] == [first.id, second.id]  # the whole shortlist goes in
+    assert spy_refine["scored"] == [second.id]  # only the new one is scored
+    assert spy_refine["force"] is False
+    assert "1 of 1 new jobs placed against 1 already refined" in result.output
+    # The table still shows both, and marks the one this call scored.
+    assert "DevOps" in result.output and "Core Developer" in result.output
+
+
+def test_refine_says_so_when_nothing_is_new(data_dir, fake_http, spy_refine):
+    job = _rank_one_job(data_dir)
+    store = store_mod.Store()
+    try:
+        _seed_verdict(store, job, "refine", 84, position=1)
+    finally:
+        store.close()
+
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+    assert "nothing new to compare" in result.output
+    assert "jobs" not in spy_refine  # the stage was never asked
+
+
+def test_refine_table_shows_an_anchor_stored_without_a_position(data_dir, fake_http, spy_refine):
+    """A verdict from a pass that stored no position still gets a row, at the bottom."""
+    first, second = _rank_two_jobs(data_dir)
+    store = store_mod.Store()
+    try:
+        _seed_verdict(store, first, "refine", 84)  # no position
+    finally:
+        store.close()
+
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+    assert spy_refine["scored"] == [second.id]
+    assert "1 of 1 new jobs placed against 1 already refined" in result.output
+    assert "DevOps" in result.output and "Core Developer" in result.output
+
+
+def test_refine_table_lists_a_shortlisted_job_with_no_refine_verdict(data_dir, fake_http, monkeypatch):
+    """The model answered for one of the two new jobs; the other keeps its rank score in the table."""
+    from jobscraper.ai import client as ai_client
+    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.models import AIVerdict
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    _rank_two_jobs(data_dir)
+
+    def init(self, profile, store, model=None) -> None:
+        self.store = store
+        self.model = model or profile.ai.refine_model
+
+    def run(self, jobs, filters, *, force=False):
+        v = AIVerdict(job_id=jobs[0].id, stage="refine", model=self.model,
+                      prompt_version=PROMPT_VERSION, relevant=True, score=77, position=1,
+                      language_ok=True, seniority_ok=True, location_ok=True, summary="only one")
+        self.store.save_verdict(v)
+        return [v]
+
+    monkeypatch.setattr(ai_client.RefineStage, "__init__", init)
+    monkeypatch.setattr(ai_client.RefineStage, "run", run)
+
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+    assert "1 of 2 new jobs placed against 0 already refined" in result.output
+    assert "DevOps" in result.output and "Core Developer" in result.output
+
+
+def test_refine_force_re_scores_the_whole_shortlist(data_dir, fake_http, spy_refine):
+    job = _rank_one_job(data_dir)
+    store = store_mod.Store()
+    try:
+        _seed_verdict(store, job, "refine", 84, position=1)
+    finally:
+        store.close()
+
+    result = runner.invoke(cli_mod.app, ["refine", "--force"])
+    assert result.exit_code == 0, result.output
+    assert spy_refine["force"] is True
+    assert spy_refine["scored"] == [job.id]
+    assert "1 of 1 new jobs placed against 0 already refined" in result.output
+
+    from jobscraper.ai.prompts import PROMPT_VERSION
+
+    store = store_mod.Store()
+    try:
+        assert store.verdicts("refine", PROMPT_VERSION)[job.id].score == 90
+    finally:
+        store.close()
 
 
 def test_report_orders_by_the_effective_score(data_dir, fake_http, spy_refine):

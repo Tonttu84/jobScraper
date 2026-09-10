@@ -314,16 +314,43 @@ class RefineStage:
             return {}
         return {"thinking": {"type": "adaptive"}}
 
-    def run(self, jobs: list[Job], filters: dict[str, FilterResult]) -> list[AIVerdict]:
-        """Score the shortlist in one call, store the verdicts, and return them in answer order."""
+    def _split(self, jobs: list[Job], force: bool) -> tuple[list[Job], list[tuple[Job, AIVerdict]]]:
+        """(new jobs, anchors) — the shortlist members without and with a refine verdict.
+
+        Anchors are ordered the way the previous pass placed them, so the prompt reads as a list.
+        """
+        if force:
+            return list(jobs), []
+        placed = self.store.verdicts("refine", PROMPT_VERSION)
+        todo = [j for j in jobs if j.id not in placed]
+        anchors = [(j, placed[j.id]) for j in jobs if j.id in placed]
+        anchors.sort(key=lambda pair: (pair[1].position is None, pair[1].position or 0, -pair[1].score))
+        return todo, anchors
+
+    def run(self, jobs: list[Job], filters: dict[str, FilterResult], *,
+            force: bool = False) -> list[AIVerdict]:
+        """Score the shortlist members that are new, and return their verdicts in answer order.
+
+        Incremental by default: a job that already carries a refine verdict under this prompt
+        version is not re-scored, it is sent as a fixed anchor so the new ones land in the same
+        ordering. ``force=True`` re-scores the whole shortlist against itself, as the first pass
+        over a shortlist does anyway.
+        """
         if not jobs:
             return []
-        log.info("refine: judging %d jobs against each other with %s", len(jobs), self.model)
+        todo, anchors = self._split(jobs, force)
+        if not todo:
+            log.info("refine: all %d shortlisted jobs are already placed; nothing new to compare",
+                     len(jobs))
+            return []
+        log.info("refine: judging %d new job(s) against %d already placed with %s",
+                 len(todo), len(anchors), self.model)
+        prompt = refine_user_prompt(todo, filters, self.max_chars, anchors=anchors or None)
         response = self.client.messages.parse(
             model=self.model,
             max_tokens=16000,
             system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": refine_user_prompt(jobs, filters, self.max_chars)}],
+            messages=[{"role": "user", "content": prompt}],
             output_format=Refinement,
             output_config={"effort": self.effort},
             **self._thinking(),
@@ -332,7 +359,7 @@ class RefineStage:
             log.warning("refine: %s gave no structured answer (stop_reason=%s); keeping the rank "
                         "scores", self.model, response.stop_reason)
             return []
-        verdicts = refine_verdicts(response.parsed_output.items, [j.id for j in jobs], self.model,
+        verdicts = refine_verdicts(response.parsed_output.items, [j.id for j in todo], self.model,
                                    AIStage._usage(response.usage))
         for v in verdicts:
             self.store.save_verdict(v)

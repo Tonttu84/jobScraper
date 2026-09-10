@@ -362,13 +362,24 @@ def _record_run_stats(store: Store, snap) -> None:
         log.warning("run statistics not recorded: %s: %s", type(exc).__name__, exc)
 
 
+def _refine_sort_key(verdict) -> tuple[float, int]:
+    """Table order for a shortlisted job: its placed position, best score first, unplaced last."""
+    position = verdict.position if verdict is not None else None
+    return (position if position is not None else float("inf"),
+            -verdict.score if verdict is not None else 0)
+
+
 @app.command()
 def refine(days: int = 30, top: int | None = None, model: str | None = None,
-           verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
+           force: bool = False, verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     """One request that ranks the best-ranked jobs against each other (Fable by default).
 
     The rank stage scores each posting alone inside a chunk, so its score carries chunk noise.
     This pass sees the whole shortlist at once; the report orders by the mean of the two.
+
+    Incremental: only shortlist members without a refine verdict are scored, and the ones already
+    placed are sent as fixed anchors so the new ones land in the same ordering. ``--force``
+    re-scores the whole shortlist against itself.
     """
     _setup_logging(verbose)
     from jobscraper.ai.client import RefineStage, estimate_cost
@@ -393,18 +404,33 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
                       "`jobscraper rank` first", soft_wrap=True)
         return
 
-    verdicts = RefineStage(settings.profile, store, model=model).run(todo, filters)
+    placed = {} if force else store.verdicts("refine", PROMPT_VERSION)
+    fresh = [j for j in todo if j.id not in placed]
+    if not fresh:
+        console.print(f"refine: all {len(todo)} shortlisted jobs already carry a refine verdict; "
+                      "nothing new to compare (--force re-scores them)", soft_wrap=True)
+        return
+
+    verdicts = RefineStage(settings.profile, store, model=model).run(todo, filters, force=force)
     if not verdicts:
-        console.print(f"refine: no verdicts came back for {len(todo)} jobs; the rank scores stand",
+        console.print(f"refine: no verdicts came back for {len(fresh)} jobs; the rank scores stand",
                       soft_wrap=True)
         return
-    table = Table("pos", "effective", "rank", "refine", "title")
-    for v in sorted(verdicts, key=lambda v: (v.position, -v.score)):
-        r = ranked.get(v.job_id)
-        table.add_row(str(v.position), str(effective_score(r, v)), str(r.score) if r else "—",
-                      str(v.score), by_id[v.job_id].title[:60])
+
+    # The table is the whole shortlist, anchors included, so the new jobs are read in context.
+    scored = {v.job_id for v in verdicts}
+    refined = store.verdicts("refine", PROMPT_VERSION)
+    rows = sorted(todo, key=lambda j: _refine_sort_key(refined.get(j.id)))
+    table = Table("pos", "effective", "rank", "refine", "new", "title")
+    for job in rows:
+        rv, r = refined.get(job.id), ranked.get(job.id)
+        table.add_row(str(rv.position) if rv and rv.position is not None else "—",
+                      str(effective_score(r, rv)), str(r.score) if r else "—",
+                      str(rv.score) if rv else "—", "*" if job.id in scored else "",
+                      job.title[:60])
     console.print(table)
-    console.print(f"refine: {len(verdicts)} of {len(todo)} jobs placed; cost ≈ {estimate_cost(verdicts)}",
+    console.print(f"refine: {len(verdicts)} of {len(fresh)} new jobs placed against "
+                  f"{len(todo) - len(fresh)} already refined; cost ≈ {estimate_cost(verdicts)}",
                   soft_wrap=True)
 
 
