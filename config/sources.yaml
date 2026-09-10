@@ -65,6 +65,11 @@ sources:
     #     include: 'engineer|intern'      # optional per-board title regex (case-insensitive)
     #     exclude: 'senior|manager'       # optional
     #     lazy_descriptions: auto         # true | false | auto (default)
+    #     country: BE                     # optional ISO-2 fallback, for boards that hire in
+    #                                     # one country only: it fills in the postings whose
+    #                                     # own location string we cannot parse ("2 Locations",
+    #                                     # a bare city), and never overrides a parsed country.
+    #                                     # Quote it if it is a YAML keyword: country: "NO".
     # `url:` may be used instead of `ats`/`slug` when you want include/exclude/company on a
     # URL-resolved board. An unknown ATS name just fails that one board.
     #
@@ -100,6 +105,7 @@ sources:
       - ats: successfactors                           # Wärtsilä (Helsinki/Vaasa): SuccessFactors
         slug: https://careers.wartsila.com
         company: Wärtsilä
+        country: FI
       - ats: successfactors                           # Volvo Group (Gothenburg): SuccessFactors
         slug: https://jobs.volvogroup.com
         company: Volvo Group
@@ -219,9 +225,11 @@ sources:
       - ats: successfactors                            # Werken voor Nederland (Dutch government)  121 / 92 / 4974
         slug: https://jobs.werkenvoornederland.nl
         company: Werken voor Nederland
+        country: NL
         include: *software_titles
       - url: https://job-boards.greenhouse.io/teampicnic              # Picnic  78 / 60 / 307
         company: Picnic
+        country: NL
       - url: https://job-boards.greenhouse.io/nebius                  # Nebius  74 / 23 / 377
         company: Nebius
       - ats: phenom                                    # Philips  65 / 56 / 831
@@ -234,6 +242,7 @@ sources:
       - ats: cornerstone                               # imec (Leuven)  52 / 41 / 161
         slug: imec
         company: imec
+        country: BE
         options: {site_id: 29}
         # imec publishes "..." as the description of every posting, in the listing endpoint
         # and in the career site's requisition service alike (checked live 2026-09-10, 44 of
@@ -277,6 +286,7 @@ sources:
       - ats: cornerstone                               # GMV (space/defence software, Madrid)  140 / 121 / 216
         slug: gmv
         company: GMV
+        country: ES
         options: {site_id: 4}
         # GMV pastes a whole HTML page into the Cornerstone description field, and the listing
         # endpoint strips the tags for us, so 128 of its 131 title survivors arrived as ~7 000
@@ -300,9 +310,11 @@ sources:
         company: Elastic
       - url: https://job-boards.greenhouse.io/indiecampers       # Indie Campers (Lisbon)  57 / 57 / 697
         company: Indie Campers
+        country: PT
         include: *software_titles
       - url: https://knowmadmood.teamtailor.com                       # knowmad mood  57 / 43 / 100
         company: knowmad mood
+        country: ES
       - ats: phenom                                    # BCG  70 / 61 / 909
         slug: https://careers.bcg.com
         company: BCG
@@ -337,17 +349,22 @@ sources:
         company: Winthrop Technologies
       - url: https://careers.smartrecruiters.com/Vattenfall           # Vattenfall  34 / 27 / 316 (SE 213)
         company: Vattenfall
+        country: SE
       - url: https://nexergroup.teamtailor.com                        # Nexer Group  29 / 22 / 100 (SE 98)
         company: Nexer Group
+        country: SE
       - url: https://job-boards.greenhouse.io/smartlyio               # Smartly (Helsinki)  18 / 1 / 70
         company: Smartly
+        country: FI
       # Aiven's Greenhouse slug is `aiven36` — the one the 2026-09-07 note above says could not
       # be worked out from aiven.io/careers. The dataset had it all along.
       - url: https://job-boards.greenhouse.io/aiven36                 # Aiven (Helsinki)  17 / 5 / 38
         company: Aiven
+        country: FI
       - ats: successfactors                            # OP-Palvelut (OP Financial Group, Helsinki)  16 / 12 / 49
         slug: https://op-careers.fi
         company: OP-Palvelut
+        country: FI
 
       # ---- France / Luxembourg (mostly French-language postings; the language filter drops
       #      those, but these tenants also carry the DE/NL/ES/PT/Nordic offices)

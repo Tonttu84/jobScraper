@@ -10,6 +10,11 @@ fronting Avature/Eightfold) cannot be resolved from the URL alone. Name the ATS 
 a board entry may be a mapping ``{ats, slug, company?, options?, include?, exclude?}``,
 which goes straight to ``get_scraper(ats, slug, **options)``.
 
+A board that hires in one country only may declare it as ``country: FI``. It is a fallback,
+not an override: it fills in the rows whose location string we could not parse (Workday's
+"2 Locations", a bare city), because an on-site job with no country reaches the AI screen
+and is paid for there.
+
 Enterprise boards list thousands of postings, so each board can carry a case-insensitive
 ``include`` / ``exclude`` regex tested against the posting *title* before anything is
 converted (source-level ``default_include`` / ``default_exclude`` cover the boards that
@@ -50,7 +55,7 @@ from ats_scrapers.scrapers import get_scraper
 from ats_scrapers.scrapers.base import BaseScraper
 
 from jobscraper.models import Job
-from jobscraper.sources._common import clean_description, guess_country, guess_remote
+from jobscraper.sources._common import ISO2_CODES, clean_description, guess_country, guess_remote
 from jobscraper.sources._cornerstone import CornerstoneDescriptions, is_cornerstone
 from jobscraper.sources.base import SourceContext, register, safe_records
 
@@ -62,7 +67,7 @@ _REMOTEISH_RE = re.compile(r"\b(remote|anywhere|telecommute|distributed)\b", re.
 
 # Keys a mapping board entry may carry.
 _ENTRY_KEYS = frozenset(
-    {"url", "ats", "slug", "company", "options", "include", "exclude", "lazy_descriptions"}
+    {"url", "ats", "slug", "company", "country", "options", "include", "exclude", "lazy_descriptions"}
 )
 _MAX_DESCRIPTION = 25_000  # what ats-scrapers' own enrich_descriptions truncates to
 
@@ -90,8 +95,40 @@ def _salary_text(job: ATSJob) -> str | None:
     return " ".join(parts)
 
 
-def convert(job: ATSJob, company: str | None = None) -> Job | None:
-    """One ats-scrapers Job → our Job. ``company`` overrides the ATS display name."""
+def _raw_locations(job: ATSJob) -> list[str]:
+    """Location strings from the scraper's raw payload, best-effort.
+
+    Workday's search rows carry a rollup ("2 Locations") in ``location`` and the real list
+    in ``raw["locations"]`` — when the tenant sends one, which most do not. Entries are
+    either plain strings or the usual ``{"descriptor": …}`` wrappers.
+    """
+    raw = job.raw if isinstance(job.raw, dict) else {}
+    values = raw.get("locations")
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, list):
+        return []
+    found: list[str] = []
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            found.append(value.strip())
+        elif isinstance(value, dict):
+            for key in ("descriptor", "name", "label", "location", "text", "country"):
+                text = value.get(key)
+                if isinstance(text, str) and text.strip():
+                    found.append(text.strip())
+                    break
+    return found
+
+
+def convert(
+    job: ATSJob, company: str | None = None, country: str | None = None
+) -> Job | None:
+    """One ats-scrapers Job → our Job.
+
+    ``company`` overrides the ATS display name; ``country`` is the board's declared country,
+    used only for the rows whose own location string says nothing.
+    """
     url = str(job.url)
     ats_type = getattr(job.ats_type, "value", job.ats_type)
     location = job.location or None
@@ -105,7 +142,12 @@ def convert(job: ATSJob, company: str | None = None) -> Job | None:
         company=company or job.company,
         description=clean_description(job.description),
         location_raw=location,
-        country=job.country_iso or guess_country(location),
+        country=(
+            job.country_iso
+            or guess_country(location)
+            or guess_country(*_raw_locations(job))
+            or country
+        ),
         city=_city(location),
         remote=guess_remote(location, job.title, flag=job.is_remote),
         employment_type=job.employment_type or job.commitment,
@@ -125,6 +167,7 @@ class Board:
     include: re.Pattern[str] | None = None
     exclude: re.Pattern[str] | None = None
     company: str | None = None
+    country: str | None = None  # ISO-2 fallback for rows with no parsable location
     lazy: bool | None = None  # None = decide from the filter + scraper capability
 
     @property
@@ -147,6 +190,19 @@ def _compile(pattern: Any, field: str, entry: Any) -> re.Pattern[str] | None:
         return re.compile(pattern, re.IGNORECASE)
     except re.error as exc:
         raise ValueError(f"{NAME}: bad {field!r} regex in board entry {entry!r}: {exc}") from exc
+
+
+def _country_code(value: Any, entry: Any) -> str | None:
+    """``country: fi`` → ``"FI"``. Anything that is not a real ISO-2 code is a config bug."""
+    if value is None:
+        return None
+    code = str(value).strip()
+    if code.lower() not in ISO2_CODES:
+        raise ValueError(
+            f"{NAME}: 'country' must be an ISO-2 country code (e.g. FI), got {value!r} "
+            f"in board entry {entry!r}"
+        )
+    return code.upper()
 
 
 def _lazy_flag(value: Any, where: str) -> bool | None:
@@ -225,6 +281,7 @@ def make_board(
         if "exclude" in entry
         else default_exclude,
         company=str(company).strip() or None if company else None,
+        country=_country_code(entry.get("country"), entry),
         lazy=_lazy_flag(entry["lazy_descriptions"], f"board entry {entry!r}")
         if "lazy_descriptions" in entry
         else default_lazy,
@@ -347,7 +404,7 @@ class ATSBoards:
                 len(kept),
             )
             _fill_descriptions(kept, describe, board.label)
-            for job in safe_records(kept, partial(convert, company=board.company), self.name):
+            for job in safe_records(kept, partial(convert, company=board.company, country=board.country), self.name):
                 yield job
                 seen += 1
                 if ctx.limit and seen >= ctx.limit:

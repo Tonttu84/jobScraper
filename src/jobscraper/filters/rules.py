@@ -16,7 +16,7 @@ from jobscraper.filters.language import detect_language, find_language_requireme
 from jobscraper.models import FilterResult, Job
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-09-09.2"
+RULES_VERSION = "2026-09-10"
 
 _YEARS_RE = re.compile(
     r"(?:(?:at least|minimum|min\.?|minimum of|over|more than|vähintään|yli|mindestens|mind\.|über|"

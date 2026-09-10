@@ -44,7 +44,7 @@ def test_himalayas_falls_back_to_numeric_timezone_restrictions(make_ctx):
     j = list(Himalayas().fetch(_one_page(make_ctx)))[2]
     assert j.title == "Change Business Partner - MRP"
     assert j.remote_region == "South Korea"  # locationRestrictions win when present
-    assert j.country is None  # "South Korea" is not in the country table; better None than wrong
+    assert j.country == "KR"  # the country table learned the non-European names on 2026-09-10
     assert j.raw["timezoneRestrictions"] == [9]
     assert j.salary_text is None
     assert j.posted_at == datetime(2026, 9, 7, 7, 35, 12, tzinfo=UTC)

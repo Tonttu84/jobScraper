@@ -9,3 +9,15 @@ def test_country_lists_are_strings(settings):
         for key in ("countries", "regions", "sites"):
             values = cfg.options.get(key) or []
             assert all(isinstance(v, str) for v in values), f"{name}.{key} has a non-string entry: {values}"
+
+
+def test_ats_board_countries_are_iso2_strings(settings):
+    """``country: NO`` is boolean False in YAML 1.1 — and a typo there mislabels a whole board."""
+    from jobscraper.sources._common import ISO2_CODES
+
+    for entry in settings.sources["ats_boards"].options.get("urls") or []:
+        if not isinstance(entry, dict) or "country" not in entry:
+            continue
+        code = entry["country"]
+        assert isinstance(code, str), f"{entry.get('company')}: country is {code!r}, quote it"
+        assert code == code.upper() and code.lower() in ISO2_CODES, f"{entry}: not an ISO-2 code"

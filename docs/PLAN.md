@@ -122,11 +122,19 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   billing only). Recipe for the next round: scrape → filter → `ai_batches.py export prefilter`
   (only unscreened jobs) → Sonnet subagents → `import prefilter` → `export rank --top 90` →
   Opus subagents → `import rank` → `report` → `publish`.
-- [ ] **Rule-filter gap seen while screening**: many boards (Eightfold/Oracle/Workday) leave
-  `country` unknown for locations like "Hyderabad, TS, IN" or "2 Locations", so on-site jobs
-  in the US/India/China reach the Sonnet screen and are rejected there at cost. Teach
-  `guess_country` the trailing ISO-2 token and US state abbreviations, and drop unknown-country
-  on-site jobs whose location text names a non-target city.
+- [x] **Rule-filter gap closed 2026-09-10**: `guess_country` now reads the trailing ISO-2 token
+  ("Hyderabad, TS, IN" → IN, "Utrecht, NL, 3584 AB" → NL), US state and Canadian province
+  codes and spelled-out state names, non-European country names, and ~50 more non-European
+  cities; boards that hire in one country only may declare `country: XX` in
+  `config/sources.yaml` (12 of them do), which fills in what the location string does not say.
+  Measured against the run of 2026-09-09 (16 788 jobs): **3 630 had no country, the new parsing
+  resolves 3 320 of them, and 2 279 of those are outside Europe** — postings the rules now drop
+  themselves instead of paying Sonnet to reject them. The 310 left are not in the string:
+  Workday's "N Locations" rollups (135; those tenants send no locations list in the raw
+  payload, only an `externalPath` slug like `/job/Shanghai-Shanghai-China/…`, which is the
+  next thing to try), plus "Anywhere" / "Remote" / "EMEA" and empty locations. Rule semantics
+  are unchanged for a still-unknown country (still permissive); `RULES_VERSION` is bumped so
+  the next `jobscraper filter` re-evaluates.
 - [x] **GMV (Cornerstone) descriptions are a page-loader stylesheet**, and imec's are empty
   (done 2026-09-10). What Cornerstone actually serves: the listing endpoint
   (`rec-job-search/external/jobs`) returns `externalDescription` with the HTML tags *already

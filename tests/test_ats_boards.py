@@ -528,3 +528,59 @@ def test_a_failed_cornerstone_detail_fetch_leaves_the_job_without_a_description(
 
     assert [j.description for j in jobs] == [None]
     assert "description fetch failed" in caplog.text
+
+
+# --------------------------------------------------------------- per-board default country
+
+
+def located(location, *, ats_id="1", raw=None) -> ATSJob:
+    """A listing row whose location string is all we know."""
+    job = make_job("Software Engineer", ats_id=ats_id)
+    object.__setattr__(job, "location", location)
+    if raw is not None:
+        object.__setattr__(job, "raw", raw)
+    return job
+
+
+def test_board_country_fills_only_the_rows_left_unknown(monkeypatch, make_ctx):
+    """Single-country boards (OP-Palvelut, imec, …) may declare where they hire."""
+    listing = [located("2 Locations", ats_id="1"), located("Redmond, WA, US", ats_id="2")]
+    patch_boards(monkeypatch, {GREENHOUSE: listing})
+    entry = {"url": GREENHOUSE, "country": "fi"}
+    jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": [entry]})))
+
+    assert [j.country for j in jobs] == ["FI", "US"]  # parsed country is never overwritten
+
+
+def test_board_country_works_on_an_explicit_ats_entry(monkeypatch, make_ctx):
+    patch_boards(monkeypatch, {("cornerstone", "imec"): [located("Leuven")]})
+    entry = {"ats": "cornerstone", "slug": "imec", "company": "imec", "country": "BE"}
+    jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": [entry]})))
+
+    assert jobs[0].country == "BE"
+
+
+@pytest.mark.parametrize("value", ["Finland", "FIN", "", "ZZ"])
+def test_bad_board_country_raises(monkeypatch, make_ctx, value):
+    calls = patch_boards(monkeypatch, {GREENHOUSE: ats_jobs()})
+    entry = {"url": GREENHOUSE, "country": value}
+    with pytest.raises(ValueError, match="ISO-2"):
+        list(ATSBoards().fetch(make_ctx({}, options={"urls": [entry]})))
+    assert calls == []  # config bugs fail before any board is opened
+
+
+def test_workday_locations_list_resolves_a_rollup_location(monkeypatch, make_ctx):
+    """Workday's search rows say "2 Locations"; the raw payload sometimes lists them."""
+    listing = [
+        located("2 Locations", ats_id="1", raw={"locations": ["Espoo, Finland", "Berlin, DE"]}),
+        located("3 Locations", ats_id="2", raw={"locations": [{"descriptor": "Hyderabad, TS, IN"}]}),
+        located("2 Locations", ats_id="3", raw={"locations": "Bengaluru, KA, IN"}),
+        located("2 Locations", ats_id="4", raw={"locations": [{"id": 7}, "Tokyo"]}),
+        located("2 Locations", ats_id="5", raw={"locations": ["Anywhere"]}),
+        located("2 Locations", ats_id="6", raw={"locations": {"city": "Espoo"}}),
+        located("2 Locations", ats_id="7", raw={"bullet_fields": ["JR001"]}),
+    ]
+    patch_boards(monkeypatch, {GREENHOUSE: listing})
+    jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": [GREENHOUSE]})))
+
+    assert [j.country for j in jobs] == ["FI", "IN", "IN", "JP", None, None, None]
