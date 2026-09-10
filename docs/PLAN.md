@@ -33,7 +33,7 @@ the first real run; expect a few to need small parser fixes.
 | tyomarkkinatori | FI | internal JSON search + detail | medium | detail endpoint 403s after a few hundred calls; capped |
 | thehub | Nordics | JSON `/api/v2/jobs` | high | startup jobs, some junior |
 | teamtailor | FI/EE/Nordics | `<tenant>.teamtailor.com/jobs.json` / RSS | high | tenant list in sources.yaml; add companies you like |
-| ats_boards | any | ats-scrapers (Greenhouse/Lever/Ashby/Workable/…) | high | careers URLs in sources.yaml |
+| ats_boards | any | ats-scrapers (Greenhouse/Lever/Ashby/Workable/…) | high | careers URLs in sources.yaml; custom-domain enterprise sites (Phenom/Workday/Oracle) as explicit `ats:` + `slug:` entries; per-board `include`/`exclude` title regexes (source-level `default_include`/`default_exclude`) filter before conversion, and a filtered board with per-posting detail support fetches descriptions lazily for the survivors only |
 | cvee | EE | JSON search API | medium | postings mostly EE/EN; language filter handles it |
 | cvkeskus | EE | HTML + JSON-LD | medium | |
 | linkedin | any | python-jobspy guest endpoint | medium | rate-limited; polite delays; no descriptions by default |
