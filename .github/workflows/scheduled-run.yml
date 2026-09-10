@@ -28,6 +28,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      # config/profile.yaml (the CV) is not in this repository; the runner's machine keeps a
+      # clone of the private repo and this copies the config back in (see scripts/sync_private.sh).
+      - name: Restore the private config
+        env:
+          JOBSCRAPER_PRIVATE_DIR: ${{ vars.JOBSCRAPER_PRIVATE_DIR }}
+        run: ./scripts/sync_private.sh restore
+
       - name: Run the pipeline and diff it against the previous report
         run: ./scripts/scheduled_run.sh
 

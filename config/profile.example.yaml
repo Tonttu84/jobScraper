@@ -1,0 +1,225 @@
+# Candidate profile. Drives the rule filter and the AI prompts.
+#
+# This is the TEMPLATE. Copy it to config/profile.yaml (which is gitignored: it holds your CV)
+# and fill in the personal sections; the policy sections below are sensible defaults for a junior
+# software developer in Finland.
+name: Your Name
+summary: >
+  Two or three sentences about you: level, stack, background, languages, where you live, where
+  you are willing to move. Used by both AI prompts.
+
+# Pasted CV text; used verbatim in the ranking prompt. Keep it factual.
+cv_text: |
+  PROFILE: ...
+  SKILLS: ...
+  PROJECTS: ...
+  EDUCATION: ...
+  WORK: ...
+  LANGUAGES: ...
+
+skills: [Python, TypeScript, React, Node.js, SQL, Docker, Git]
+interests: [backend, full-stack, DevOps]
+
+# Hard no's. Each is checked by BOTH the Sonnet screen (so it never reaches ranking) and the Opus
+# ranker (so a borderline case that slips through is still scored against it). Examples:
+#   - consultancy / staffing placements where I am hired out to clients
+#   - on-call rotations
+#   - B2B / self-employed contract only
+#   - more than 25% travel
+# Leaving this empty keeps both prompts exactly as they are (no cached verdicts are invalidated).
+deal_breakers: []
+
+languages:
+  ok: [en, fi, de]          # can work in these
+  weak: [sv]                # a little; flag for review, never auto-drop
+  # If the posting text itself is written in one of these, drop it (it almost always means
+  # that language is the working language). Everything else goes to the AI stage.
+  drop_if_written_in: [pl, nl, fr, es, pt, it, et, "no", da, cs, sk, hu, ro, bg, hr, sl, lt, lv, ru, uk, tr, ar, el]
+  min_confidence: 0.75
+
+# Drop postings older than this many days before the AI stages (unknown posting dates are kept).
+# Owner: after ~3 weeks a junior opening is likely filled or interviewing; LinkedIn/Indeed already limit to 7 days.
+max_age_days: 20
+
+seniority:
+  max_years_keep: 2         # "up to 2 years" is fine
+  max_years_review: 2       # owner 2026-09-07: only trainee/intern/junior; 3+ years → drop (junior title + 3 years → review)
+  drop_title_terms:
+    - senior
+    - "sr\\.?"
+    - lead
+    - principal
+    - staff engineer
+    - head of
+    - director
+    - "chief"
+    - cto
+    - architect
+    - manager
+    - vanhempi            # fi: senior
+    - johtava             # fi: lead
+    - päällikkö           # fi: manager
+    - "leiter(in)?"       # de: head
+    - "teamlead"
+    - "expert"
+    # mid-level is out too (owner 2026-09-07); regex forms so "mid" cannot match "middleware"
+    - "mid[- ]?level"
+    - '\bmid\b'
+    - medior
+    - intermediate
+    - experienced
+    - kokenut            # fi: experienced
+    - "erfahrene[rn]?"    # de: experienced
+  # Board seniority labels (justjoin "mid", nofluffjobs "Mid", devitjobs "Regular") that mean a
+  # drop even when the title says nothing. keep_title_terms still wins over these.
+  drop_label_terms:
+    - mid
+    - middle
+    - medior
+    - regular
+    - intermediate
+    - experienced
+  keep_title_terms:
+    - junior
+    - intern
+    - internship
+    - trainee
+    - graduate
+    - entry
+    - "entry[- ]level"
+    - apprentice
+    - student
+    - harjoittelija       # fi: intern
+    - harjoittelu
+    - nuorempi            # fi: junior
+    - kesätyö             # fi: summer job
+    - opinnäyte           # fi: thesis
+    - werkstudent         # de
+    - praktikant          # de
+    - praktikum
+    - berufseinsteiger    # de
+    - absolvent           # de
+    - einsteiger
+    - "young professional"
+
+location:
+  tier1: [FI, EE]
+  # EU-27 + EEA/EFTA + Norway. (GB deliberately not included; add it if you want the UK.)
+  tier2: [AT, BE, BG, HR, CY, CZ, DK, FR, DE, GR, HU, IE, IT, LV, LT, LU, MT, NL, PL, PT, RO, SK, SI, ES, SE,
+          "NO", IS, CH, LI]
+  # Dubai + former Eastern-bloc / ex-Soviet countries you said you like. Work rights vary; see notes.
+  tier3: [AE, GE, AZ, AM, BA, RS, ME, MK, AL, MD, XK, UA, KZ, UZ, KG, TR]
+  keep_all_remote: true     # never auto-drop a remote job because of its stated region
+  notes:
+    AE: "Dubai: employer-sponsored work visa; common for expats, employer handles it."
+    GE: "Georgia: EU citizens can stay visa-free 1 year and may work; simple registration."
+    AZ: "Azerbaijan: work permit via employer; e-visa for entry."
+    AM: "Armenia: visa-free 180 days for EU citizens; residence/work permit via employer."
+    BA: "Bosnia: work permit via employer, EU citizens routinely hired."
+    RS: "Serbia: temporary residence + work permit via employer, straightforward."
+    ME: "Montenegro: work permit via employer; digital-nomad visa exists."
+    MK: "North Macedonia: work permit via employer."
+    AL: "Albania: EU citizens may stay 1 year visa-free; work permit via employer."
+    MD: "Moldova: work permit via employer."
+    XK: "Kosovo: work permit via employer."
+    UA: "Ukraine: check current security situation before considering."
+    KZ: "Kazakhstan: work permit via employer; IT specialists have simplified routes."
+    UZ: "Uzbekistan: work permit via employer; IT Park residents get simplified routes."
+    KG: "Kyrgyzstan: work permit via employer."
+    TR: "Turkey: work permit via employer."
+
+role:
+  # A title must match one of these (case-insensitive regex) to count as a software/IT job.
+  title_terms:
+    - "develop"           # developer, development
+    - "engineer"
+    - "programm"          # programmer, programming
+    - "software"
+    - "ohjelmisto"        # fi
+    - "kehittäjä"         # fi developer
+    - "koodari"           # fi coder
+    - "entwickler"        # de
+    - "softwareentwick"
+    - "informatik"
+    - "devops"
+    - "sre"
+    - "backend|back-end|back end"
+    - "frontend|front-end|front end"
+    - "full[- ]?stack"
+    - "web"
+    - "mobile|android|ios"
+    - "embedded|firmware"
+    - "data (engineer|analyst|scientist)"
+    - "machine learning|\\bml\\b|\\bai\\b"
+    - "qa|test(er|ing| automation)"
+    - "cloud|platform|infrastructure|sysadmin|system administrator"
+    - "security|cyber"
+    - "\\bit\\b"
+    - "\\bict\\b"
+    - "c\\+\\+|\\bc#|python|java|typescript|javascript|golang|\\bgo\\b|rust|node|react|\\.net|php|kotlin|swift"
+    - "game"
+    - "coding|coder|hacker"
+    - "technical|tech "
+    - "support engineer|application support"
+  exclude_title_terms:
+    - "sales"
+    - "account (manager|executive)"
+    - "recruit"
+    - "marketing"
+    - "hr "
+    - "nurse|physician|doctor|dentist"
+    - "driver|kuljettaja|warehouse|varasto"
+    - "electrician|sähköasentaja|plumber|mechanic|welder"
+    - "civil engineer|mechanical engineer|electrical engineer|hvac|construction"
+    - "chef|cook|kokki|waiter|barista"
+    - "cleaner|siivooja"
+    - "teacher|opettaja|lehtori"
+
+# Wording of the AI prompts. The scaffolding (candidate block, language and location bullets,
+# scoring instructions) is generated; these fields are the candidate-specific sentences.
+prompt:
+  # "You are screening job postings for a specific {role_label}."
+  role_label: junior software developer
+  # The "Seniority:" bullet. {max_years_keep} / {max_years_review} come from the section above.
+  seniority_rule: >-
+    ONLY internship, trainee, graduate, junior, entry-level, or unlabelled roles asking for at
+    most {max_years_keep} years of experience. Mid-level roles ("experienced", "medior", "mid",
+    3+ years required) are out, as are senior/lead/architect: the candidate cannot apply
+    everywhere and wants the list limited to entry-level.
+  # The "Role:" bullet: what kind of work counts at all.
+  role_rule: >-
+    software development / IT in the broad sense (backend, frontend, full-stack, embedded,
+    DevOps, QA automation, data engineering, game dev, systems, cloud). Programming-language
+    mismatch is a minor issue: the candidate learns fast and is especially keen on Go and Rust.
+  # One extra bullet each, appended after the location bullet.
+  extra_rules:
+    - >-
+      A university-degree requirement is NOT a blocker: 42/Hive graduates are routinely accepted.
+    - >-
+      Remote roles paying US salaries are worth extra effort even if the wording hints at
+      US-only: mark them as "check eligibility" rather than rejecting, unless the text explicitly
+      requires US work authorization or residence.
+
+# How `jobscraper serve` presents the page. The default preset is "student": this list is shared
+# with fellow students, so the page offers every language seen in the postings (plus the ones
+# above), ticks English only and lets each viewer say whether they have done Full Stack Open.
+# A one-person profile can switch to the tailored page instead — only the languages in
+# languages.ok are offered, all ticked, and no Full Stack Open box:
+# web:
+#   preset: tailored
+
+ai:
+  prefilter_model: claude-sonnet-5
+  rank_model: claude-opus-5
+  prefilter_effort: low
+  rank_effort: high
+  prefilter_min_score: 30   # permissive: only jobs Sonnet scores below this are dropped
+  rank_top_n: 60            # how many prefilter survivors Opus ranks in detail
+  concurrency: 4
+  max_description_chars: 6000
+  # Batching sends the whole prefilter as one Message Batch: the same verdicts at half price,
+  # but asynchronously — results usually arrive within an hour, and the API allows up to 24 h.
+  # Off by default; `jobscraper prefilter --batch` turns it on for one call.
+  # prefilter_batch: false
+  # batch_chunk: 5000        # requests per submitted batch (the API allows up to 100k)
+  # batch_poll_seconds: 30   # how often to poll a submitted batch while waiting

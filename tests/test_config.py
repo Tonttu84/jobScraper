@@ -21,3 +21,26 @@ def test_ats_board_countries_are_iso2_strings(settings):
         code = entry["country"]
         assert isinstance(code, str), f"{entry.get('company')}: country is {code!r}, quote it"
         assert code == code.upper() and code.lower() in ISO2_CODES, f"{entry}: not an ISO-2 code"
+
+
+def test_missing_profile_points_at_the_example(tmp_path):
+    """A fresh clone has only config/profile.example.yaml; the error must say what to copy."""
+    import pytest
+
+    from jobscraper import config
+
+    (tmp_path / "profile.example.yaml").write_text("name: x\n", encoding="utf-8")
+    (tmp_path / "sources.yaml").write_text("sources: {}\n", encoding="utf-8")
+    with pytest.raises(FileNotFoundError) as exc:
+        config.load_settings(tmp_path)
+    assert "profile.example.yaml" in str(exc.value) and "profile.yaml" in str(exc.value)
+
+
+def test_missing_yaml_without_example_is_a_plain_error(tmp_path):
+    import pytest
+
+    from jobscraper import config
+
+    with pytest.raises(FileNotFoundError) as exc:
+        config.load_settings(tmp_path)
+    assert "copy" not in str(exc.value)

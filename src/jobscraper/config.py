@@ -225,6 +225,12 @@ class Settings(BaseModel):
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        hint = ""
+        example = path.with_name(f"{path.stem}.example{path.suffix}")
+        if example.is_file():
+            hint = f" (copy {example} to {path} and fill in the personal sections)"
+        raise FileNotFoundError(f"{path} does not exist{hint}")
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 

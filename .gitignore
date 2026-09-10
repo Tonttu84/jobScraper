@@ -27,3 +27,6 @@ config/profiles/*
 
 # persistent headless-browser profile (Cloudflare clearance cookie)
 data/browser/
+
+# The owner's own profile holds a CV; it lives in the private repo (scripts/sync_private.sh).
+config/profile.yaml

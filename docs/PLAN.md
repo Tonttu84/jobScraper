@@ -1,8 +1,9 @@
 # Plan
 
 ## Goal
-Surface the best intern / junior software jobs for Johannes (Helsinki; EN/FI/DE; ~2 years of
-project-based coding via Hive Helsinki) with as little manual scrolling as possible:
+Surface the best intern / junior software jobs for the owner (Helsinki; EN/FI/DE; ~2 years of
+project-based coding; the profile itself is private, see "Private data" below) with as little
+manual scrolling as possible:
 1. Pull postings from many boards into one normalized store.
 2. Drop the obvious misses with deterministic rules.
 3. Have a cheap model screen the rest permissively, then a strong model rank the survivors and
@@ -23,7 +24,7 @@ project-based coding via Hive Helsinki) with as little manual scrolling as possi
 ## Environment constraint
 The Claude Code cloud sandbox cannot reach any job site (only GitHub/PyPI/npm). All adapters were
 written from documented payload shapes and other open-source scrapers, and tested against
-fixtures. **Every source must be verified with `jobscraper probe` on Johannes's machine** before
+fixtures. **Every source must be verified with `jobscraper probe` on the owner's machine** before
 the first real run; expect a few to need small parser fixes.
 
 ## Sources
@@ -149,6 +150,39 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   and the requisition service alike, so that board is `lazy_descriptions: false`), OHB 575 and
   Henkel 1 337 unchanged (clean already, so neither pays for a request — Henkel's requisition
   service answers 403 anyway). Cost: one extra request per GMV posting (~130 per run).
+
+## Private data (added 2026-09-10)
+The GitHub repository is public, so nothing personal is tracked in it: `config/profile.yaml` (the
+CV) is gitignored and `config/profile.example.yaml` is the committed template; `results/`,
+`data/labels/`, `data/exports/ai/` and the web UI's `decisions.db` files were never tracked.
+All of it is mirrored by `scripts/sync_private.sh` into a clone of the private repository
+`Tonttu84/jobScraper-private` (default location `../jobScraper-private`, override with
+`JOBSCRAPER_PRIVATE_DIR`), one commit per sync tagged with the public repo's commit hash, so
+every run's report and verdicts stay debuggable without being public. `scheduled_run.sh` pushes
+at the end of each run; `sync_private.sh restore` copies the config back on a fresh clone (the
+self-hosted workflow does this). The public history was rewritten on 2026-09-10 to purge the
+profile from every earlier commit.
+
+## Measuring the business logic (added 2026-09-10)
+The engineering side is quantified (test count, coverage gate, funnel counts per report). The
+*correctness* of the rules and the ranking was not, so these are being added, in order:
+1. **Drop audit** — `jobscraper audit-drops` samples rule-dropped jobs per drop reason for hand
+   labelling and `--score` turns the labels into a per-reason false-negative rate (how many good
+   jobs the rules kill). Labels live in `data/labels/` (private repo).
+2. **Ranking stability** — `scripts/ai_batches.py stability export|compare` scores the same top-N
+   jobs twice in different chunkings and reports score drift, rank correlation and top-10 overlap.
+   Decides whether the explicit scoring-weights lever is worth building.
+3. **Coverage gate to 97%** (adapter error branches).
+4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
+   while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:
+   Sonnet screen precision/recall and Opus precision@10/20 against those decisions, and reuse
+   the best cases as prompt anchors (lever 2 under "Improving match quality"). Every rule or
+   prompt change then carries a before/after number in its commit message.
+5. - [ ] **README as the showcase** — deliberately postponed until the project is stable, so the
+   README is not rewritten around features that then change. Until then the README stays a
+   working manual (setup, commands, what the AI stages need). The showcase version adds: funnel
+   table, the eval numbers from item 4, cost per run, an architecture diagram, and a sample
+   report generated from an anonymised profile.
 
 ## Improving match quality (agreed levers, not yet built)
 The CV is a thin signal. Three additions, in order of expected payoff:

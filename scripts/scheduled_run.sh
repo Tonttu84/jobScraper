@@ -25,3 +25,5 @@ fi
 
 uv run jobscraper run "$@"
 uv run jobscraper diff
+# Keep the reports and decisions in the private repo (no-op if there is no private clone yet).
+./scripts/sync_private.sh || echo "private sync skipped"
