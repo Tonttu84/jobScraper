@@ -1,0 +1,48 @@
+{
+  "operationResult": {
+    "result": {
+      "totalJobs": 3,
+      "jobs": [
+        {
+          "jobId": "1790123",
+          "title": "Software Engineer",
+          "postingDate": "2026-09-01T00:00:00+00:00",
+          "properties": {
+            "description": "<p>Come help us build the next generation of cloud storage from Helsinki.</p>",
+            "locations": [
+              "Helsinki, Uusimaa, Finland"
+            ],
+            "primaryLocation": "Helsinki, Uusimaa, Finland",
+            "workSiteFlexibility": "Up to 50% work from home",
+            "profession": "Software Engineering",
+            "discipline": "Software Engineering",
+            "jobType": "Individual Contributor",
+            "roleType": "Individual Contributor",
+            "employmentType": "Full-Time",
+            "educationLevel": "Bachelor's Degree"
+          }
+        },
+        {
+          "jobId": "1790456",
+          "title": "Software Engineer II - Azure Storage",
+          "postingDate": "2026-08-28T00:00:00+00:00",
+          "properties": {
+            "description": "<p>Azure Storage is hiring across Germany.</p>",
+            "locations": [
+              "Berlin, Berlin, Germany",
+              "Munich, Bavaria, Germany"
+            ],
+            "primaryLocation": "Berlin, Berlin, Germany",
+            "workSiteFlexibility": "Up to 100% work from home",
+            "profession": "Software Engineering",
+            "discipline": "Cloud & AI",
+            "jobType": "Individual Contributor",
+            "roleType": "Individual Contributor",
+            "employmentType": "Full-Time",
+            "educationLevel": "Bachelor's Degree"
+          }
+        }
+      ]
+    }
+  }
+}
