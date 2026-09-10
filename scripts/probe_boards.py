@@ -35,6 +35,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
 
+from jobscraper.http import Http  # noqa: E402
 from jobscraper.models import Job  # noqa: E402
 from jobscraper.sources.ats_boards import (  # noqa: E402
     Board,
@@ -85,11 +86,17 @@ def load_boards(path: Path, *, timeout: float | None) -> tuple[list[Board], floa
     return boards, float(timeout if timeout is not None else section.get("timeout", 30.0))
 
 
-def probe_board(board: Board, *, timeout: float) -> Result:
-    """Open one board, list it, filter it, and convert the first survivor."""
+def probe_board(board: Board, *, timeout: float, http: Http | None = None) -> Result:
+    """Open one board, list it, filter it, and convert the first survivor.
+
+    ``http`` is the polite client the Cornerstone description path needs; without one that
+    path is skipped and those boards report whatever their listing carried.
+    """
     start = time.perf_counter()
     try:
-        scraper, lazy = _open_board(board, timeout=timeout, include_descriptions=True)
+        scraper, describe = _open_board(
+            board, timeout=timeout, include_descriptions=True, http=http
+        )
         ats_jobs = list(scraper.fetch())
     except Exception as exc:
         return Result(board.label, time.perf_counter() - start, error=f"{type(exc).__name__}: {exc}")
@@ -97,8 +104,7 @@ def probe_board(board: Board, *, timeout: float) -> Result:
     sample = None
     if kept:
         # Only the one posting we are about to print, never the whole survivor list.
-        if lazy:
-            _fill_descriptions(scraper, kept[:1], board.label)
+        _fill_descriptions(kept[:1], describe, board.label)
         try:
             sample = convert(kept[0], company=board.company)
         except Exception as exc:
@@ -168,9 +174,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
+    http = Http(timeout=timeout)
     results: list[Result] = []
     for i, board in enumerate(boards, 1):
-        result = probe_board(board, timeout=timeout)
+        result = probe_board(board, timeout=timeout, http=http)
         results.append(result)
         report(result, i, len(boards), sys.stdout)
         sys.stdout.flush()

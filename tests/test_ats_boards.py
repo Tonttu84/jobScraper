@@ -11,14 +11,23 @@ from datetime import UTC, datetime
 import pytest
 from ats_scrapers import Job as ATSJob
 from ats_scrapers.exceptions import ScraperError
-from conftest import fixture_json
+from conftest import fixture_json, fixture_text
 
 from jobscraper.sources import ats_boards
-from jobscraper.sources.ats_boards import ATSBoards
+from jobscraper.sources.ats_boards import ATSBoards, convert
 
 GREENHOUSE = "https://boards.greenhouse.io/supercell"
 LEVER = "https://jobs.lever.co/wolt"
 SIEMENS = "https://jobs.siemens.com"
+CORNERSTONE_JOB = "https://gmv.csod.com/ux/ats/careersite/4/job/5045?c=gmv"
+
+# Stand-in posting bodies. They are wordy on purpose: a description with almost no prose in
+# it is treated as no description at all, so a two-word sentinel would test the wrong thing.
+LISTING_BODY = (
+    "The whole body of this posting, exactly as the listing payload handed it over: what "
+    "the team builds, what you would work on and how to apply."
+)
+DETAIL_BODY = "The {title} posting in full, as served by the per-posting detail request."
 
 
 def ats_jobs() -> list[ATSJob]:
@@ -65,7 +74,7 @@ class LazyScraper(FakeScraper):
 
     def get_description(self, job):
         self.described.append(job.title)
-        return f"body of {job.title}"
+        return DETAIL_BODY.format(title=job.title)
 
 
 class BrokenLazyScraper(LazyScraper):
@@ -306,7 +315,7 @@ def test_filtered_board_with_detail_support_fetches_descriptions_lazily(monkeypa
     scraper = calls.made[-1]
     assert scraper.kwargs["include_descriptions"] is False  # listing skips descriptions
     assert scraper.described == ["Junior Engineer"]  # only the survivor is detailed
-    assert [j.description for j in jobs] == ["body of Junior Engineer"]
+    assert [j.description for j in jobs] == [DETAIL_BODY.format(title="Junior Engineer")]
 
 
 def test_lazy_description_failure_leaves_the_job_without_one(monkeypatch, make_ctx):
@@ -317,25 +326,25 @@ def test_lazy_description_failure_leaves_the_job_without_one(monkeypatch, make_c
 
 
 def test_scraper_without_detail_support_keeps_full_listing_descriptions(monkeypatch, make_ctx):
-    listing = [make_job("Junior Engineer", description="from the listing")]
+    listing = [make_job("Junior Engineer", description=LISTING_BODY)]
     calls = patch_boards(monkeypatch, {GREENHOUSE: listing})
     options = {"urls": [GREENHOUSE], "default_include": "engineer"}
     jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
 
     assert len(calls.made) == 1
     assert calls.made[0].kwargs["include_descriptions"] is True
-    assert jobs[0].description == "from the listing"
+    assert jobs[0].description == LISTING_BODY
 
 
 def test_lazy_descriptions_false_forces_the_eager_path(monkeypatch, make_ctx):
-    listing = [make_job("Junior Engineer", description="from the listing")]
+    listing = [make_job("Junior Engineer", description=LISTING_BODY)]
     calls = patch_boards(monkeypatch, {GREENHOUSE: (LazyScraper, listing)})
     options = {"urls": [GREENHOUSE], "default_include": "engineer", "lazy_descriptions": False}
     jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
 
     assert calls.made[-1].kwargs["include_descriptions"] is True
     assert calls.made[-1].described == []
-    assert jobs[0].description == "from the listing"
+    assert jobs[0].description == LISTING_BODY
 
 
 def test_lazy_descriptions_true_applies_without_a_title_filter(monkeypatch, make_ctx):
@@ -344,7 +353,7 @@ def test_lazy_descriptions_true_applies_without_a_title_filter(monkeypatch, make
     jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
 
     assert calls.made[-1].kwargs["include_descriptions"] is False
-    assert jobs[0].description == "body of Anything"
+    assert jobs[0].description == DETAIL_BODY.format(title="Anything")
 
 
 def test_unfiltered_board_is_not_lazy_by_default(monkeypatch, make_ctx):
@@ -385,7 +394,7 @@ def test_bad_lazy_descriptions_value_raises(monkeypatch, make_ctx, options):
 
 def test_lazy_path_leaves_descriptions_the_listing_already_carried(monkeypatch, make_ctx):
     listing = [
-        make_job("Junior Engineer", ats_id="1", description="already here"),
+        make_job("Junior Engineer", ats_id="1", description=LISTING_BODY),
         make_job("Graduate Engineer", ats_id="2"),
     ]
     calls = patch_boards(monkeypatch, {GREENHOUSE: (EmptyLazyScraper, listing)})
@@ -393,4 +402,129 @@ def test_lazy_path_leaves_descriptions_the_listing_already_carried(monkeypatch, 
     jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
 
     assert calls.made[-1].described == ["Graduate Engineer"]  # the other one was already done
-    assert [j.description for j in jobs] == ["already here", None]  # no body found, no crash
+    assert [j.description for j in jobs] == [LISTING_BODY, None]  # no body found, no crash
+
+
+# ------------------------------------------------- page-shell / empty descriptions
+
+
+def test_page_shell_description_is_stored_as_missing():
+    """GMV pastes a whole HTML page into the description field, and Cornerstone's API
+    strips the tags, so the text of its <style> blocks arrives as prose. Better nothing."""
+    job = make_job("Engineer", description=fixture_text("cornerstone_listing_shell.txt"))
+    assert convert(job).description is None
+
+
+@pytest.mark.parametrize("body", ["...", "   ", "n/a", "TBD - see our website", "<p>&nbsp;</p>"])
+def test_a_description_that_says_nothing_is_missing(body):
+    assert convert(make_job("Engineer", description=body)).description is None
+
+
+def test_a_real_description_with_a_code_snippet_survives():
+    body = (
+        "We are looking for a backend engineer to grow our Go services. You will write "
+        'code like `func main() { fmt.Println("hi") }`, ship it weekly, review pull '
+        "requests and mentor our interns."
+    )
+    assert convert(make_job("Engineer", description=body)).description == body
+
+
+# --------------------------------------------------------------- Cornerstone boards
+
+
+def cornerstone_job(*, ats_id: str = "5045", description=None) -> ATSJob:
+    return ATSJob(
+        url=CORNERSTONE_JOB.replace("5045", ats_id),
+        title="Aerospace engineer",
+        company="gmv",
+        ats_type="cornerstone",
+        ats_id=ats_id,
+        description=description,
+    )
+
+
+class CornerstoneFake(FakeScraper):
+    """Like the library's CornerstoneScraper: no ``get_description`` of its own, an ``ats``
+    that says which provider it is, and a listing that always carries a description."""
+
+    ats = "cornerstone"
+
+
+CORNERSTONE_ROUTES = {
+    "/home?c=gmv": "cornerstone_home.html",
+    "/job-requisition/v2/requisitions/5045": "cornerstone_requisition.json",
+}
+CORNERSTONE_ENTRY = {"ats": "cornerstone", "slug": "gmv", "company": "GMV"}
+
+
+def test_cornerstone_shell_description_is_refetched_from_the_requisition_service(
+    monkeypatch, make_ctx
+):
+    listing = [cornerstone_job(description=fixture_text("cornerstone_listing_shell.txt"))]
+    patch_boards(monkeypatch, {("cornerstone", "gmv"): (CornerstoneFake, listing)})
+    ctx = make_ctx(
+        CORNERSTONE_ROUTES,
+        options={"urls": [CORNERSTONE_ENTRY], "default_include": "engineer"},
+    )
+    jobs = list(ATSBoards().fetch(ctx))
+
+    assert len(jobs) == 1
+    assert "We lead missions to outer planets" in jobs[0].description
+    assert "wm-ab-launcher-spinner" not in jobs[0].description
+    assert jobs[0].company == "GMV"
+
+
+def test_cornerstone_board_leaves_a_usable_listing_description_alone(monkeypatch, make_ctx):
+    body = (
+        "Conduct tests at unit, subsystem and satellite level, write and maintain test "
+        "procedures and hardware work instructions, and prepare the test reports."
+    )
+    patch_boards(
+        monkeypatch,
+        {("cornerstone", "gmv"): (CornerstoneFake, [cornerstone_job(description=body)])},
+    )
+    # No routes: any HTTP request would raise. OHB and Henkel look like this.
+    ctx = make_ctx({}, options={"urls": [CORNERSTONE_ENTRY], "default_include": "engineer"})
+    jobs = list(ATSBoards().fetch(ctx))
+
+    assert [j.description for j in jobs] == [body]
+    assert ctx.http.calls == []
+
+
+def test_lazy_descriptions_false_skips_the_cornerstone_detail_fetch(monkeypatch, make_ctx):
+    """imec publishes "..." for every posting and the requisition service repeats it, so
+    that board is configured eager: no description, and no request wasted asking for one."""
+    patch_boards(
+        monkeypatch,
+        {("cornerstone", "gmv"): (CornerstoneFake, [cornerstone_job(description="...")])},
+    )
+    options = {
+        "urls": [{**CORNERSTONE_ENTRY, "lazy_descriptions": False}],
+        "default_include": "engineer",
+    }
+    ctx = make_ctx({}, options=options)
+    jobs = list(ATSBoards().fetch(ctx))
+
+    assert [j.description for j in jobs] == [None]
+    assert ctx.http.calls == []
+
+
+def test_a_failed_cornerstone_detail_fetch_leaves_the_job_without_a_description(
+    monkeypatch, make_ctx, caplog
+):
+    import httpx
+
+    listing = [cornerstone_job(description=fixture_text("cornerstone_listing_shell.txt"))]
+    patch_boards(monkeypatch, {("cornerstone", "gmv"): (CornerstoneFake, listing)})
+    ctx = make_ctx(
+        {
+            "/home?c=gmv": "cornerstone_home.html",
+            "/job-requisition/": lambda req: httpx.Response(403, text='{"status":2}'),
+        },
+        options={"urls": [CORNERSTONE_ENTRY], "default_include": "engineer"},
+    )
+    with caplog.at_level(logging.WARNING, logger="jobscraper.sources.ats_boards"):
+        jobs = list(ATSBoards().fetch(ctx))
+
+    assert [j.description for j in jobs] == [None]
+    assert "description fetch failed" in caplog.text

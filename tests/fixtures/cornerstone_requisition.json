@@ -1,0 +1,37 @@
+{
+  "status": 0,
+  "timestamp": "2026-09-10T08:14:30.6858839Z",
+  "data": {
+    "id": 5045,
+    "ref": "req5045",
+    "displayTitle": "Aerospace engineer",
+    "minQualification": null,
+    "offerLetterTemplateId": 1,
+    "grade": null,
+    "position": {"id": 3554, "title": "A new vacancy"},
+    "location": {"id": 2133, "title": "PTM"},
+    "division": {"id": 5154, "title": "GMV-NAV/NPS/APS"},
+    "defaultCultureId": 15,
+    "availableCultures": [1, 15],
+    "displayTitles": {
+      "1": "Aerospace engineer",
+      "15": "Junior GNSS & Navigation Software Engineer"
+    },
+    "minQualifications": {"1": null, "15": null},
+    "externalDescriptions": {
+      "1": "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\"><head>\r\n\r\n<meta http-equiv=\"Content-Type\" content=\"text/html; charset=iso-8859-1\">\r\n\r\n<title>Employment Opportunities</title>\r\n\r\n<style>.wm-ab-launcher-spinner {\r\n  height: 100%;\r\n  left: 0;\r\n  position: absolute;\r\n  top: 0;\r\n  width: 100%;\r\n}\r\n\r\n.wm-ab-launcher-spinner::before {\r\n  animation: wm-ab-spin 1.5s linear infinite;\r\n  border: 2px solid #f3f3f3;\r\n  border-radius: 50%;\r\n  border-top: 2px solid transparent;\r\n  content: '';\r\n  height: 18px;\r\n  left: calc(50% - 9px);\r\n  position: absolute;\r\n  top: calc(50% - 9px);\r\n  width: 18px;\r\n}\r\n\r\n@keyframes wm-ab-spin {\r\n  0% {\r\n    transform: rotate(0deg);\r\n  }\r\n  100% {\r\n    transform: rotate(360deg);\r\n  }\r\n}</style>\r\n<style>.wm-ab-launcher-spinner {\r\n  height: 100%;\r\n  left: 0;\r\n  position: absolute;\r\n  top: 0;\r\n  width: 100%;\r\n}</style>\r\n</head>\r\n<body>\r\n\r\n<div id=\"plantilla_noticias\"><table style=\"height: 162px;font-family: verdana, sans-serif; font-size: 14px\" width=\"883\">\r\n<tbody>\r\n<tr style=\"height: 46px;\"><td style=\"width: 874.545px; height: 46px;\">&nbsp;<img src=\"https://gmv.csod.com/clientimg/gmv/emailUploads/Job%20template%20pictures/Ing aeroespacial_v2.jpg\" width=\"870\" height=\"298\" alt=\"\"></td></tr><tr style=\"height: 46px;\">\r\n<td style=\"width: 874.545px; height: 46px;\">\r\n<p style=\"text-align: justify;\">We lead missions to outer planets, observe the Earth from space, bring technology to Mars, integrate aerospace technology into people's daily lives... We dreamed about touching the stars, and we did it! If you don't know us yet, we are an engineering and technological innovation company working on several areas, including the space sector, where we lead missions and projects in flight segment activities, satellite navigation, ground segment, data processing or space robotics among many others.<br>You will be part of our team, full of talent and desire to innovate, where you will:</p><ul><li>Design and develop navigation software</li><li>Validate algorithms against flight data</li></ul></td>\r\n</tr>\r\n<tr style=\"height: 46px;\">\r\n<td style=\"width: 874.545px; height: 46px;\">\r\n<p style=\"text-align: center;\"><span style=\"color: #df0024;\"><strong>DO YOU WANT TO BE PART OF OUR TEAM?</strong></span></p>\r\n<p>If you want this position to be yours, we would like you to have the following knowledge/experience:</p>\r\n<ul>\r\n<li>Software design and development</li>\r\n<li>Algorithm development</li>\r\n<li>Fluent in English (C1 or higher)</li>\r\n</ul>\r\n</td>\r\n</tr>\r\n<tr style=\"height: 46.6px;\">\r\n<td style=\"width: 874.545px; height: 46.6px;\">\r\n<p style=\"text-align: center;\"><span style=\"color: #df0024;\"><strong>WHAT DO WE OFFER?</strong></span></p>\r\n<ul>\r\n<li>Join our team and culture GMV by entering into technological and innovative projects within multicultural and multidisciplinary teams.</li>\r\n<li>We are flexible! We have flexible hours and intensive working hours during the summer months.</li>\r\n<li>Are you coming from another country? We offer you a relocation package.</li>\r\n</ul>\r\n<p style=\"text-align: center;\"><strong>WHAT ARE YOU WAITING FOR?</strong></p>\r\n</td>\r\n</tr>\r\n</tbody>\r\n</table>\r\n<p style=\"text-align: justify;\">&nbsp;</p>\r\n</div>\r\n\r\n</body></html>",
+      "15": "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\"><head>\r\n<title>Employment Opportunities</title>\r\n<style>.wm-ab-launcher-spinner {\r\n  height: 100%;\r\n  left: 0;\r\n  position: absolute;\r\n  top: 0;\r\n  width: 100%;\r\n}</style>\r\n</head>\r\n<body>\r\n<div id=\"plantilla_noticias\"><p>Lideramos misiones al espacio exterior, observamos la tierra desde el espacio, llevamos la tecnología a Marte, integramos la tecnología aeroespacial en el día a día de las personas, soñamos con tocar las estrellas… ¡y lo hicimos! Si aún no nos conoces, somos una empresa de ingeniería e innovación tecnológica para diversas áreas, entre ellas el sector espacial.</p><p><strong>¿QUIERES SER PARTE DE NUESTRO EQUIPO?</strong></p><ul><li>Diseño y desarrollo de software</li><li>Desarrollo de algoritmos</li></ul></div>\r\n</body></html>"
+    },
+    "hiringManagerId": 746,
+    "currency": 3,
+    "currencyCode": "EUR",
+    "minimumSalary": 0.0,
+    "maximumSalary": 0.0,
+    "compensationType": 5,
+    "jobDetailsUrl": "https://gmv.csod.com/ux/ats/careersite/4/home/requisition/5045?c=gmv",
+    "state": "Madrid",
+    "stateId": null,
+    "country": "ES",
+    "city": "Tres Cantos"
+  }
+}

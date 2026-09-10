@@ -6,7 +6,7 @@
     "ats_type": "greenhouse",
     "ats_id": "4567890",
     "location": "Helsinki, Finland",
-    "description": "<p>Join our <strong>backend</strong> team.</p><ul><li>Go</li><li>Kubernetes</li></ul>",
+    "description": "<p>Join our <strong>backend</strong> team in Helsinki and help us keep the game services running for millions of players.</p><ul><li>Go and gRPC services</li><li>Kubernetes on our own clusters</li></ul>",
     "employment_type": "FULL_TIME",
     "department": "Engineering",
     "salary_summary": "45 000 € – 60 000 € / year",

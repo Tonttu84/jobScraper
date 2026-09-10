@@ -1,0 +1,48 @@
+{
+  "status": 0,
+  "timestamp": "2026-09-10T08:16:33.2780185Z",
+  "data": {
+    "id": 10048,
+    "ref": "req10048",
+    "displayTitle": "LAB Hardware Engineer - Process Tools",
+    "minQualification": null,
+    "offerLetterTemplateId": null,
+    "grade": null,
+    "position": {
+      "id": 397,
+      "title": "Individual Contributor"
+    },
+    "location": {
+      "id": 83,
+      "title": "Leuven"
+    },
+    "division": {
+      "id": 12320,
+      "title": "LABHW"
+    },
+    "defaultCultureId": 2,
+    "availableCultures": [
+      2
+    ],
+    "displayTitles": {
+      "2": "LAB Hardware Engineer - Process Tools"
+    },
+    "minQualifications": {
+      "2": null
+    },
+    "externalDescriptions": {
+      "2": "..."
+    },
+    "hiringManagerId": 444,
+    "currency": 3,
+    "currencyCode": "EUR",
+    "minimumSalary": 0.0,
+    "maximumSalary": 0.0,
+    "compensationType": 4,
+    "jobDetailsUrl": "https://imec.csod.com/ux/ats/careersite/29/home/requisition/10048?c=imec",
+    "state": null,
+    "stateId": null,
+    "country": "BE",
+    "city": "Leuven"
+  }
+}

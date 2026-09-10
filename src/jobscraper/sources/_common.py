@@ -1,4 +1,5 @@
-"""Helpers shared by adapters: date parsing, country normalization, remote detection."""
+"""Helpers shared by adapters: date parsing, country normalization, remote detection,
+and the sanity check that decides whether a posting body is a description at all."""
 
 from __future__ import annotations
 
@@ -6,6 +7,8 @@ import re
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
+
+from jobscraper.http import strip_html
 
 COUNTRY_NAMES: dict[str, str] = {
     # English / native names → ISO2. Extend freely; matching is case-insensitive.
@@ -55,6 +58,48 @@ _CHALLENGE_MARKERS = (
     "checking your browser",
     "cf-browser-verification",
 )
+
+
+#: Adapters get descriptions as text or as assembled HTML — strip only when there are tags.
+_HTML_RE = re.compile(
+    r"<(?:br|p|div|ul|ol|li|h[1-6]|strong|em|a|span|table|html|body|style|script)\b|</[a-z]+>",
+    re.IGNORECASE,
+)
+#: A CSS/JS rule block: ``{ … prop: value … }``. Non-greedy and brace-free inside, so the
+#: inner blocks of an ``@keyframes`` rule match one by one.
+_RULE_BLOCK_RE = re.compile(r"\{[^{}]*?[A-Za-z-]+\s*:[^{}]*?\}")
+#: Above this share of the text sitting inside such blocks it is a page shell, not a posting.
+_MAX_RULE_SHARE = 0.25
+#: Fewer letters than this and there is nothing for the AI stage to read.
+MIN_DESCRIPTION_LETTERS = 40
+
+
+def _letters(text: str) -> int:
+    return sum(1 for c in text if c.isalpha())
+
+
+def clean_description(text: str | None) -> str | None:
+    """A posting body (HTML or plain text) → readable prose, or ``None`` when there is none.
+
+    Two kinds of non-description are turned into ``None`` so the AI prompt says "no
+    description available" instead of feeding the model junk:
+
+    * **page-shell boilerplate** — a career site that serves its SPA loader, or a tenant who
+      pasted a whole HTML page into the description field and had the tags stripped for them,
+      leaves a wall of CSS declarations and selectors behind;
+    * **placeholders** — ``"..."``, ``"n/a"``, an empty paragraph: anything with almost no
+      prose in it.
+    """
+    if not text:
+        return None
+    body = (strip_html(text) if _HTML_RE.search(text) else text) or ""
+    body = body.strip()
+    if _letters(body) < MIN_DESCRIPTION_LETTERS:
+        return None
+    covered = sum(len(m.group(0)) for m in _RULE_BLOCK_RE.finditer(body))
+    if covered / len(body) > _MAX_RULE_SHARE:
+        return None
+    return body
 
 
 def is_cloudflare_challenge(html: str | None) -> bool:

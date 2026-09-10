@@ -19,6 +19,14 @@ descriptions and only the surviving postings are detailed — that is what turns
 half-hour Workday crawl into a short one. ``lazy_descriptions: true|false|auto``
 overrides the rule.
 
+A description that is not one — a page shell of CSS declarations, ``"..."``, an empty
+paragraph — is stored as ``None`` (``clean_description``) so the AI stage is told there is no
+description instead of being handed junk. A board that can detail-fetch gets a second chance
+at the real text even when its listing "had" a description. Cornerstone career sites are the
+reason both exist: their listing endpoint strips the HTML tags for us, which turns a tenant's
+pasted-in ``<style>`` blocks into prose, so their descriptions come from the career site's
+requisition service instead (``_cornerstone``).
+
 One board failing (dead company, ATS change, unknown ATS name, 403) never stops the rest;
 only an *all boards failed* run raises. A malformed board entry, on the other hand, is a
 config bug and raises before any fetching starts.
@@ -41,20 +49,15 @@ from ats_scrapers import get_scraper_for_url
 from ats_scrapers.scrapers import get_scraper
 from ats_scrapers.scrapers.base import BaseScraper
 
-from jobscraper.http import strip_html
 from jobscraper.models import Job
-from jobscraper.sources._common import guess_country, guess_remote
+from jobscraper.sources._common import clean_description, guess_country, guess_remote
+from jobscraper.sources._cornerstone import CornerstoneDescriptions, is_cornerstone
 from jobscraper.sources.base import SourceContext, register, safe_records
 
 log = logging.getLogger(__name__)
 
 NAME = "ats_boards"
 
-# ats-scrapers normalizes most descriptions to text, but some providers (Lever, Greenhouse)
-# hand back assembled HTML — strip only when the text actually contains tags.
-_HTML_RE = re.compile(
-    r"<(?:br|p|div|ul|ol|li|h[1-6]|strong|em|a|span|table)\b|</[a-z]+>", re.IGNORECASE
-)
 _REMOTEISH_RE = re.compile(r"\b(remote|anywhere|telecommute|distributed)\b", re.IGNORECASE)
 
 # Keys a mapping board entry may carry.
@@ -62,12 +65,6 @@ _ENTRY_KEYS = frozenset(
     {"url", "ats", "slug", "company", "options", "include", "exclude", "lazy_descriptions"}
 )
 _MAX_DESCRIPTION = 25_000  # what ats-scrapers' own enrich_descriptions truncates to
-
-
-def _describe(text: str | None) -> str | None:
-    if not text:
-        return None
-    return strip_html(text) if _HTML_RE.search(text) else text
 
 
 def _city(location: str | None) -> str | None:
@@ -106,7 +103,7 @@ def convert(job: ATSJob, company: str | None = None) -> Job | None:
         url=url,
         title=job.title,
         company=company or job.company,
-        description=_describe(job.description),
+        description=clean_description(job.description),
         location_raw=location,
         country=job.country_iso or guess_country(location),
         city=_city(location),
@@ -240,27 +237,63 @@ def _supports_detail_fetch(scraper: Any) -> bool:
     return get_description is not BaseScraper.get_description
 
 
-def _open_board(board: Board, *, timeout: float, include_descriptions: bool) -> tuple[Any, bool]:
-    """Build the scraper for ``board`` and decide whether descriptions go lazy.
+Describe = Callable[[ATSJob], str | None]
 
-    The capability check needs an instance, so a lazy board is built twice — both calls are
-    plain attribute assignment in ats-scrapers, no I/O.
+
+def _detail_capable(scraper: Any) -> bool:
+    """Whether one posting's description can be fetched on demand for this board."""
+    return is_cornerstone(scraper) or _supports_detail_fetch(scraper)
+
+
+def _describer(scraper: Any, http: Any) -> Describe | None:
+    """How this board fetches one posting's description, or ``None`` if it cannot.
+
+    Most providers answer for themselves. Cornerstone is the exception: its scraper has no
+    per-posting request, and the descriptions its listing carries can be a page shell (see
+    ``_cornerstone``), so we go to the career site's requisition service over ``ctx.http``.
+    """
+    if is_cornerstone(scraper):
+        return CornerstoneDescriptions(http).get_description if http is not None else None
+    if _supports_detail_fetch(scraper):
+        return scraper.get_description
+    return None
+
+
+def _open_board(
+    board: Board, *, timeout: float, include_descriptions: bool, http: Any = None
+) -> tuple[Any, Describe | None]:
+    """Build the scraper for ``board`` and decide how descriptions are fetched.
+
+    Returns the scraper and, when the board goes lazy, the per-posting description call for
+    the title survivors. The capability check needs an instance, so a lazy board is built
+    twice — both calls are plain attribute assignment in ats-scrapers, no I/O.
     """
     scraper = board.make_scraper(timeout=timeout, include_descriptions=include_descriptions)
     wanted = board.lazy if board.lazy is not None else board.filtered
-    lazy = wanted and _supports_detail_fetch(scraper)
-    if lazy and include_descriptions:
+    if wanted and include_descriptions and _detail_capable(scraper):
         scraper = board.make_scraper(timeout=timeout, include_descriptions=False)
-    return scraper, lazy
+    return scraper, (_describer(scraper, http) if wanted else None)
 
 
-def _fill_descriptions(scraper: Any, jobs: list[ATSJob], label: str) -> None:
-    """Detail-fetch the postings that survived the title filter; failures leave None."""
+def _fill_descriptions(
+    jobs: list[ATSJob], describe: Describe | None, label: str
+) -> None:
+    """Give the title survivors a usable description.
+
+    A listing description that is only page shell or a placeholder is dropped first, so a
+    board whose listing "has" descriptions still gets the real text detail-fetched. Failures
+    leave the posting without one — better than shipping the shell to the AI stage.
+
+    The surviving bodies are stored back as the cleaned text, so ``convert`` does not parse
+    the same HTML a second time.
+    """
     for job in jobs:
         if job.description:
+            job.description = clean_description(job.description)
+        if job.description or describe is None:
             continue
         try:
-            description = scraper.get_description(job)
+            description = describe(job)
         except Exception as exc:
             log.warning("%s: %s: description fetch failed for %s: %s", NAME, label, job.url, exc)
             continue
@@ -294,8 +327,11 @@ class ATSBoards:
         failures: list[str] = []
         for board in boards:
             try:
-                scraper, lazy = _open_board(
-                    board, timeout=timeout, include_descriptions=include_descriptions
+                scraper, describe = _open_board(
+                    board,
+                    timeout=timeout,
+                    include_descriptions=include_descriptions,
+                    http=ctx.http,
                 )
                 ats_jobs = list(scraper.fetch())
             except Exception as exc:
@@ -310,8 +346,7 @@ class ATSBoards:
                 len(ats_jobs),
                 len(kept),
             )
-            if lazy:
-                _fill_descriptions(scraper, kept, board.label)
+            _fill_descriptions(kept, describe, board.label)
             for job in safe_records(kept, partial(convert, company=board.company), self.name):
                 yield job
                 seen += 1

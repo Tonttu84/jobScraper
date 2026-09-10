@@ -127,9 +127,20 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   in the US/India/China reach the Sonnet screen and are rejected there at cost. Teach
   `guess_country` the trailing ISO-2 token and US state abbreviations, and drop unknown-country
   on-site jobs whose location text names a non-target city.
-- [ ] **GMV (Cornerstone) descriptions are a page-loader stylesheet**, and imec's are empty:
-  the Cornerstone detail fetch returns the SPA shell. Either fix in `ats_boards` (Cornerstone
-  detail endpoint) or set `lazy_descriptions: false` for those boards and accept title-only.
+- [x] **GMV (Cornerstone) descriptions are a page-loader stylesheet**, and imec's are empty
+  (done 2026-09-10). What Cornerstone actually serves: the listing endpoint
+  (`rec-job-search/external/jobs`) returns `externalDescription` with the HTML tags *already
+  stripped*, so GMV — which pastes a whole HTML page into that field — leaks the text of its
+  `<style>` blocks as prose (~7 000 chars of the WalkMe stylesheet, the advert at the end).
+  Fixed in two parts: `sources/_common.clean_description` stores `None` for a body that is
+  mostly CSS rule blocks or has under 40 letters, and `sources/_cornerstone.py` re-reads those
+  postings from the career site's own requisition service (career-site page → JWT →
+  `GET /services/x/job-requisition/v2/requisitions/<id>`), which still serves the original
+  HTML and strips cleanly, English culture first. Live before → after: GMV 15 161 chars of CSS
+  → 2 045 chars of English prose, imec 3 → 0 (it publishes `"..."` everywhere, in the listing
+  and the requisition service alike, so that board is `lazy_descriptions: false`), OHB 575 and
+  Henkel 1 337 unchanged (clean already, so neither pays for a request — Henkel's requisition
+  service answers 403 anyway). Cost: one extra request per GMV posting (~130 per run).
 
 ## Improving match quality (agreed levers, not yet built)
 The CV is a thin signal. Three additions, in order of expected payoff:

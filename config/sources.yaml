@@ -203,6 +203,8 @@ sources:
         slug: https://henkel.csod.com/ux/ats/careersite/1/home?c=henkel
         company: Henkel
         include: *software_titles
+        # Henkel's listing descriptions are clean prose (~1 300 chars), so nothing asks its
+        # requisition service — which is just as well: that tenant answers 403 to it.
       - url: https://careers.smartrecruiters.com/redcare-pharmacy     # Redcare Pharmacy  68 / 21 / 236
         company: Redcare Pharmacy
       - ats: workday                                   # Johnson Controls  68 / 52 / 2631
@@ -233,6 +235,11 @@ sources:
         slug: imec
         company: imec
         options: {site_id: 29}
+        # imec publishes "..." as the description of every posting, in the listing endpoint
+        # and in the career site's requisition service alike (checked live 2026-09-10, 44 of
+        # 50 title survivors). There is nothing to fetch, so stay eager and save the request:
+        # the postings arrive title-only and the AI stage is told there is no description.
+        lazy_descriptions: false
 
       # ---- Ireland
       - ats: oracle                                    # JPMorgan Chase  127 / 81 / 7378
@@ -271,6 +278,12 @@ sources:
         slug: gmv
         company: GMV
         options: {site_id: 4}
+        # GMV pastes a whole HTML page into the Cornerstone description field, and the listing
+        # endpoint strips the tags for us, so 128 of its 131 title survivors arrived as ~7 000
+        # characters of the WalkMe stylesheet with the advert buried at the end. The adapter
+        # now re-reads those from the career site's requisition service (see
+        # sources/_cornerstone.py): ~2 000 characters of clean English per posting, at the
+        # price of one request each.
       - ats: phenom                                    # Roche  139 / 85 / 1203
         slug: https://careers.roche.com
         company: Roche
