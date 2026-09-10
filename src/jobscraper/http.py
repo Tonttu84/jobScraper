@@ -30,6 +30,11 @@ DEFAULT_UA = (
 )
 
 
+#: Appended to an error whenever a site answered with a bot challenge instead of the page.
+#: ``SourceContext.page`` reuses it, so "needs a browser" reads the same everywhere.
+BROWSER_HINT = " (Cloudflare challenge: this source needs a headless browser)"
+
+
 class SourceHTTPError(RuntimeError):
     """Raised when a source endpoint keeps failing; carries the last status code."""
 
@@ -160,7 +165,7 @@ def _raise_for_status(resp: httpx.Response) -> None:
     if resp.status_code >= 400:
         hint = ""
         if resp.status_code == 403 and "cloudflare" in resp.text.lower():
-            hint = " (Cloudflare challenge: this source needs a headless browser)"
+            hint = BROWSER_HINT
         raise SourceHTTPError(f"{resp.request.method} {resp.request.url} -> HTTP {resp.status_code}{hint}", resp.status_code)
 
 

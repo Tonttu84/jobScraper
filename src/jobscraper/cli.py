@@ -29,6 +29,7 @@ from rich.table import Table
 
 from jobscraper import config
 from jobscraper import store as store_mod
+from jobscraper.browser import BrowserFactory
 from jobscraper.config import load_settings
 from jobscraper.facets import compute_all
 from jobscraper.filters import RULES_VERSION, apply_rules, dedupe
@@ -61,6 +62,23 @@ def _http(settings) -> Http:
     return Http(min_delay=float(settings.http.get("min_delay", 1.0)), timeout=float(settings.http.get("timeout", 30)))
 
 
+def _browser(settings) -> BrowserFactory | None:
+    """The headless-browser factory sources may fall back to, or None if turned off.
+
+    ``http.browser`` in ``config/sources.yaml``: ``auto`` (default) hands every source a
+    factory — Chromium is only started if one actually asks for a page — and ``never`` hands
+    out nothing, so a Cloudflare-protected source fails with the "needs a headless browser"
+    hint instead of launching anything.
+    """
+    if str(settings.http.get("browser", "auto")).lower() == "never":
+        return None
+    return BrowserFactory(
+        headless=bool(settings.http.get("browser_headless", True)),
+        timeout=float(settings.http.get("browser_timeout", 45)),
+        min_delay=float(settings.http.get("min_delay", 1.0)),
+    )
+
+
 def _enabled(settings, names: list[str]) -> list[str]:
     known = all_sources()
     if names:
@@ -88,28 +106,36 @@ def probe(names: list[str] | None = typer.Argument(None), limit: int = 5, verbos
     _setup_logging(verbose)
     settings = load_settings()
     http = _http(settings)
+    browser = _browser(settings)
     ok, failed = [], []
-    for name in _enabled(settings, names or []):
-        src = get_source(name)
-        cfg = settings.sources.get(name)
-        ctx = SourceContext(http=http, profile=settings.profile, options=cfg.options if cfg else {}, limit=limit)
-        t0 = time.monotonic()
-        try:
-            jobs = list(take(src.fetch(ctx), limit))
-        except Exception as exc:
-            failed.append((name, f"{type(exc).__name__}: {exc}"))
-            console.print(f"[red]✗ {name}[/red]: {type(exc).__name__}: {exc}")
-            continue
-        dt = time.monotonic() - t0
-        if not jobs:
-            failed.append((name, "returned 0 jobs"))
-            console.print(f"[yellow]? {name}[/yellow]: 0 jobs in {dt:.1f}s (query too narrow, or site changed)")
-            continue
-        ok.append(name)
-        console.print(f"[green]✓ {name}[/green]: {len(jobs)} jobs in {dt:.1f}s")
-        for j in jobs[:limit]:
-            console.print(f"   • {j.title!r} @ {j.company or '?'} | {j.location_raw or '?'} [{j.country or '?'}/{j.remote}] | "
-                          f"{(j.posted_at.date() if j.posted_at else '?')} | desc={len(j.description or '')} chars | {j.url}")
+    try:
+        for name in _enabled(settings, names or []):
+            src = get_source(name)
+            cfg = settings.sources.get(name)
+            ctx = SourceContext(http=http, profile=settings.profile, options=cfg.options if cfg else {}, limit=limit,
+                                browser=browser)
+            t0 = time.monotonic()
+            try:
+                jobs = list(take(src.fetch(ctx), limit))
+            except Exception as exc:
+                failed.append((name, f"{type(exc).__name__}: {exc}"))
+                console.print(f"[red]✗ {name}[/red]: {type(exc).__name__}: {exc}")
+                continue
+            dt = time.monotonic() - t0
+            # "(browser)" means the plain client was not enough: that source needs Chromium.
+            via = " (browser)" if ctx.browser_calls else ""
+            if not jobs:
+                failed.append((name, "returned 0 jobs"))
+                console.print(f"[yellow]? {name}[/yellow]: 0 jobs in {dt:.1f}s{via} (query too narrow, or site changed)")
+                continue
+            ok.append(name)
+            console.print(f"[green]✓ {name}[/green]: {len(jobs)} jobs in {dt:.1f}s{via}")
+            for j in jobs[:limit]:
+                console.print(f"   • {j.title!r} @ {j.company or '?'} | {j.location_raw or '?'} [{j.country or '?'}/{j.remote}] | "
+                              f"{(j.posted_at.date() if j.posted_at else '?')} | desc={len(j.description or '')} chars | {j.url}")
+    finally:
+        if browser is not None:
+            browser.close()
     console.print(f"\n{len(ok)} sources OK, {len(failed)} failed")
     for name, why in failed:
         console.print(f"  - {name}: {why}")
@@ -121,21 +147,27 @@ def scrape(names: list[str] | None = typer.Argument(None), verbose: bool = typer
     _setup_logging(verbose)
     settings = load_settings()
     http = _http(settings)
+    browser = _browser(settings)
     store = Store()
-    for name in _enabled(settings, names or []):
-        src = get_source(name)
-        cfg = settings.sources.get(name)
-        ctx = SourceContext(http=http, profile=settings.profile, options=cfg.options if cfg else {}, limit=limit)
-        t0 = time.monotonic()
-        try:
-            jobs = list(take(src.fetch(ctx), limit))
-        except Exception as exc:
-            console.print(f"[red]✗ {name}[/red]: {type(exc).__name__}: {exc}")
-            store.log_run(name, 0, 0, f"{type(exc).__name__}: {exc}")
-            continue
-        new = store.upsert_jobs(jobs)
-        store.log_run(name, len(jobs), new)
-        console.print(f"[green]✓ {name}[/green]: {len(jobs)} jobs, {new} new ({time.monotonic() - t0:.0f}s)")
+    try:
+        for name in _enabled(settings, names or []):
+            src = get_source(name)
+            cfg = settings.sources.get(name)
+            ctx = SourceContext(http=http, profile=settings.profile, options=cfg.options if cfg else {}, limit=limit,
+                                browser=browser)
+            t0 = time.monotonic()
+            try:
+                jobs = list(take(src.fetch(ctx), limit))
+            except Exception as exc:
+                console.print(f"[red]✗ {name}[/red]: {type(exc).__name__}: {exc}")
+                store.log_run(name, 0, 0, f"{type(exc).__name__}: {exc}")
+                continue
+            new = store.upsert_jobs(jobs)
+            store.log_run(name, len(jobs), new)
+            console.print(f"[green]✓ {name}[/green]: {len(jobs)} jobs, {new} new ({time.monotonic() - t0:.0f}s)")
+    finally:
+        if browser is not None:
+            browser.close()
     console.print(store.stats())
 
 

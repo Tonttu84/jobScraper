@@ -4,6 +4,13 @@
 http:
   min_delay: 1.0          # seconds between requests to the same host
   timeout: 30
+  # Headless-browser fallback for Cloudflare-protected sites (needs `uv sync --extra dev` and
+  # `uv run playwright install chromium`). `auto`: a source may start Chromium when the plain
+  # client is turned away — nothing is launched until one actually needs it. `never`: no browser,
+  # such a source just fails with "needs a headless browser".
+  browser: auto           # auto | never
+  browser_timeout: 45     # seconds per page load
+  browser_headless: true  # false to watch what the browser does while fixing a parser
 
 sources:
   # ---------------------------------------------------------------- Finland / Estonia / Nordics
@@ -25,6 +32,16 @@ sources:
     keywords: ["developer", "software", "engineer", "junior", "intern"]
   cvkeskus:
     enabled: true
+  jobly:
+    # Disabled until it is checked live: verify with `jobscraper probe jobly` first; needs Chromium
+    # (`uv run playwright install chromium`). The site is behind Cloudflare, so every page goes
+    # through the headless browser (`mode: browser`); `auto` tries plain HTTP first, `http` never
+    # starts a browser. The adapter was written without access to the site — expect selector fixes.
+    enabled: false
+    queries: ["software developer", "ohjelmistokehittäjä", "junior developer"]
+    max_pages: 3
+    max_details: 100
+    mode: browser
   teamtailor:
     enabled: true
     # Teamtailor tenant slugs: https://<slug>.teamtailor.com/jobs.json . Add companies you care about.

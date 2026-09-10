@@ -39,6 +39,26 @@ Disable anything broken in `config/sources.yaml` (`enabled: false`) or fix the a
 `src/jobscraper/sources/<name>.py`. Cached responses live in `data/cache/` and are handy as new
 test fixtures.
 
+### Cloudflare sites (headless browser)
+
+Some boards (jobly.fi, sometimes duunitori.fi) answer a plain HTTP client with Cloudflare's
+"Just a moment…" page. Those pages are fetched with a headless Chromium instead:
+
+```bash
+uv sync --extra dev                 # installs Playwright
+uv run playwright install chromium  # once per machine, downloads the browser (~150 MB)
+uv run jobscraper probe jobly       # a source line ends with "(browser)" when Chromium was used
+```
+
+`http.browser` in `config/sources.yaml` is the switch: `auto` (default) lets a source start the
+browser when it is turned away — nothing is launched until one actually needs it — and `never`
+turns it off, so such a source simply fails with "needs a headless browser". Per source, the
+`mode` option decides how its pages are fetched: `browser` (straight to Chromium, for a site
+known to be protected), `auto` (plain HTTP first, browser as fallback) or `http` (never).
+
+The browser profile lives in `data/browser/`, so the Cloudflare clearance cookie survives
+between runs and the challenge is normally solved once. Delete that directory to start clean.
+
 ## Daily use
 
 ```bash

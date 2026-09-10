@@ -41,8 +41,28 @@ CITY_COUNTRY: dict[str, str] = {
     "belgrade": "RS", "sarajevo": "BA", "dubai": "AE", "abu dhabi": "AE", "kyiv": "UA", "kiev": "UA",
 }
 
-_REMOTE_RE = re.compile(r"\b(remote|etätyö|etänä|home ?office|fully distributed|work from anywhere|telecommute)\b", re.I)
+# "etäty\w*" so the Finnish stem matches inflected forms too ("etätyönä", "etätyömahdollisuus").
+_REMOTE_RE = re.compile(r"\b(remote|etäty\w*|etänä|home ?office|fully distributed|work from anywhere|telecommute)\b", re.I)
 _HYBRID_RE = re.compile(r"\b(hybrid|hybridi)\b", re.I)
+
+#: Markers of a Cloudflare interstitial ("Just a moment…"), as served instead of the page.
+#: Deliberately specific: the bare word "cloudflare" appears in plenty of real job ads.
+_CHALLENGE_MARKERS = (
+    "just a moment",
+    "cf-chl",
+    "challenge-platform",
+    "cf_chl_opt",
+    "checking your browser",
+    "cf-browser-verification",
+)
+
+
+def is_cloudflare_challenge(html: str | None) -> bool:
+    """True when ``html`` is Cloudflare's bot check rather than the page that was asked for."""
+    if not html:
+        return False
+    low = html[:4000].lower()
+    return any(marker in low for marker in _CHALLENGE_MARKERS)
 
 
 def guess_country(*texts: str | None) -> str | None:

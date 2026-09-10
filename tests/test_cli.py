@@ -7,14 +7,16 @@ the Anthropic API. Everything up to ``report`` runs for real against a temporary
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
 from jobscraper import cli as cli_mod
 from jobscraper import store as store_mod
+from jobscraper.browser import BrowserFactory
 from jobscraper.models import FilterResult
-from tests.conftest import FakeHttp
+from tests.conftest import FakeBrowser, FakeHttp
 
 runner = CliRunner()
 
@@ -272,3 +274,52 @@ def test_db_option_overrides_database_for_a_command(data_dir, fake_http):
     assert result.exit_code == 0, result.output
     assert (data_dir / "custom.db").exists()
     assert not (data_dir / "jobs.db").exists()
+
+
+# ------------------------------------------------------------------ headless browser
+
+
+class _FakeFactory:
+    """Stands in for the BrowserFactory cli._browser() builds: hands out one FakeBrowser."""
+
+    def __init__(self, routes):
+        self.browser = FakeBrowser(routes)
+        self.closed = False
+
+    def __call__(self):
+        return self.browser
+
+    def close(self):
+        self.closed = True
+
+
+def test_browser_switch_reads_the_http_block(data_dir):
+    assert cli_mod._browser(SimpleNamespace(http={"browser": "never"})) is None
+    factory = cli_mod._browser(SimpleNamespace(http={}))
+    assert isinstance(factory, BrowserFactory)
+    assert factory.kwargs == {"headless": True, "timeout": 45.0, "min_delay": 1.0}
+    tuned = cli_mod._browser(SimpleNamespace(http={"browser_headless": False, "browser_timeout": 10}))
+    assert tuned.kwargs["headless"] is False and tuned.kwargs["timeout"] == 10.0
+
+
+def test_probe_marks_the_sources_that_needed_the_browser(data_dir, monkeypatch):
+    """jobly is disabled in the config, but naming it explicitly probes it anyway."""
+    factory = _FakeFactory({"/tyopaikat": "jobly_search.html", "/tyopaikka/": "jobly_detail.html"})
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: factory)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({}))  # no plain request allowed
+
+    result = runner.invoke(cli_mod.app, ["probe", "jobly", "--limit", "2"])
+    assert result.exit_code == 0, result.output
+    assert "✓ jobly" in result.output
+    assert "(browser)" in result.output
+    assert factory.closed is True  # Chromium is not left running
+
+
+def test_probe_does_not_mark_sources_that_did_not_need_it(data_dir, fake_http, monkeypatch):
+    factory = _FakeFactory({})
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: factory)
+    result = runner.invoke(cli_mod.app, ["probe", "arbeitnow", "--limit", "1"])
+    assert result.exit_code == 0, result.output
+    assert "✓ arbeitnow" in result.output
+    assert "(browser)" not in result.output
+    assert factory.browser.calls == []

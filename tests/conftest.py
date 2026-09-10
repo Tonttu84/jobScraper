@@ -64,6 +64,36 @@ class FakeHttp(Http):
         raise AssertionError(f"FakeHttp: no route for {method} {full}")
 
 
+class FakeBrowser:
+    """Stand-in for :class:`jobscraper.browser.Browser`, routed like :class:`FakeHttp`.
+
+    Routes (substring of URL) → fixture file name / literal text / callable taking the URL.
+    Every call is recorded (``calls``, ``waited``) so a test can assert that the headless
+    fallback was — or was not — used. Unmatched URLs raise AssertionError.
+    """
+
+    def __init__(self, routes: dict[str, Any]) -> None:
+        self.routes = routes
+        self.calls: list[str] = []
+        self.waited: list[str | None] = []
+        self.closed = False
+
+    def page_html(self, url: str, *, wait_for: str | None = None, challenge_timeout: float = 30.0) -> str:
+        self.calls.append(url)
+        self.waited.append(wait_for)
+        for key, value in self.routes.items():
+            if key in url:
+                if callable(value):
+                    return value(url)
+                if isinstance(value, str) and (FIXTURES / value).exists():
+                    return fixture_text(value)
+                return str(value)
+        raise AssertionError(f"FakeBrowser: no route for {url}")
+
+    def close(self) -> None:
+        self.closed = True
+
+
 @pytest.fixture(autouse=True)
 def _no_profile_leaks(monkeypatch):
     """The active profile is process state; no test may inherit one from another."""
@@ -80,10 +110,30 @@ def settings():
 
 @pytest.fixture
 def make_ctx(settings) -> Callable[..., SourceContext]:
-    def _make(routes: dict[Any, Any] | None = None, options: dict[str, Any] | None = None, limit: int | None = None) -> SourceContext:
-        return SourceContext(http=FakeHttp(routes or {}), profile=settings.profile, options=options or {}, limit=limit)
+    def _make(
+        routes: dict[Any, Any] | None = None,
+        options: dict[str, Any] | None = None,
+        limit: int | None = None,
+        browser_routes: dict[str, Any] | None = None,
+    ) -> SourceContext:
+        """A SourceContext over :class:`FakeHttp`; ``browser_routes`` adds a :class:`FakeBrowser`.
+
+        The browser factory hands out the same fake every time, so a test can read it back
+        with ``ctx.browser()``.
+        """
+        browser = None
+        if browser_routes is not None:
+            fake = FakeBrowser(browser_routes)
+            browser = lambda: fake  # noqa: E731 - the factory is one expression
+        return SourceContext(
+            http=FakeHttp(routes or {}),
+            profile=settings.profile,
+            options=options or {},
+            limit=limit,
+            browser=browser,
+        )
 
     return _make
 
 
-__all__ = ["FakeHttp", "_raise_for_status", "fixture_json", "fixture_text"]
+__all__ = ["FakeBrowser", "FakeHttp", "_raise_for_status", "fixture_json", "fixture_text"]
