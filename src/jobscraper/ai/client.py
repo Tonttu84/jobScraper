@@ -23,8 +23,8 @@ from anthropic.types.message_create_params import MessageCreateParamsNonStreamin
 from anthropic.types.messages.batch_create_params import Request
 from pydantic import BaseModel, ValidationError
 
-from jobscraper.ai.prompts import PROMPT_VERSION, job_prompt, system_prompt
-from jobscraper.ai.schemas import Ranking, Screening
+from jobscraper.ai.prompts import PROMPT_VERSION, job_prompt, refine_user_prompt, system_prompt
+from jobscraper.ai.schemas import Ranking, RefinedJob, Refinement, Screening
 from jobscraper.config import Profile
 from jobscraper.models import AIVerdict, FilterResult, Job
 from jobscraper.store import Store
@@ -49,6 +49,13 @@ def _chunks(items: list, size: int) -> Iterator[list]:
         yield items[start:start + size]
 
 
+def _client() -> anthropic.Anthropic:
+    """The SDK client every stage uses, with a warning when no credentials are in the environment."""
+    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+        log.warning("ANTHROPIC_API_KEY not set; relying on `ant auth login` profile if present")
+    return anthropic.Anthropic(max_retries=4)
+
+
 class AIStage:
     def __init__(self, stage: str, profile: Profile, store: Store, model: str | None = None) -> None:
         assert stage in ("prefilter", "rank")
@@ -63,9 +70,7 @@ class AIStage:
         self.concurrency = ai.concurrency
         self.batch_chunk = ai.batch_chunk
         self.system = system_prompt(stage, profile)
-        if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-            log.warning("ANTHROPIC_API_KEY not set; relying on `ant auth login` profile if present")
-        self.client = anthropic.Anthropic(max_retries=4)
+        self.client = _client()
 
     # ------------------------------------------------------------- verdicts
     @staticmethod
@@ -250,12 +255,97 @@ class AIStage:
         return running
 
 
+#: Models whose thinking is not ours to configure: it is always on for Fable (an explicit
+#: ``thinking`` block is rejected outright) and adaptive by default on Opus 5.
+_THINKING_IS_IMPLICIT = ("fable", "opus")
+
+
+def refine_verdicts(items: Iterable[RefinedJob], job_ids: Iterable[str], model: str,
+                    usage: dict[str, int | bool] | None = None) -> list[AIVerdict]:
+    """Map one :class:`Refinement` answer onto verdicts, in the order the model gave them.
+
+    Ids that were never sent, and repeats of an id already answered, are dropped with a warning;
+    ids the model forgot are logged (the report falls back to their rank score). ``usage`` rides
+    on the first verdict only — the whole shortlist cost one request, not one per job.
+    """
+    known, seen = list(job_ids), set()
+    verdicts: list[AIVerdict] = []
+    for item in items:
+        if item.job_id not in known:
+            log.warning("refine: unknown job_id %s in the answer, dropped", item.job_id)
+            continue
+        if item.job_id in seen:
+            log.warning("refine: duplicate job_id %s in the answer, dropped", item.job_id)
+            continue
+        seen.add(item.job_id)
+        verdicts.append(AIVerdict(
+            job_id=item.job_id, stage="refine", model=model, prompt_version=PROMPT_VERSION,
+            relevant=True, score=item.score, position=item.position, summary=item.summary,
+            language_ok=True, seniority_ok=True, location_ok=True, concerns=[], why_apply=[],
+            usage=dict(usage or {}) if not verdicts else {}))
+    missing = [job_id for job_id in known if job_id not in seen]
+    if missing:
+        log.warning("refine: %d job(s) missing from the answer: %s", len(missing), ", ".join(missing))
+    return verdicts
+
+
+class RefineStage:
+    """One request that ranks the whole shortlist against itself.
+
+    The rank stage scores each posting alone inside a chunk, so its score carries chunk noise
+    (measured 2026-09-10: median drift 3 points, p90 8, top-10 overlap 0.54 between two runs).
+    Seeing every shortlisted posting in one call removes that noise where it matters. A refusal
+    or an unparseable answer stores nothing, and the report falls back to the rank scores.
+    """
+
+    def __init__(self, profile: Profile, store: Store, model: str | None = None) -> None:
+        ai = profile.ai
+        self.profile = profile
+        self.store = store
+        self.model = model or ai.refine_model
+        self.effort = ai.refine_effort
+        self.max_chars = ai.max_description_chars
+        self.system = system_prompt("refine", profile)
+        self.client = _client()
+
+    def _thinking(self) -> dict[str, dict]:
+        """``thinking`` as request kwargs — empty for the models that decide it themselves."""
+        if any(family in self.model.lower() for family in _THINKING_IS_IMPLICIT):
+            return {}
+        return {"thinking": {"type": "adaptive"}}
+
+    def run(self, jobs: list[Job], filters: dict[str, FilterResult]) -> list[AIVerdict]:
+        """Score the shortlist in one call, store the verdicts, and return them in answer order."""
+        if not jobs:
+            return []
+        log.info("refine: judging %d jobs against each other with %s", len(jobs), self.model)
+        response = self.client.messages.parse(
+            model=self.model,
+            max_tokens=16000,
+            system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": refine_user_prompt(jobs, filters, self.max_chars)}],
+            output_format=Refinement,
+            output_config={"effort": self.effort},
+            **self._thinking(),
+        )
+        if response.stop_reason == "refusal" or response.parsed_output is None:
+            log.warning("refine: %s gave no structured answer (stop_reason=%s); keeping the rank "
+                        "scores", self.model, response.stop_reason)
+            return []
+        verdicts = refine_verdicts(response.parsed_output.items, [j.id for j in jobs], self.model,
+                                   AIStage._usage(response.usage))
+        for v in verdicts:
+            self.store.save_verdict(v)
+        return verdicts
+
+
 def estimate_cost(verdicts: Iterable[AIVerdict]) -> dict[str, float]:
     """Rough USD from usage counters, using list prices (per 1M tokens).
 
     Verdicts that came from a Message Batch carry ``usage["batch"]`` and are billed at half.
     """
-    prices = {"claude-opus-5": (5.0, 25.0), "claude-sonnet-5": (2.0, 10.0), "claude-haiku-4-5": (1.0, 5.0)}
+    prices = {"claude-opus-5": (5.0, 25.0), "claude-sonnet-5": (2.0, 10.0),
+              "claude-haiku-4-5": (1.0, 5.0), "claude-fable-5-1": (10.0, 50.0)}
     total = 0.0
     by_model: dict[str, float] = {}
     for v in verdicts:

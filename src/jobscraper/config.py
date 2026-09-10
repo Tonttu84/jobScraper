@@ -173,9 +173,14 @@ class PromptPolicy(BaseModel):
 class AIPolicy(BaseModel):
     prefilter_model: str = "claude-sonnet-5"
     rank_model: str = "claude-opus-5"
+    #: The refine stage judges the whole shortlist in one request, so it can afford the best model.
+    refine_model: str = "claude-fable-5-1"
     prefilter_effort: str = "low"
     rank_effort: str = "high"
+    refine_effort: str = "high"
     rank_top_n: int = 60
+    #: How many of the best-ranked jobs go into the single refine request; 0 turns the stage off.
+    refine_top_n: int = 20
     prefilter_min_score: int = 30
     concurrency: int = 4
     max_description_chars: int = 6000

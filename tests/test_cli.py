@@ -329,6 +329,135 @@ def test_run_passes_batch_through_to_prefilter(data_dir, fake_http, spy_ai):
     assert "run_batch:rank" not in spy_ai
 
 
+# --------------------------------------------------------------------- refine
+@pytest.fixture
+def spy_refine(monkeypatch):
+    """Record what the CLI hands the refine stage, without ever touching the API."""
+    from jobscraper.ai import client as ai_client
+    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.models import AIVerdict
+
+    calls: dict[str, list] = {}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    def init(self, profile, store, model=None) -> None:
+        self.store = store
+        self.model = model or profile.ai.refine_model
+
+    def run(self, jobs, filters):
+        calls["jobs"] = list(jobs)
+        calls["model"] = [self.model]
+        out = [AIVerdict(job_id=j.id, stage="refine", model=self.model, prompt_version=PROMPT_VERSION,
+                         relevant=True, score=90 - 10 * n, position=n + 1, language_ok=True,
+                         seniority_ok=True, location_ok=True, summary=f"place {n + 1}")
+               for n, j in enumerate(jobs)]
+        for v in out:
+            self.store.save_verdict(v)
+        return out
+
+    monkeypatch.setattr(ai_client.RefineStage, "__init__", init)
+    monkeypatch.setattr(ai_client.RefineStage, "run", run)
+    return calls
+
+
+def _rank_one_job(data_dir):
+    """Scrape, filter, and hand-write a rank verdict so `refine` has a shortlist."""
+    _scrape_and_filter(data_dir)
+    store = store_mod.Store()
+    try:
+        job = _job(store, "DevOps")
+        _seed_verdict(store, job, "rank", 80)
+        return job
+    finally:
+        store.close()
+
+
+def test_refine_scores_the_shortlist_and_prints_the_table(data_dir, fake_http, spy_refine):
+    job = _rank_one_job(data_dir)
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+    assert [j.id for j in spy_refine["jobs"]] == [job.id]
+    assert spy_refine["model"] == ["claude-fable-5-1"]
+    assert "refine" in result.output and "1 of 1 jobs placed" in result.output
+
+    store = store_mod.Store()
+    try:
+        from jobscraper.ai.prompts import PROMPT_VERSION
+
+        stored = store.verdicts("refine", PROMPT_VERSION)
+        assert stored[job.id].score == 90 and stored[job.id].position == 1
+    finally:
+        store.close()
+
+
+def test_refine_takes_top_and_model_from_the_flags(data_dir, fake_http, spy_refine):
+    _rank_one_job(data_dir)
+    result = runner.invoke(cli_mod.app, ["refine", "--top", "1", "--model", "claude-opus-5"])
+    assert result.exit_code == 0, result.output
+    assert len(spy_refine["jobs"]) == 1
+    assert spy_refine["model"] == ["claude-opus-5"]
+
+
+def test_refine_is_skipped_when_the_profile_turns_it_off(data_dir, fake_http, spy_refine, monkeypatch):
+    _rank_one_job(data_dir)
+    settings = cli_mod.load_settings()
+    settings.profile.ai.refine_top_n = 0
+    monkeypatch.setattr(cli_mod, "load_settings", lambda *a, **kw: settings)
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+    assert "stage skipped" in result.output
+    assert "jobs" not in spy_refine
+
+
+def test_refine_without_anything_ranked_says_so(data_dir, fake_http, spy_refine):
+    _scrape_and_filter(data_dir)
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+    assert "nothing ranked" in result.output
+    assert "jobs" not in spy_refine
+
+
+def test_refine_with_no_verdicts_back_leaves_the_rank_scores(data_dir, fake_http, spy_refine, monkeypatch):
+    from jobscraper.ai import client as ai_client
+
+    _rank_one_job(data_dir)
+    monkeypatch.setattr(ai_client.RefineStage, "run", lambda self, jobs, filters: [])
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+    assert "the rank scores stand" in result.output
+
+
+def test_report_orders_by_the_effective_score(data_dir, fake_http, spy_refine):
+    job = _rank_one_job(data_dir)
+    assert runner.invoke(cli_mod.app, ["refine"]).exit_code == 0
+    result = runner.invoke(cli_mod.app, ["report"])
+    assert result.exit_code == 0, result.output
+
+    text = next((data_dir / "results").glob("report-*.md")).read_text(encoding="utf-8")
+    assert "### 85 (rank 80 · refine 90) · [" in text  # (80 + 90) / 2
+    store = store_mod.Store()
+    try:
+        item = next(i for i in store.report().items if i.job_id == job.id)
+        assert item.section == "ranked" and item.score == 85
+    finally:
+        store.close()
+
+
+def test_run_calls_refine_after_rank(data_dir, fake_http, spy_ai, spy_refine):
+    result = runner.invoke(cli_mod.app, ["run", "arbeitnow"])
+    assert result.exit_code == 0, result.output
+    assert "run:rank" in spy_ai
+    # the stubbed rank stage stores nothing, so refine has an empty shortlist and says so
+    assert "refine: nothing ranked" in result.output
+
+
+def test_run_skips_refine_with_skip_ai(data_dir, fake_http, spy_ai, spy_refine):
+    result = runner.invoke(cli_mod.app, ["run", "arbeitnow", "--skip-ai"])
+    assert result.exit_code == 0, result.output
+    assert "refine:" not in result.output
+    assert "jobs" not in spy_refine
+
+
 # ------------------------------------------------- "what's new" between reports
 
 

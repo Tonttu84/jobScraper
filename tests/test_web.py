@@ -352,6 +352,27 @@ def test_list_items_carry_the_verdict_summaries_the_teaser_needs(seeded):
     assert rev["rank"] is None and rev["prefilter"] is None
 
 
+def test_a_refine_verdict_averages_the_score_and_is_exposed_on_its_own(tmp_path):
+    """The list orders by the mean of the two AI passes; the UI can still show each of them."""
+    jobs = _seed(tmp_path / "t.db")
+    store = Store(tmp_path / "t.db")
+    store.save_verdict(make_verdict(jobs["web"].id, "refine", 71, model="claude-fable-5-1",
+                                    position=1, summary="Best of the shortlist."))
+    store.close()
+    with TestClient(create_app(tmp_path / "t.db")) as client:
+        first = next(i for i in client.get("/api/jobs").json()["items"] if i["id"] == jobs["web"].id)
+    assert first["rank"]["score"] == 91
+    assert first["refine"] == {"score": 71, "relevant": True, "summary": "Best of the shortlist.",
+                               "concerns": [], "why_apply": [], "position": 1}
+    assert first["score"] == 81  # (91 + 71) / 2
+
+
+def test_a_job_without_a_refine_verdict_keeps_its_rank_score(seeded):
+    client, jobs = seeded
+    first = next(i for i in client.get("/api/jobs").json()["items"] if i["id"] == jobs["web"].id)
+    assert first["refine"] is None and first["score"] == 91
+
+
 def test_prefilter_verdict_under_an_old_prompt_version_is_used(seeded):
     client, jobs = seeded
     payload = client.get("/api/jobs").json()

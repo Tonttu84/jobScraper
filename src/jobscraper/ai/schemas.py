@@ -15,6 +15,21 @@ class Screening(BaseModel):
     concerns: list[str] = Field(default_factory=list)
 
 
+class RefinedJob(BaseModel):
+    """One posting's place in the shortlist, judged against all the others in the same request."""
+
+    job_id: str
+    position: int = Field(description="Place in the shortlist, 1 = best")
+    score: int = Field(ge=0, le=100, description="Probability in percent that this one is worth an evening")
+    summary: str = Field(description="one sentence: why it sits here relative to the others")
+
+
+class Refinement(BaseModel):
+    """The whole shortlist, re-ordered in a single answer."""
+
+    items: list[RefinedJob]
+
+
 class Ranking(BaseModel):
     relevant: bool
     score: int = Field(ge=0, le=100)

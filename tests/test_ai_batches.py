@@ -729,6 +729,99 @@ def test_export_rank_sample_bounds_the_description_fetches(data_dir, monkeypatch
     assert "2 jobs" in capsys.readouterr().out
 
 
+# --------------------------------------------------------------------------- refine
+# The refine pass is a single request over the whole shortlist, so its export is one batch.json
+# rather than chunks, and its answer is one JSON object matching the Refinement schema.
+
+
+def _refine_dir(data_dir: Path) -> Path:
+    return data_dir / "exports" / "ai" / "refine"
+
+
+@pytest.fixture
+def shortlist(data_dir):
+    """Three ranked jobs (90/80/70) the rule filter keeps, plus one it drops at 95."""
+    jobs = [_job(n, f"Junior Developer {n}", LONG_DESCRIPTION) for n in range(1, 4)]
+    dropped = _job(9, "Junior Polish-only Developer", LONG_DESCRIPTION)
+    _seed([*jobs, dropped], ["keep", "keep", "keep", "drop"])
+    _rank_scores([*jobs, dropped], [90, 80, 70, 95])
+    return jobs
+
+
+def test_export_refine_writes_one_prompt_for_the_whole_shortlist(shortlist, data_dir, monkeypatch, capsys):
+    _run(monkeypatch, "export", "refine", "--top", "2")
+
+    out = _refine_dir(data_dir)
+    system = (out / "system.txt").read_text(encoding="utf-8")
+    assert "career advisor" in system and "REFINEMENT PASS" in system
+
+    batch = json.loads((out / "batch.json").read_text(encoding="utf-8"))
+    assert batch["job_ids"] == [shortlist[0].id, shortlist[1].id]  # best two, the drop left out
+    assert set(batch) == {"prompt", "job_ids"}
+    for job in shortlist[:2]:
+        assert f"### job_id: {job.id}" in batch["prompt"]
+    assert shortlist[2].id not in batch["prompt"]
+    assert "TAIL-OF-THE-DESCRIPTION" in batch["prompt"]  # the 6000-char budget, as for rank
+    assert not list(out.glob("chunk-*.json"))
+    assert "2 jobs in one prompt" in capsys.readouterr().out
+
+
+def test_import_refine_stores_the_answer_like_the_api_path(shortlist, data_dir, monkeypatch, capsys):
+    _run(monkeypatch, "export", "refine")
+    capsys.readouterr()
+    answer = {"items": [
+        {"job_id": shortlist[1].id, "position": 1, "score": 88, "summary": "Best against the rest."},
+        {"job_id": shortlist[0].id, "position": 2, "score": 60, "summary": "Weaker than it looked."},
+        {"job_id": shortlist[1].id, "position": 3, "score": 10, "summary": "said twice"},
+        {"job_id": "0000000000000000", "position": 4, "score": 10, "summary": "never sent"},
+    ]}
+    verdicts = _refine_dir(data_dir) / "verdicts"
+    verdicts.mkdir(parents=True, exist_ok=True)
+    (verdicts / "batch.json").write_text(json.dumps(answer), encoding="utf-8")
+
+    _run(monkeypatch, "import", "refine")
+
+    store = store_mod.Store()
+    try:
+        stored = store.verdicts("refine", PROMPT_VERSION)
+    finally:
+        store.close()
+    assert set(stored) == {shortlist[0].id, shortlist[1].id}
+    best = stored[shortlist[1].id]
+    assert best.score == 88 and best.position == 1 and best.relevant
+    assert best.model == "claude-fable-5-1 (subagent)" and best.prompt_version == PROMPT_VERSION
+    assert best.summary == "Best against the rest."
+    assert stored[shortlist[0].id].score == 60
+    assert "imported 2 verdicts of 3 exported" in capsys.readouterr().out
+
+
+def test_import_refine_without_an_export_says_so(data_dir, monkeypatch, capsys):
+    _run(monkeypatch, "import", "refine")
+    assert "run `export refine` first" in capsys.readouterr().out
+
+
+def test_import_refine_without_an_answer_says_so(shortlist, data_dir, monkeypatch, capsys):
+    _run(monkeypatch, "export", "refine")
+    _run(monkeypatch, "import", "refine")
+    assert "no answer yet" in capsys.readouterr().out
+
+
+def test_import_refine_rejects_an_answer_that_is_not_a_refinement(shortlist, data_dir, monkeypatch, capsys):
+    _run(monkeypatch, "export", "refine")
+    verdicts = _refine_dir(data_dir) / "verdicts"
+    verdicts.mkdir(parents=True, exist_ok=True)
+    (verdicts / "batch.json").write_text('{"items": [{"job_id": "x"}]}', encoding="utf-8")
+
+    _run(monkeypatch, "import", "refine")
+
+    assert "not a Refinement object" in capsys.readouterr().out
+    store = store_mod.Store()
+    try:
+        assert store.verdicts("refine", PROMPT_VERSION) == {}
+    finally:
+        store.close()
+
+
 # ------------------------------------------------------------------------ stability
 # The ranker scores a chunk at a time, so the same job can come back with a different number
 # depending on which other jobs shared its chunk and in which order. `stability export` re-exports
@@ -873,6 +966,28 @@ def test_stability_compare_reports_the_hand_computed_statistics(five_scored, dat
     for job in five_scored:  # the per-job table
         assert job.title[:40] in out
     assert "flip" in out
+
+
+def test_stability_compare_adds_a_refine_column_once_that_pass_has_run(five_scored, data_dir, monkeypatch, capsys):
+    """The refine score saw every job in one request, so it is the reference the two runs drift from."""
+    _run(monkeypatch, "stability", "compare")
+    assert "| refine |" not in capsys.readouterr().out  # nothing refined yet
+
+    store = store_mod.Store()
+    try:
+        store.save_verdict(AIVerdict(job_id=five_scored[0].id, stage="refine",
+                                     model="claude-fable-5-1 (subagent)", prompt_version=PROMPT_VERSION,
+                                     relevant=True, score=77, position=1, language_ok=True,
+                                     seniority_ok=True, location_ok=True, summary="best"))
+    finally:
+        store.close()
+
+    _run(monkeypatch, "stability", "compare")
+
+    out = capsys.readouterr().out
+    assert "| refine |" in out
+    assert f"| {five_scored[0].id[:12]} | {five_scored[0].title[:40]} | 85 | 77 | 90 |" in out
+    assert f"| {five_scored[1].id[:12]} | {five_scored[1].title[:40]} | 84 | - | 80 |" in out
 
 
 def test_stability_compare_writes_the_same_report_as_markdown(five_scored, data_dir, monkeypatch, capsys):

@@ -35,7 +35,7 @@ from jobscraper.models import (
     ReportSection,
     ReportSnapshot,
 )
-from jobscraper.report import build_snapshot
+from jobscraper.report import build_snapshot, effective_score
 from jobscraper.store import Store
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -106,6 +106,7 @@ class VerdictView(BaseModel):
     summary: str
     concerns: list[str] = Field(default_factory=list)
     why_apply: list[str] = Field(default_factory=list)
+    position: int | None = Field(None, description="Place in the shortlist, refine stage only")
 
 
 class FacetsView(BaseModel):
@@ -145,6 +146,7 @@ class JobView(BaseModel):
     filter: FilterView | None = None
     prefilter: VerdictView | None = None
     rank: VerdictView | None = None
+    refine: VerdictView | None = None
     facets: FacetsView
     decision: DecisionView | None = None
 
@@ -223,6 +225,7 @@ class View:
     filters: dict[str, FilterResult]
     prefilter: dict[str, AIVerdict]
     rank: dict[str, AIVerdict]
+    refine: dict[str, AIVerdict]
     facets: dict[str, JobFacets]
     decisions: dict[str, Decision]
 
@@ -261,6 +264,7 @@ def load_view(store: Store, report_id: int | None = None, user: str | None = Non
             _stage_verdicts(store, "rank"),
             days=DEFAULT_DAYS,
             prompt_version=PROMPT_VERSION,
+            refine=_stage_verdicts(store, "refine"),
         )
     else:
         filters = store.filter_results()
@@ -279,6 +283,7 @@ def load_view(store: Store, report_id: int | None = None, user: str | None = Non
         filters=filters,
         prefilter=_stage_verdicts(store, "prefilter", ids),
         rank=_stage_verdicts(store, "rank", ids),
+        refine=_stage_verdicts(store, "refine", ids),
         facets=facets,
         decisions=decisions,
     )
@@ -288,7 +293,7 @@ def _verdict_view(v: AIVerdict | None) -> VerdictView | None:
     if v is None:
         return None
     return VerdictView(score=v.score, relevant=v.relevant, summary=v.summary,
-                       concerns=list(v.concerns), why_apply=list(v.why_apply))
+                       concerns=list(v.concerns), why_apply=list(v.why_apply), position=v.position)
 
 
 def _facets_view(view: View, job: Job) -> FacetsView:
@@ -303,6 +308,9 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
               *, detail: bool = False) -> JobView:
     fr = view.filters.get(job.id)
     pre, rank = view.prefilter.get(job.id), view.rank.get(job.id)
+    refine = view.refine.get(job.id)
+    # The AI score the list orders by: the two passes averaged, else whichever one spoke.
+    score = effective_score(rank, refine)
     decision = view.decisions.get(job.id)
     fields: dict[str, Any] = {
         "id": job.id,
@@ -319,13 +327,14 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
         "employment_type": job.employment_type,
         "salary_text": job.salary_text,
         "tags": list(job.tags),
-        "score": rank.score if rank else (pre.score if pre else None),
+        "score": score if score is not None else (pre.score if pre else None),
         "section": section,
         "position": position,
         "filter": FilterView(status=fr.status, location_tier=fr.location_tier,
                              reasons=list(fr.reasons), signals=dict(fr.signals)) if fr else None,
         "prefilter": _verdict_view(pre),
         "rank": _verdict_view(rank),
+        "refine": _verdict_view(refine),
         "facets": _facets_view(view, job),
         "decision": DecisionView(status=decision.status, note=decision.note,
                                  updated_at=decision.updated_at) if decision else None,

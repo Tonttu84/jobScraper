@@ -106,6 +106,20 @@ angle the application (which projects or background to emphasise). Score 0-100 w
 """
 
 
+#: Appended to the ranking system prompt for the refine stage, which sees the whole shortlist at
+#: once instead of one posting at a time. The ranker scores a job inside a 15-job chunk, so its
+#: score carries chunk noise; this pass removes it for the part of the list that matters.
+REFINE_SYSTEM = """
+REFINEMENT PASS
+All the shortlisted postings follow, each introduced by a line "### job_id: <id>". You have
+already judged them one at a time; now judge them against each other and put them in order.
+Return every job_id exactly once, with a position (1 = best) and a score meaning "probability in
+percent that the candidate should spend an evening applying to this one". Differences under
+5 points are ties — use a gap only where you mean it. The summary is one sentence saying why the
+posting sits where it does relative to the others, not a description of the job.
+"""
+
+
 #: What each stage is told to do with a posting that hits a deal-breaker. The screen rejects
 #: outright (nothing ambiguous is thrown away, it is passed on with the suspicion noted); the
 #: ranker still scores a borderline case so a slip-through is visible instead of silently gone.
@@ -136,6 +150,10 @@ def _deal_breakers_block(profile: Profile, stage: str) -> str:
 
 
 def system_prompt(stage: str, profile: Profile) -> str:
+    if stage == "refine":
+        # The refine pass judges the same jobs by the same rules; only the shape of the answer
+        # differs, so it reuses the ranker's prompt verbatim and adds its own instructions.
+        return system_prompt("rank", profile) + REFINE_SYSTEM
     stage = "prefilter" if stage == "prefilter" else "rank"
     template = PREFILTER_SYSTEM if stage == "prefilter" else RANK_SYSTEM
     head = template.replace("{role_label}", profile.prompt.role_label.strip())
@@ -163,3 +181,13 @@ def job_prompt(job: Job, fr: FilterResult | None, max_chars: int) -> str:
         meta.append(f"Rule-filter status: {fr.status}; notes: {'; '.join(fr.reasons) or '-'}")
         meta.append(f"Detected signals: {fr.signals}")
     return "JOB POSTING\n" + "\n".join(meta) + "\n\nDESCRIPTION\n" + (desc or "(no description available; judge from the title)")
+
+
+def refine_user_prompt(jobs: list[Job], filters: dict[str, FilterResult], max_chars: int) -> str:
+    """The whole shortlist as one message: every posting's own ``job_prompt``, keyed by job id.
+
+    The id line is what the answer refers back to, so it has to survive verbatim; the rest is
+    byte-for-byte what the rank stage sent for that job on its own.
+    """
+    blocks = [f"### job_id: {job.id}\n{job_prompt(job, filters.get(job.id), max_chars)}" for job in jobs]
+    return f"SHORTLIST ({len(jobs)} postings)\n\n" + "\n\n".join(blocks)

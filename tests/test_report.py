@@ -350,6 +350,79 @@ def test_build_snapshot_hides_jobs_the_rule_filter_now_drops(state):
     assert snap.counts["prefiltered"] == 0 and snap.counts["ranked"] == 0
 
 
+# ------------------------------------------------------------------- refine pass
+
+
+def make_refine(job_id: str, score: int, position: int, summary: str = "Second of the shortlist.") -> AIVerdict:
+    return AIVerdict(job_id=job_id, stage="refine", model="claude-fable-5-1", prompt_version="v1",
+                     relevant=True, score=score, language_ok=True, seniority_ok=True,
+                     location_ok=True, summary=summary, position=position)
+
+
+def test_write_report_shows_both_scores_when_the_refine_pass_spoke(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    ranked_job = jobs[0]
+    refine = {ranked_job.id: make_refine(ranked_job.id, 85, 1, "Best of the shortlist by a nose.")}
+
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md",
+                        refine=refine).read_text(encoding="utf-8")
+    assert f"### 88 (rank 91 · refine 85) · [{ranked_job.title}]({ranked_job.url})" in text
+    assert "**Against the rest of the shortlist:** Best of the shortlist by a nose." in text
+
+
+def test_write_report_keeps_the_bare_rank_score_without_a_refine_verdict(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text(encoding="utf-8")
+    assert "### 91 · [" in text
+    assert "refine" not in text
+
+
+def test_build_snapshot_orders_the_ranked_section_by_the_effective_score(state):
+    """The refine pass can overrule the rank order: 70+96 beats 91+60 on the mean."""
+    jobs, filters, prefilter, ranked = state
+    ranked_job = jobs[0]
+    other = make_job("rank-2", "Junior Data Engineer")
+    jobs = [*jobs, other]
+    filters = {**filters, other.id: FilterResult(job_id=other.id, status="keep", location_tier=1)}
+    ranked = {**ranked, other.id: make_verdict(other.id, "rank", 70)}
+    refine = {ranked_job.id: make_refine(ranked_job.id, 60, 2),
+              other.id: make_refine(other.id, 96, 1)}
+
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1", refine=refine)
+    assert [(i.job_id, i.position, i.score) for i in snap.items if i.section == "ranked"] == [
+        (other.id, 1, 83), (ranked_job.id, 2, 76)]
+
+
+def test_build_snapshot_breaks_a_tie_on_the_refine_position(state):
+    """Same effective score: the pass that saw the whole list decides which one is first."""
+    jobs, filters, prefilter, ranked = state
+    ranked_job = jobs[0]
+    other = make_job("rank-2", "Junior Data Engineer")
+    jobs = [*jobs, other]
+    filters = {**filters, other.id: FilterResult(job_id=other.id, status="keep", location_tier=1)}
+    ranked = {**ranked, other.id: make_verdict(other.id, "rank", 91)}
+    refine = {ranked_job.id: make_refine(ranked_job.id, 85, 2),
+              other.id: make_refine(other.id, 85, 1)}
+
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1", refine=refine)
+    assert [i.job_id for i in snap.items if i.section == "ranked"] == [other.id, ranked_job.id]
+
+
+def test_build_snapshot_sorts_an_unrefined_job_after_a_refined_one(state):
+    """Nothing is dropped when the refine answer forgot a job: it keeps its own rank score."""
+    jobs, filters, prefilter, ranked = state
+    ranked_job = jobs[0]
+    other = make_job("rank-2", "Junior Data Engineer")
+    jobs = [*jobs, other]
+    filters = {**filters, other.id: FilterResult(job_id=other.id, status="keep", location_tier=1)}
+    ranked = {**ranked, other.id: make_verdict(other.id, "rank", 88)}
+    refine = {ranked_job.id: make_refine(ranked_job.id, 85, 1)}
+
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1", refine=refine)
+    assert [(i.job_id, i.score) for i in snap.items if i.section == "ranked"] == [
+        (ranked_job.id, 88), (other.id, 88)]
+
+
 # ------------------------------------------------------- diff between reports
 
 

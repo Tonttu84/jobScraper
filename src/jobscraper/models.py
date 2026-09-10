@@ -85,7 +85,7 @@ class AIVerdict(BaseModel):
     """Structured output of an AI stage for one job."""
 
     job_id: str
-    stage: Literal["prefilter", "rank"]
+    stage: Literal["prefilter", "rank", "refine"]
     model: str
     prompt_version: str
     relevant: bool
@@ -96,6 +96,9 @@ class AIVerdict(BaseModel):
     summary: str
     concerns: list[str] = Field(default_factory=list)
     why_apply: list[str] = Field(default_factory=list)
+    position: int | None = Field(
+        None, description='Place in the shortlist (1 = best), set by the "refine" stage only'
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     usage: dict[str, int | bool] = Field(
         default_factory=dict,
@@ -123,7 +126,7 @@ class ReportItem(BaseModel):
     job_id: str
     section: ReportSection
     position: int = Field(description="1-based order within the section")
-    score: int | None = Field(None, description="rank score for 'ranked', prefilter score for 'prefilter', None for 'review'")
+    score: int | None = Field(None, description="effective (rank + refine) score for 'ranked', prefilter score for 'prefilter', None for 'review'")
 
 
 class ReportSnapshot(BaseModel):

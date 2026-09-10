@@ -6,9 +6,10 @@
     jobscraper audit-drops          # sample rule-dropped jobs to label by hand (--score grades them)
     jobscraper prefilter            # Sonnet pass over rule survivors (--batch: half price, async)
     jobscraper rank                 # Opus pass over the best prefilter survivors
+    jobscraper refine               # one request that ranks the shortlist against itself
     jobscraper report               # markdown report + JSONL export, stored in the DB
     jobscraper diff                 # what changed since the previous report (see docs/SCHEDULING.md)
-    jobscraper run                  # scrape → filter → prefilter → rank → report
+    jobscraper run                  # scrape → filter → prefilter → rank → refine → report
     jobscraper facets               # recompute the deterministic facets (backfill an old DB)
     jobscraper serve                # web UI over data/jobs.db
     jobscraper profiles             # candidate profiles under config/profiles
@@ -362,6 +363,52 @@ def _record_run_stats(store: Store, snap) -> None:
 
 
 @app.command()
+def refine(days: int = 30, top: int | None = None, model: str | None = None,
+           verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
+    """One request that ranks the best-ranked jobs against each other (Fable by default).
+
+    The rank stage scores each posting alone inside a chunk, so its score carries chunk noise.
+    This pass sees the whole shortlist at once; the report orders by the mean of the two.
+    """
+    _setup_logging(verbose)
+    from jobscraper.ai.client import RefineStage, estimate_cost
+    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.report import effective_score
+
+    settings = load_settings()
+    n = top or settings.profile.ai.refine_top_n
+    if not n:
+        console.print("refine: ai.refine_top_n is 0 and no --top given — stage skipped", soft_wrap=True)
+        return
+    store = Store()
+    jobs, filters = _load_state(store, days)
+    ranked = store.verdicts("rank", PROMPT_VERSION)
+    by_id = {j.id: j for j in jobs}
+    alive = {jid for jid, f in filters.items() if f.status != "drop"}
+    best = sorted((v for v in ranked.values() if v.job_id in alive and v.job_id in by_id),
+                  key=lambda v: (-v.score, v.job_id))[:n]
+    todo = [by_id[v.job_id] for v in best]
+    if not todo:
+        console.print("refine: nothing ranked under the current prompt version — run "
+                      "`jobscraper rank` first", soft_wrap=True)
+        return
+
+    verdicts = RefineStage(settings.profile, store, model=model).run(todo, filters)
+    if not verdicts:
+        console.print(f"refine: no verdicts came back for {len(todo)} jobs; the rank scores stand",
+                      soft_wrap=True)
+        return
+    table = Table("pos", "effective", "rank", "refine", "title")
+    for v in sorted(verdicts, key=lambda v: (v.position, -v.score)):
+        r = ranked.get(v.job_id)
+        table.add_row(str(v.position), str(effective_score(r, v)), str(r.score) if r else "—",
+                      str(v.score), by_id[v.job_id].title[:60])
+    console.print(table)
+    console.print(f"refine: {len(verdicts)} of {len(todo)} jobs placed; cost ≈ {estimate_cost(verdicts)}",
+                  soft_wrap=True)
+
+
+@app.command()
 def report(days: int = 30, out: Path | None = None) -> None:
     """Write the markdown report and a JSONL export, and store the report in the database."""
     from jobscraper.ai.client import estimate_cost
@@ -381,11 +428,13 @@ def report(days: int = 30, out: Path | None = None) -> None:
     jobs, filters = _load_state(store, days)
     pre = store.verdicts("prefilter", PROMPT_VERSION)
     ranked = store.verdicts("rank", PROMPT_VERSION)
-    cost = estimate_cost(list(pre.values()) + list(ranked.values()))
-    path = write_report(jobs, filters, pre, ranked, out, cost)
+    refined = store.verdicts("refine", PROMPT_VERSION)
+    cost = estimate_cost(list(pre.values()) + list(ranked.values()) + list(refined.values()))
+    path = write_report(jobs, filters, pre, ranked, out, cost, refine=refined)
     jsonl = export_jsonl([j for j in jobs if filters.get(j.id) and filters[j.id].status != "drop"], filters, {**pre, **ranked},
                          config.paths().data / "exports" / "filtered.jsonl")
-    snap = store.save_report(build_snapshot(jobs, filters, pre, ranked, days=days, cost=cost, path=path, prompt_version=PROMPT_VERSION))
+    snap = store.save_report(build_snapshot(jobs, filters, pre, ranked, days=days, cost=cost, path=path,
+                                            prompt_version=PROMPT_VERSION, refine=refined))
 
     # The web UI needs facets for everything it shows; fill in whatever `filter` never saw.
     item_ids = list(dict.fromkeys(i.job_id for i in snap.items))
@@ -559,7 +608,7 @@ def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (
         batch: bool | None = typer.Option(None, "--batch/--no-batch",
                                           help="Run the prefilter through the Message Batches API (half price, "
                                                "asynchronous; default: profile ai.prefilter_batch)")) -> None:
-    """Full pipeline in a new per-run database: scrape → filter → prefilter → rank → report."""
+    """Full pipeline in a new per-run database: scrape → filter → prefilter → rank → refine → report."""
     path = new_run_db(fresh=fresh)
     store_mod.DB_OVERRIDE = path
     console.print(f"run database: {path}" + ("" if fresh else " (copied forward from the previous run)"))
@@ -568,6 +617,7 @@ def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (
     if not skip_ai:
         prefilter(days=days, verbose=verbose, batch=batch, wait=True)
         rank(days=days, verbose=verbose)
+        refine(days=days, verbose=verbose)
     report(days=days)
 
 

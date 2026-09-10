@@ -31,14 +31,44 @@ def _tier_label(t: int | None) -> str:
     return {1: "FI/EE", 2: "EU/EEA", 3: "extended", 0: "remote"}.get(t, "?") if t is not None else "?"
 
 
+def effective_score(rank: AIVerdict | None, refine: AIVerdict | None) -> int | None:
+    """The score everything orders by: the mean of the two AI passes, or whichever one exists.
+
+    The rank stage scores a posting alone inside a chunk and the refine stage scores it against
+    the rest of the shortlist; both say something the other doesn't, so neither is thrown away.
+    """
+    if rank is not None and refine is not None:
+        return round((rank.score + refine.score) / 2)
+    if refine is not None:
+        return refine.score
+    return rank.score if rank is not None else None
+
+
+#: Sorts a job with no refine verdict after the refined ones at the same effective score.
+_NO_POSITION = 10 ** 6
+
+
+def rank_order(refine: dict[str, AIVerdict]):
+    """Sort key for the ranked section: effective score, then refine position, then rank score."""
+    def key(v: AIVerdict) -> tuple[int, int, int]:
+        r = refine.get(v.job_id)
+        position = r.position if r is not None and r.position is not None else _NO_POSITION
+        return -(effective_score(v, r) or 0), position, -v.score
+
+    return key
+
+
 def ranked_block(job: Job, score: int | None, verdict: AIVerdict | None = None,
-                 fr: FilterResult | None = None) -> list[str]:
+                 fr: FilterResult | None = None, refine: AIVerdict | None = None) -> list[str]:
     """The markdown block for one ranked job — shared by the report and the diff."""
     loc = f"{job.location_raw or '?'} · {job.remote}" + (f" · {_tier_label(fr.location_tier)}" if fr else "")
-    lines = [f"### {score} · [{job.title}]({job.url}) — {job.company or '?'}",
+    both = f" (rank {verdict.score} · refine {refine.score})" if verdict is not None and refine is not None else ""
+    lines = [f"### {score}{both} · [{job.title}]({job.url}) — {job.company or '?'}",
              f"*{loc} · {job.source} · posted {job.posted_at.date() if job.posted_at else '?'}*  "]
     if verdict is not None:
         lines.append(verdict.summary)
+        if refine is not None:
+            lines.append(f"- **Against the rest of the shortlist:** {refine.summary}")
         if verdict.why_apply:
             lines.append("- **Why apply:** " + "; ".join(verdict.why_apply))
         if verdict.concerns:
@@ -55,7 +85,9 @@ def prefilter_row(job: Job, score: int | None) -> str:
 
 
 def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
-                 ranked: dict[str, AIVerdict], path: Path | None = None, cost: dict | None = None) -> Path:
+                 ranked: dict[str, AIVerdict], path: Path | None = None, cost: dict | None = None,
+                 refine: dict[str, AIVerdict] | None = None) -> Path:
+    refine = refine or {}
     path = path or paths().results / f"report-{datetime.now(UTC):%Y-%m-%d}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     by_id = {j.id: j for j in jobs}
@@ -74,11 +106,12 @@ def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: d
 
     if ranked:
         lines += ["## Ranked (Opus)", ""]
-        for v in sorted(ranked.values(), key=lambda v: -v.score):
+        for v in sorted(ranked.values(), key=rank_order(refine)):
             j = by_id.get(v.job_id)
             if not j:
                 continue
-            lines += ranked_block(j, v.score, v, filters.get(j.id))
+            r = refine.get(v.job_id)
+            lines += ranked_block(j, effective_score(v, r), v, filters.get(j.id), r)
 
     if prefilter:
         rest = [v for v in prefilter.values() if v.job_id not in ranked]
@@ -105,22 +138,26 @@ def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: d
 
 def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
                    ranked: dict[str, AIVerdict], *, days: int, cost: dict | None = None,
-                   path: Path | None = None, prompt_version: str) -> ReportSnapshot:
+                   path: Path | None = None, prompt_version: str,
+                   refine: dict[str, AIVerdict] | None = None) -> ReportSnapshot:
     """The same content as :func:`write_report`, in structured form for the DB and the web UI.
 
-    Sections and their ordering mirror the markdown exactly: ranked by rank score desc,
-    then the relevant prefilter survivors that were not ranked, then the rule-filter
-    ``review`` leftovers that never reached the AI (capped at 300, as in the markdown).
+    Sections and their ordering mirror the markdown exactly: ranked by effective score desc
+    (the mean of the rank and refine passes where both spoke), then the relevant prefilter
+    survivors that were not ranked, then the rule-filter ``review`` leftovers that never
+    reached the AI (capped at 300, as in the markdown).
     """
+    refine = refine or {}
     by_id = {j.id: j for j in jobs}
     dropped = {f.job_id for f in filters.values() if f.status == "drop"}
     prefilter = {k: v for k, v in prefilter.items() if k not in dropped}
     ranked = {k: v for k, v in ranked.items() if k not in dropped}
     items: list[ReportItem] = []
 
-    for v in sorted(ranked.values(), key=lambda v: -v.score):
+    for v in sorted(ranked.values(), key=rank_order(refine)):
         if v.job_id in by_id:
-            items.append(ReportItem(job_id=v.job_id, section="ranked", position=len(items) + 1, score=v.score))
+            items.append(ReportItem(job_id=v.job_id, section="ranked", position=len(items) + 1,
+                                    score=effective_score(v, refine.get(v.job_id))))
 
     rest = [v for v in prefilter.values() if v.job_id not in ranked]
     start = len(items)

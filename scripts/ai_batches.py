@@ -2,8 +2,9 @@
 
     python scripts/ai_batches.py hydrate linkedin [--top 480] [--max-fetch 480]
     python scripts/ai_batches.py export prefilter [--chunk 100] [--max-chars 1500] [--all] [--sample 20]
-    python scripts/ai_batches.py import prefilter|rank
+    python scripts/ai_batches.py import prefilter|rank|refine
     python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60] [--sample 20]
+    python scripts/ai_batches.py export refine [--top 20] [--max-chars N]
     python scripts/ai_batches.py boost
     python scripts/ai_batches.py stability export [--top 30] [--chunk 15] [--seed 1] [--max-chars N]
     python scripts/ai_batches.py stability compare
@@ -13,13 +14,20 @@ it moves the config, the database and the exports into that candidate's own dire
 
 Intended sequence for one round:
 ``hydrate linkedin`` → ``export prefilter`` → (Sonnet subagent) → ``import prefilter`` →
-``export rank`` → (Opus subagent) → ``import rank`` → ``boost`` → ``jobscraper report``.
+``export rank`` → (Opus subagent) → ``import rank`` → ``export refine`` → (Fable subagent) →
+``import refine`` → ``boost`` → ``jobscraper report``.
 
 Export writes ``data/exports/ai/<stage>/system.txt`` (the stage's system prompt) and
 ``chunk-NN.json`` (a JSON list of ``{"job_id", "prompt"}`` built with the pipeline's own
 ``job_prompt``). A subagent answers each chunk with ``verdicts/chunk-NN.jsonl`` (one JSON object per
 job with the ``Screening``/``Ranking`` fields plus ``job_id``). Import validates those against the
 schemas and stores them as ``AIVerdict`` rows, so ``jobscraper report`` renders them like API runs.
+
+``refine`` is the odd one out: it is a single request, not a chunked one. ``export refine`` writes
+``refine/system.txt`` and one ``refine/batch.json`` — ``{"prompt": ..., "job_ids": [...]}`` — holding
+the whole shortlist (the best ``--top`` jobs by rank score). The subagent answers with one
+``refine/verdicts/batch.json``, a JSON object ``{"items": [{job_id, position, score, summary}, ...]}``
+matching the ``Refinement`` schema, and ``import refine`` stores it exactly as the API path would.
 
 ``export prefilter`` is refill-aware: it skips jobs that already carry a prefilter verdict under
 the current prompt version, so after a hydration round only the cleared rows go back to Sonnet
@@ -63,15 +71,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jobscraper import config  # noqa: E402
-from jobscraper.ai.prompts import PROMPT_VERSION, job_prompt, system_prompt  # noqa: E402
-from jobscraper.ai.schemas import Ranking, Screening  # noqa: E402
+from jobscraper.ai.client import refine_verdicts  # noqa: E402
+from jobscraper.ai.prompts import PROMPT_VERSION, job_prompt, refine_user_prompt, system_prompt  # noqa: E402
+from jobscraper.ai.schemas import Ranking, Refinement, Screening  # noqa: E402
 from jobscraper.config import load_settings, paths  # noqa: E402
 from jobscraper.http import Http  # noqa: E402
 from jobscraper.models import AIVerdict, Job  # noqa: E402
 from jobscraper.sources import linkedin  # noqa: E402
 from jobscraper.store import Store  # noqa: E402
 
-MODEL = {"prefilter": "claude-sonnet-5 (subagent)", "rank": "claude-opus-5 (subagent)"}
+MODEL = {"prefilter": "claude-sonnet-5 (subagent)", "rank": "claude-opus-5 (subagent)",
+         "refine": "claude-fable-5-1 (subagent)"}
 
 # Module-level indirection so tests can replace the network call.
 fetch_description = linkedin.fetch_description
@@ -246,6 +256,53 @@ def export(stage: str, chunk: int, max_chars: int, top: int, max_fetch: int = 0,
         (out / f"chunk-{n:02d}.json").write_text(json.dumps(batch, ensure_ascii=False, indent=0), encoding="utf-8")
     sampled = f" (1 in {sample} of {candidates} candidates)" if sample > 1 else f" of {candidates} candidates"
     print(f"{stage}: {len(todo)} jobs{sampled} → {n} chunks of ≤{chunk} in {out}")
+
+
+def _shortlist(store: Store, filters: dict, top: int) -> list[Job]:
+    """The best ``top`` ranked jobs the rule filter still keeps — the refine stage's input."""
+    jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
+    alive = {jid for jid, f in filters.items() if f.status != "drop"}
+    ranked = sorted((v for v in store.verdicts("rank", PROMPT_VERSION).values()
+                     if v.job_id in jobs and v.job_id in alive),
+                    key=lambda v: (-v.score, v.job_id))[:top]
+    return [jobs[v.job_id] for v in ranked]
+
+
+def export_refine(top: int, max_chars: int) -> None:
+    """Write the whole shortlist as ONE prompt: the refine pass is a single request, not chunks."""
+    settings = load_settings()
+    store = Store()
+    filters = store.filter_results()
+    todo = _shortlist(store, filters, top)
+    out = _out_dir("refine")
+    (out / "system.txt").write_text(system_prompt("refine", settings.profile), encoding="utf-8")
+    batch = {"prompt": refine_user_prompt(todo, filters, max_chars), "job_ids": [j.id for j in todo]}
+    (out / "batch.json").write_text(json.dumps(batch, ensure_ascii=False, indent=0), encoding="utf-8")
+    print(f"refine: {len(todo)} jobs in one prompt → {out / 'batch.json'}")
+
+
+def import_refine() -> None:
+    """Store one subagent ``Refinement`` answer, with the same tolerance as the API path."""
+    out = _out_dir("refine")
+    batch_file = out / "batch.json"
+    if not batch_file.is_file():
+        print(f"no export to import against ({batch_file}); run `export refine` first")
+        return
+    expected = json.loads(batch_file.read_text(encoding="utf-8"))["job_ids"]
+    answer = out / "verdicts" / "batch.json"
+    if not answer.is_file():
+        print(f"no answer yet ({answer}); the subagent writes the Refinement object there")
+        return
+    try:
+        parsed = Refinement.model_validate_json(answer.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - a hand-written answer, report and stop
+        print(f"  {answer.name}: not a Refinement object ({exc})")
+        return
+    store = Store()
+    verdicts = refine_verdicts(parsed.items, expected, MODEL["refine"])
+    for v in verdicts:
+        store.save_verdict(v)
+    print(f"refine: imported {len(verdicts)} verdicts of {len(expected)} exported")
 
 
 def read_verdict_lines(path: Path, schema) -> Iterator[tuple[str | None, object, str | None]]:
@@ -447,13 +504,18 @@ def stability_compare(top_n: int = 10) -> None:
           "the two answers differ by is chunk noise, not information about the job.", ""]
     if bad_a or bad_b:
         md += [f"Unparsable verdict lines: run-a {bad_a}, run-b {bad_b}.", ""]
-    md += ["| job | title | orig | A | B | \\|A-B\\| | flip |",
-           "| --- | --- | ---: | ---: | ---: | ---: | --- |"]
+    # The refine pass saw all these jobs in one request, so its score is the drift-free reference
+    # to read the two chunked runs against; the column only appears once that pass has run.
+    refined = {jid: v.score for jid, v in store.verdicts("refine", PROMPT_VERSION).items()}
+    head, rule = (" refine |", " ---: |") if refined else ("", "")
+    md += [f"| job | title | orig |{head} A | B | \\|A-B\\| | flip |",
+           f"| --- | --- | ---: |{rule} ---: | ---: | ---: | --- |"]
     for jid in both:
         va, vb = a[jid], b[jid]
         orig = original.get(jid)
-        md.append(f"| {jid[:12]} | {titles.get(jid, '?')[:40]} | {'-' if orig is None else orig} | "
-                  f"{va.score} | {vb.score} | {abs(va.score - vb.score)} | "
+        cell = f" {refined.get(jid, '-')} |" if refined else ""
+        md.append(f"| {jid[:12]} | {titles.get(jid, '?')[:40]} | {'-' if orig is None else orig} |"
+                  f"{cell} {va.score} | {vb.score} | {abs(va.score - vb.score)} | "
                   f"{'relevant flip' if va.relevant != vb.relevant else ''} |")
     md += ["", "## Summary", ""]
     if not both:
@@ -496,7 +558,8 @@ def stability_compare(top_n: int = 10) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["export", "import", "hydrate", "boost", "stability"])
-    ap.add_argument("stage", nargs="?", choices=["prefilter", "rank", "linkedin", "export", "compare"],
+    ap.add_argument("stage", nargs="?",
+                    choices=["prefilter", "rank", "refine", "linkedin", "export", "compare"],
                     default=None,
                     help="stage for export/import, 'linkedin' for hydrate, 'export'/'compare' for"
                          " stability; ignored by boost")
@@ -504,7 +567,8 @@ def main() -> None:
     ap.add_argument("--max-chars", type=int, default=None)
     ap.add_argument("--all", action="store_true",
                     help="export prefilter only: export every survivor, not just the unscreened ones")
-    ap.add_argument("--top", type=int, default=None, help="export rank: 60; hydrate linkedin: 480")
+    ap.add_argument("--top", type=int, default=None,
+                    help="export rank: 60; export refine: 20; hydrate linkedin: 480")
     ap.add_argument("--max-fetch", type=int, default=None,
                     help="how many missing LinkedIn descriptions to fetch (0 disables); rank: 60, hydrate: 480")
     ap.add_argument("--seed", type=int, default=1,
@@ -534,8 +598,15 @@ def main() -> None:
             ap.error("hydrate only knows the 'linkedin' stage")
         hydrate_top_linkedin(a.top or 480, 480 if a.max_fetch is None else a.max_fetch)
         return
-    if a.stage not in ("prefilter", "rank"):
-        ap.error(f"{a.action} needs a stage: prefilter or rank")
+    if a.stage not in ("prefilter", "rank", "refine"):
+        ap.error(f"{a.action} needs a stage: prefilter, rank or refine")
+    if a.stage == "refine":
+        # One request over the whole shortlist: no chunking, no sampling, no hydration.
+        if a.action == "export":
+            export_refine(a.top or 20, a.max_chars or 6000)
+        else:
+            import_refine()
+        return
     if a.action == "export":
         chunk = a.chunk or (100 if a.stage == "prefilter" else 15)
         max_chars = a.max_chars or (1500 if a.stage == "prefilter" else 6000)

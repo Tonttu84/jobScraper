@@ -211,10 +211,18 @@ prompt:
 ai:
   prefilter_model: claude-sonnet-5
   rank_model: claude-opus-5
+  # The refine pass judges the whole shortlist in ONE request, so it can afford the best model.
+  refine_model: claude-fable-5-1
   prefilter_effort: low
   rank_effort: high
+  refine_effort: high
   prefilter_min_score: 30   # permissive: only jobs Sonnet scores below this are dropped
   rank_top_n: 60            # how many prefilter survivors Opus ranks in detail
+  # The ranker scores each job alone inside a chunk, so its score carries chunk noise (measured
+  # 2026-09-10: median drift 3 points, p90 8, top-10 overlap 0.54 between two runs). `jobscraper
+  # refine` sends the best rank_top jobs in one request so they are judged against each other,
+  # and the report orders by the mean of the two passes. 0 turns the stage off.
+  refine_top_n: 20
   concurrency: 4
   max_description_chars: 6000
   # Batching sends the whole prefilter as one Message Batch: the same verdicts at half price,
