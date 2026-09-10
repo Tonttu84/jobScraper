@@ -71,7 +71,7 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
     in a database whose first report this is, every job counts as new. ``by_source`` counts every
     job row in the database (a run database is one harvest), while ``jobs_total`` is the report's
     own window of ``--days``. ``prefilter.passed`` applies the profile's ``prefilter_min_score``
-    to the screened verdicts, the same threshold ``rank`` uses to pick its candidates.
+    to the prefiltered verdicts, the same threshold ``rank`` uses to pick its candidates.
     """
     counts = snapshot.counts
     previous = store.report_before(snapshot.id) if snapshot.id else None
@@ -82,8 +82,8 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
         drops[slug] = drops.get(slug, 0) + 1
 
     ai = settings.profile.ai
-    screened = store.verdicts("prefilter", snapshot.prompt_version)
-    passed = sum(1 for v in screened.values() if v.relevant and v.score >= ai.prefilter_min_score)
+    prefiltered = store.verdicts("prefilter", snapshot.prompt_version)
+    passed = sum(1 for v in prefiltered.values() if v.relevant and v.score >= ai.prefilter_min_score)
     runs = store.latest_runs()
     tokens = _tokens_by_stage(usage_path)
 
@@ -97,7 +97,7 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
         "by_source": dict(sorted(store.stats()["jobs_per_source"].items())),
         "rules": {name: counts.get(name, 0) for name in ("keep", "review", "drop")},
         "drops_by_category": dict(sorted(drops.items())),
-        "prefilter": {"screened": len(screened), "passed": passed},
+        "prefilter": {"prefiltered": len(prefiltered), "passed": passed},
         "ranked": counts.get("ranked", 0),
         "versions": {"rules": RULES_VERSION, "prompt": snapshot.prompt_version},
         "models": {"prefilter": ai.prefilter_model, "rank": ai.rank_model},
@@ -152,18 +152,18 @@ def record(row: dict, path: Path) -> Path:
 _HEADER = """# jobScraper run statistics
 
 Counts only. One row per `jobscraper report`, per candidate profile: how many postings came in,
-how many the rule filter kept, screened and ranked, and what the AI stages cost. No job title,
+how many the rule filter kept, prefiltered and ranked, and what the AI stages cost. No job title,
 company, URL or any other text from a posting is recorded here — this file is public, while the
 reports it counts stay private.
 
 Columns: **jobs** in the report's window, **new** since the previous report, **keep/review/drop**
-from the rule filter, **screened/passed** from the Sonnet prefilter, **ranked** by Opus, **cost**
+from the rule filter, **prefiltered/passed** from the Sonnet prefilter stage, **ranked** by Opus, **cost**
 in USD (0 when the AI stages ran through subagents), and the rule and prompt versions behind them.
 
 Written by `jobscraper report`; regenerate from `stats/runs.jsonl` with `jobscraper stats --public`."""
 
 _TABLE_HEAD = (
-    "| date | report | jobs | new | keep | review | drop | screened | passed | ranked | cost | rules | prompt |",
+    "| date | report | jobs | new | keep | review | drop | prefiltered | passed | ranked | cost | rules | prompt |",
     "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
 )
 
@@ -186,7 +186,7 @@ def _table_row(row: dict) -> str:
         f"#{row.get('report_id') if row.get('report_id') is not None else '?'}",
         _num(row.get("jobs_total")), _num(row.get("new_jobs")),
         _num(rules.get("keep")), _num(rules.get("review")), _num(rules.get("drop")),
-        _num(pre.get("screened")), _num(pre.get("passed")),
+        _num(pre.get("prefiltered")), _num(pre.get("passed")),
         _num(row.get("ranked")),
         f"${float(row.get('cost_usd') or 0):.2f}",
         str(versions.get("rules") or "—"), str(versions.get("prompt") or "—"),

@@ -116,7 +116,7 @@ def test_collect_builds_one_flat_anonymous_row(state, settings):
     assert row["by_source"] == {"arbeitnow": 2, "jobly": 2}
     assert row["rules"] == {"keep": 1, "review": 1, "drop": 2}
     assert row["drops_by_category"] == {"not_software_title": 1, "too_old": 1}
-    assert row["prefilter"] == {"screened": 2, "passed": 1}
+    assert row["prefilter"] == {"prefiltered": 2, "passed": 1}
     assert row["ranked"] == 1
     assert row["versions"]["prompt"] == "v1"
     assert row["versions"]["rules"]
@@ -205,7 +205,7 @@ def _row(report_id: int, profile: str = "default", **kw) -> dict:
            "report_created_at": f"2026-09-{report_id:02d}T10:00:00+00:00", "profile": profile,
            "jobs_total": 10, "new_jobs": 1, "by_source": {"arbeitnow": 10},
            "rules": {"keep": 1, "review": 2, "drop": 7}, "drops_by_category": {"too_old": 7},
-           "prefilter": {"screened": 3, "passed": 2}, "ranked": 1,
+           "prefilter": {"prefiltered": 3, "passed": 2}, "ranked": 1,
            "versions": {"rules": "r1", "prompt": "v1"},
            "models": {"prefilter": "claude-sonnet-5", "rank": "claude-opus-5"},
            "cost_usd": 0.0, "scrape": {"sources": 1, "fetched": 10, "new": 1, "errors": 0}}
