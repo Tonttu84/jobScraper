@@ -457,6 +457,25 @@ class Store:
         with self.tx() as c:
             c.execute("INSERT INTO runs (started_at, source, fetched, new, error) VALUES (?,?,?,?,?)", (_now(), source, fetched, new, error))
 
+    def latest_runs(self) -> list[dict]:
+        """The newest ``runs`` row per source — one line per source of the last scrape."""
+        rows = self.conn.execute(
+            "SELECT r.source, r.started_at, r.fetched, r.new, r.error FROM runs r"
+            " JOIN (SELECT source, MAX(id) AS id FROM runs GROUP BY source) last ON r.id = last.id"
+            " ORDER BY r.source"
+        )
+        return [dict(r) for r in rows]
+
+    def new_jobs_since(self, when: datetime | str | None) -> int:
+        """How many jobs were first seen at or after ``when`` (every job when it is None).
+
+        ``first_seen`` is an ISO-8601 UTC string, so the comparison is a plain string compare.
+        """
+        if when is None:
+            return self.conn.execute("SELECT COUNT(*) n FROM jobs").fetchone()["n"]
+        stamp = when.isoformat() if isinstance(when, datetime) else str(when)
+        return self.conn.execute("SELECT COUNT(*) n FROM jobs WHERE first_seen >= ?", (stamp,)).fetchone()["n"]
+
     def stats(self) -> dict:
         per_source = {r["source"]: r["n"] for r in self.conn.execute("SELECT source, COUNT(*) n FROM jobs GROUP BY source")}
         per_status = {r["status"]: r["n"] for r in self.conn.execute("SELECT status, COUNT(*) n FROM filter_results GROUP BY status")}

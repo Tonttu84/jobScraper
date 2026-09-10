@@ -50,6 +50,7 @@ from jobscraper.store import Store, copy_db, default_db_path, new_run_db
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help=__doc__)
 console = Console()
+log = logging.getLogger(__name__)
 
 
 @app.callback()
@@ -343,6 +344,23 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
     console.print(f"rank: {len(verdicts)} scored; cost ≈ {estimate_cost(verdicts.values())}")
 
 
+def _record_run_stats(store: Store, snap) -> None:
+    """Append this report's anonymous counters to the public ``stats/`` files.
+
+    Bookkeeping must never cost the owner a report: anything that goes wrong here is a warning,
+    not a failed command.
+    """
+    from jobscraper import runstats
+
+    try:
+        row = runstats.collect(store, snap, load_settings(), profile=config.active_profile(),
+                               usage_path=config.paths().data / "exports" / "ai" / "usage.jsonl")
+        runs = runstats.record(row, runstats.runs_path())
+        console.print(f"run stats: {runs} (+ {runstats.refresh()})", soft_wrap=True)
+    except Exception as exc:
+        log.warning("run statistics not recorded: %s: %s", type(exc).__name__, exc)
+
+
 @app.command()
 def report(days: int = 30, out: Path | None = None) -> None:
     """Write the markdown report and a JSONL export, and store the report in the database."""
@@ -376,6 +394,8 @@ def report(days: int = 30, out: Path | None = None) -> None:
     missing = [by_id[jid] for jid in item_ids if jid not in known and jid in by_id]
     if missing:
         store.save_facets(compute_all(missing, filters))
+
+    _record_run_stats(store, snap)
 
     sections = {s: sum(i.section == s for i in snap.items) for s in ("ranked", "prefilter", "review")}
     console.print(f"report: {path}\nexport: {jsonl}")
@@ -552,8 +572,17 @@ def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (
 
 
 @app.command()
-def stats() -> None:
-    """Database counters."""
+def stats(public: bool = typer.Option(False, "--public",
+                                      help="Rebuild stats/README.md from stats/runs.jsonl and print it "
+                                           "(anonymous per-run counters; no database is opened)")) -> None:
+    """Database counters — or, with --public, the committed anonymous run statistics."""
+    if public:
+        from jobscraper import runstats
+
+        out = runstats.refresh()
+        typer.echo(out.read_text(encoding="utf-8"))
+        console.print(f"wrote {out}", soft_wrap=True)
+        return
     console.print(Store().stats())
 
 

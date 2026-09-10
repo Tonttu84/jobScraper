@@ -480,3 +480,29 @@ def test_ai_batches_round_trip(store):
     store.finish_batch("msgbatch_1", "done")
     assert store.pending_batches("prefilter") == []
     assert [b["id"] for b in store.pending_batches("prefilter", status="done")] == ["msgbatch_1"]
+
+
+def test_latest_runs_returns_the_newest_row_per_source(store):
+    store.log_run("arbeitnow", 10, 4)
+    store.log_run("arbeitnow", 12, 0)
+    store.log_run("jobly", 0, 0, "HTTPError: 503")
+
+    rows = store.latest_runs()
+    assert [r["source"] for r in rows] == ["arbeitnow", "jobly"]  # ordered by source
+    assert (rows[0]["fetched"], rows[0]["new"], rows[0]["error"]) == (12, 0, None)
+    assert rows[1]["error"] == "HTTPError: 503"
+    assert rows[0]["started_at"]
+
+
+def test_latest_runs_is_empty_without_any_scrape(store):
+    assert store.latest_runs() == []
+
+
+def test_new_jobs_since_counts_by_first_seen(store):
+    store.upsert_jobs([make_job(source_id="1")])
+    cut = store.job_meta(store.jobs()[0].id)["first_seen"]
+    store.upsert_jobs([make_job(source_id="2"), make_job(source_id="3")])
+
+    assert store.new_jobs_since(None) == 3
+    assert store.new_jobs_since(cut) == 3  # the boundary row itself counts (>=)
+    assert store.new_jobs_since(datetime.now(UTC) + timedelta(days=1)) == 0

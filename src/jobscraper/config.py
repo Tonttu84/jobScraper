@@ -55,6 +55,16 @@ def base_paths() -> Paths:
     )
 
 
+def stats_dir() -> Path:
+    """The public, committed statistics directory — the repository's own ``stats/``.
+
+    Deliberately outside :class:`Paths`: the anonymous per-run counters are shared between every
+    candidate and tracked in git, so ``--profile`` must not move them (and nothing personal may
+    ever be written there). ``JOBSCRAPER_STATS_DIR`` overrides it, which is how tests keep out.
+    """
+    return Path(os.environ.get("JOBSCRAPER_STATS_DIR") or ROOT / "stats")
+
+
 def profile_dir(name: str, base: Paths | None = None) -> Path:
     """Where a named profile's YAML lives. Raises :class:`ProfileError` on an unusable name."""
     if not _SAFE_NAME.fullmatch(name or ""):

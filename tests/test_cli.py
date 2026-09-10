@@ -633,3 +633,75 @@ def test_publish_without_a_database_is_rejected(data_dir):
     result = runner.invoke(cli_mod.app, ["publish"])
     assert result.exit_code != 0
     assert "does not exist" in result.output
+
+
+# ----------------------------------------------------------- public run statistics
+
+
+@pytest.fixture
+def stats_dir(tmp_path, monkeypatch):
+    """Where `report` is allowed to write the committed, public counters."""
+    directory = tmp_path / "public-stats"
+    monkeypatch.setenv("JOBSCRAPER_STATS_DIR", str(directory))
+    return directory
+
+
+def test_report_records_public_run_statistics(data_dir, fake_http, stats_dir):
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow", "--limit", "2"]).exit_code == 0
+    assert runner.invoke(cli_mod.app, ["filter"]).exit_code == 0
+
+    result = runner.invoke(cli_mod.app, ["report"])
+    assert result.exit_code == 0, result.output
+    assert "run stats" in result.output
+
+    rows = [json.loads(ln) for ln in (stats_dir / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["report_id"] == 1
+    assert rows[0]["profile"] == "default"
+    assert rows[0]["jobs_total"] == 2
+    assert rows[0]["by_source"] == {"arbeitnow": 2}
+    assert rows[0]["scrape"] == {"sources": 1, "fetched": 2, "new": 2, "errors": 0}
+    assert "DevOps" not in (stats_dir / "runs.jsonl").read_text(encoding="utf-8")
+    assert "#1" in (stats_dir / "README.md").read_text(encoding="utf-8")
+
+    # a second report is a second row; re-reporting the same one does not duplicate it
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0
+    rows = [json.loads(ln) for ln in (stats_dir / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r["report_id"] for r in rows] == [1, 2]
+
+
+def test_report_survives_a_broken_stats_hook(data_dir, fake_http, stats_dir, monkeypatch, caplog):
+    from jobscraper import runstats
+
+    def boom(*a, **kw):
+        raise RuntimeError("no disk")
+
+    monkeypatch.setattr(runstats, "collect", boom)
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow", "--limit", "2"]).exit_code == 0
+    assert runner.invoke(cli_mod.app, ["filter"]).exit_code == 0
+
+    result = runner.invoke(cli_mod.app, ["report"])
+    assert result.exit_code == 0, result.output
+    assert "report #1" in result.output          # the report itself still happened
+    assert not (stats_dir / "runs.jsonl").exists()
+    assert "no disk" in caplog.text
+
+
+def test_stats_public_renders_the_markdown_without_a_database(data_dir, stats_dir):
+    stats_dir.mkdir(parents=True)
+    (stats_dir / "runs.jsonl").write_text(
+        json.dumps({"report_id": 4, "profile": "default", "jobs_total": 7,
+                    "report_created_at": "2026-09-09T10:00:00+00:00"}) + "\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(cli_mod.app, ["stats", "--public"])
+    assert result.exit_code == 0, result.output
+    assert "#4" in result.output
+    assert "#4" in (stats_dir / "README.md").read_text(encoding="utf-8")
+    assert not (data_dir / "jobs.db").exists()  # no database was opened
+
+
+def test_stats_public_without_any_rows_says_so(data_dir, stats_dir):
+    result = runner.invoke(cli_mod.app, ["stats", "--public"])
+    assert result.exit_code == 0, result.output
+    assert "no runs recorded yet" in result.output.lower()

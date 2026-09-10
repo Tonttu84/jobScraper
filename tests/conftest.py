@@ -103,6 +103,12 @@ def _no_profile_leaks(monkeypatch):
     config.use_profile(None)
 
 
+@pytest.fixture(autouse=True)
+def _stats_dir_is_temporary(tmp_path, monkeypatch):
+    """``stats/`` in the repository is a committed, public file: no test may write into it."""
+    monkeypatch.setenv("JOBSCRAPER_STATS_DIR", str(tmp_path / "stats"))
+
+
 @pytest.fixture(scope="session")
 def settings():
     return load_settings(CONFIG_DIR)
