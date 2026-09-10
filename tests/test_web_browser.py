@@ -126,6 +126,97 @@ def test_detail_opens_on_click_with_rank_summary_and_description(page, site):
     expect(detail).to_be_hidden()
 
 
+def test_the_card_main_area_looks_clickable(page, site):
+    _, jobs = site
+    cursor = card(page, jobs["web"]).locator(".card-main").evaluate(
+        "el => getComputedStyle(el).cursor")
+    assert cursor == "pointer"
+
+
+# ------------------------------------------------------------------ details button
+
+
+def test_details_button_is_first_in_the_actions_row_and_toggles_the_detail(page, site):
+    _, jobs = site
+    web = card(page, jobs["web"])
+    detail, button = web.locator(".detail"), web.locator(".actions button.toggle")
+    expect(web.locator(".actions > *").first).to_have_class("toggle")
+    expect(button).to_have_text("Details ▾")
+    expect(button).to_have_attribute("aria-expanded", "false")
+    expect(detail).to_be_hidden()
+
+    button.click()
+    expect(detail).to_be_visible()
+    expect(detail).to_contain_text("Why apply")
+    expect(detail).to_contain_text("We build single page apps with React, Node.js and TypeScript.")
+    expect(button).to_have_text("Hide ▴")
+    expect(button).to_have_attribute("aria-expanded", "true")
+
+    button.click()
+    expect(detail).to_be_hidden()
+    expect(button).to_have_text("Details ▾")
+    expect(button).to_have_attribute("aria-expanded", "false")
+
+
+def test_the_details_button_follows_a_detail_opened_by_clicking_the_card(page, site):
+    _, jobs = site
+    web = card(page, jobs["web"])
+    web.locator(".meta").click()
+    expect(web.locator(".detail")).to_be_visible()
+    expect(web.locator("button.toggle")).to_have_text("Hide ▴")
+    web.locator("button.toggle").click()
+    expect(web.locator(".detail")).to_be_hidden()
+
+
+def test_a_decision_saved_with_the_detail_open_keeps_it_open_and_the_label_right(page, site):
+    _, jobs = site
+    page.locator("#user").fill("tonttu")
+    page.locator("#user").press("Enter")
+    web = card(page, jobs["web"])
+    web.locator("button.toggle").click()
+    expect(web.locator(".detail")).to_be_visible()
+
+    web.locator('button.act[data-status="applied"]').click()
+    expect(web.locator("button.act.on")).to_have_attribute("data-status", "applied")
+    expect(web.locator(".detail")).to_be_visible()
+    expect(web.locator(".detail")).to_contain_text("Why apply")
+    expect(web.locator("button.toggle")).to_have_text("Hide ▴")
+    expect(web.locator("button.toggle")).to_have_attribute("aria-expanded", "true")
+    # the re-rendered button still works
+    web.locator("button.toggle").click()
+    expect(web.locator(".detail")).to_be_hidden()
+    expect(web.locator("button.toggle")).to_have_text("Details ▾")
+
+
+# ------------------------------------------------------------------ teaser
+
+
+def test_teaser_shows_the_first_sentence_of_the_ai_verdict(page, site):
+    _, jobs = site
+    web = card(page, jobs["web"])
+    # the rank summary wins, cut at its first sentence
+    expect(web.locator(".meta + .teaser")).to_have_text(
+        "Strong React and Node fit for a junior developer…")
+    # a prefilter-only job falls back to the prefilter summary, uncut when it is one sentence
+    expect(card(page, jobs["py"]).locator(".teaser")).to_have_text(
+        f"Summary for {jobs['py'].id}.")
+    # nothing to say, no empty element
+    expect(card(page, jobs["rev"]).locator(".teaser")).to_have_count(0)
+
+
+def test_teaser_cuts_at_160_characters_when_the_first_sentence_is_longer(page):
+    long_text = "word " * 60  # 300 characters with no sentence end
+    cut = page.evaluate("text => teaserText(text)", long_text)
+    assert cut.endswith("…") and len(cut) <= 161
+    assert cut[:-1] in long_text
+    # a sentence end past the limit does not save it
+    late = ("x" * 200) + ". tail"
+    assert page.evaluate("text => teaserText(text)", late) == ("x" * 160) + "…"
+    # short single sentences are shown as they are
+    assert page.evaluate("text => teaserText(text)", "All good.") == "All good."
+    assert page.evaluate("text => teaserText(text)", "") == ""
+
+
 # ------------------------------------------------------------------ languages
 
 

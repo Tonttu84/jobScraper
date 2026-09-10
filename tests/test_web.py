@@ -146,6 +146,9 @@ def _seed(db_path, *, save_report: bool = True, save_facets: bool = True) -> dic
     ranked = {
         web.id: make_verdict(
             web.id, "rank", 91,
+            # two sentences on purpose: the UI teaser shows only the first one
+            summary="Strong React and Node fit for a junior developer. "
+                    "The role is hybrid with three office days.",
             why_apply=["React and Node work", "junior friendly"],
             concerns=["hybrid, three days in the office"],
         ),
@@ -311,6 +314,22 @@ def test_jobs_default_ordering_and_shape(seeded):
     assert last["prefilter"] is None
     assert last["rank"] is None
     assert last["filter"]["reasons"] == ["asks for 5 years of experience"]
+
+
+def test_list_items_carry_the_verdict_summaries_the_teaser_needs(seeded):
+    """The page's one-line teaser reads ``rank``/``prefilter`` straight off the list payload."""
+    client, jobs = seeded
+    by_id = {item["id"]: item for item in client.get("/api/jobs").json()["items"]}
+
+    web = by_id[jobs["web"].id]
+    assert web["rank"]["summary"].startswith("Strong React and Node fit for a junior developer.")
+    # a prefilter-only job still carries a summary to show
+    py = by_id[jobs["py"].id]
+    assert py["rank"] is None
+    assert py["prefilter"]["summary"] == f"Summary for {jobs['py'].id}."
+    # and the rule-review leftover has nothing to teaser with
+    rev = by_id[jobs["rev"].id]
+    assert rev["rank"] is None and rev["prefilter"] is None
 
 
 def test_prefilter_verdict_under_an_old_prompt_version_is_used(seeded):

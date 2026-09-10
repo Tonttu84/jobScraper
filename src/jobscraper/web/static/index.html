@@ -60,6 +60,7 @@
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
     padding: 12px 14px; margin-bottom: 10px;
   }
+  .card:hover { background: #fbfcfe; border-color: #d5dae1; }
   .card-main { cursor: pointer; display: flex; gap: 12px; }
   .score {
     flex: none; width: 44px; height: 44px; border-radius: 8px; color: #fff;
@@ -69,6 +70,10 @@
   .score.hi { background: var(--good); } .score.mid { background: var(--mid); }
   .card h3 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
   .meta { color: var(--muted); font-size: 13px; }
+  .teaser {
+    color: var(--muted); font-size: 13px; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
   .actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .actions button {
@@ -77,6 +82,7 @@
   }
   .actions button:hover { border-color: var(--accent); color: var(--accent); }
   .actions button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .actions button.toggle { color: var(--muted); }
   .actions input.note { flex: 1; min-width: 160px; }
   .badge {
     font-size: 11px; border-radius: 999px; padding: 1px 8px;
@@ -212,6 +218,23 @@ function scoreClass(score) {
 
 function dateText(value) { return value ? String(value).slice(0, 10) : "?"; }
 
+// The one-line teaser: the verdict's first sentence, or its first 160 characters — whichever
+// ends sooner. An ellipsis marks that there is more of it behind "Details".
+var TEASER_MAX = 160;
+function teaserText(text) {
+  var s = String(text === null || text === undefined ? "" : text).replace(/\s+/g, " ").trim();
+  if (!s) { return ""; }
+  var stop = s.indexOf(". ");
+  if (stop >= 0 && stop < TEASER_MAX) { return s.slice(0, stop) + "…"; }
+  if (s.length > TEASER_MAX) { return s.slice(0, TEASER_MAX).replace(/\s+$/, "") + "…"; }
+  return s;
+}
+
+function teaserFor(job) {
+  var verdict = job.rank || job.prefilter;  // the rank verdict is the better one when there is one
+  return verdict ? teaserText(verdict.summary) : "";
+}
+
 function cardHtml(job) {
   var facets = job.facets || {};
   var tags = "";
@@ -231,9 +254,11 @@ function cardHtml(job) {
   var decision = job.decision
     ? '<span class="badge">' + esc(job.decision.status) + "</span>" : "";
   var score = (job.score === null || job.score === undefined) ? "–" : job.score;
+  var teaser = teaserFor(job);
 
   var buttons = ["applied", "skipped", "interested", "interview", "rejected", "offer"];
-  var actions = "";
+  // Rendered closed; refreshCard/toggleDetail move it with setToggle when the detail is open.
+  var actions = '<button class="toggle" type="button" aria-expanded="false">Details ▾</button>';
   for (var b = 0; b < buttons.length; b++) {
     var on = job.decision && job.decision.status === buttons[b] ? " on" : "";
     actions += '<button class="act' + on + '" data-status="' + buttons[b] + '">' + esc(buttons[b]) + "</button>";
@@ -247,6 +272,7 @@ function cardHtml(job) {
       "<div>" +
         '<h3><a href="' + esc(job.url) + '" target="_blank" rel="noopener">' + esc(job.title) + "</a></h3>" +
         '<div class="meta">' + line + "</div>" +
+        (teaser ? '<div class="teaser">' + esc(teaser) + "</div>" : "") +
         '<div class="row">' + tags +
           '<span class="tag">' + esc(job.section || "—") + "</span>" + decision +
         "</div>" +
@@ -310,15 +336,25 @@ function refreshCard(card, id) {
       if (open) {
         var detail = card.querySelector(".detail");
         detail.innerHTML = detailHtml(job);
+        detail.dataset.loaded = "1";
         detail.hidden = false;
       }
+      setToggle(card, open);
     });
+}
+
+function setToggle(card, open) {
+  var button = card.querySelector("button.toggle");
+  if (!button) { return; }
+  button.textContent = open ? "Hide ▴" : "Details ▾";
+  button.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function toggleDetail(card) {
   var detail = card.querySelector(".detail");
-  if (!detail.hidden) { detail.hidden = true; return; }
+  if (!detail.hidden) { detail.hidden = true; setToggle(card, false); return; }
   detail.hidden = false;
+  setToggle(card, true);
   if (detail.dataset.loaded === "1") { return; }
   detail.innerHTML = '<span class="muted">loading…</span>';
   var suffix = handle() ? "?user=" + encodeURIComponent(handle()) : "";
@@ -482,6 +518,7 @@ function wire() {
   $("list").addEventListener("click", function (event) {
     var card = event.target.closest ? event.target.closest(".card") : null;
     if (!card) { return; }
+    if (event.target.closest("button.toggle")) { toggleDetail(card); return; }
     var button = event.target.closest("button.act");
     if (button) {
       var note = card.querySelector("input.note");

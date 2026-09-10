@@ -41,3 +41,6 @@ posted_at employment_type salary_text tags score section position`, plus nested 
 `rank` (`score summary concerns why_apply`), `facets` (`posting_language languages_required
 languages_optional stacks web_dev`), `decision` (`status note updated_at` or `null`).
 `score` is the rank score when ranked, otherwise the prefilter score, otherwise `null`.
+The verdict summaries travel with every list item (not only with `GET /api/jobs/{id}`), so the
+page can print its one-line teaser under a card — the rank summary when there is one, else the
+prefilter summary, cut at its first sentence or 160 characters — without a request per card.
