@@ -284,8 +284,13 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
 - **Evergreen pipeline adverts.** Cisco postings that open with "this posting is to advertise
   potential job opportunities … this exact role may not be open today" are not live vacancies.
   Cheap to detect as a rule signal and show as a concern / lower the score.
-- **Application deadlines in the text** (e.g. Deloitte Nordic trainee, closes 13 Sep 2026): a
-  date extractor could surface "closes in N days" in the report and web UI.
+- **Application deadlines in the text** — done 2026-09-10 (`filters/deadline.py`, rules
+  `2026-09-10c`): a date within 80 characters of a cue phrase (EN/FI/DE/PT/SV) becomes
+  `signals["deadline"]`; a passed deadline is a rule drop (`deadline_passed` in the audit and
+  stats), an open one shows as "closes in N days" in the report and the web UI with an amber
+  tag under 7 days, and the ranking prompt sees it. Measured read-only before the first
+  re-filter: default DB 89 of 11 878 postings carry a deadline (0.7%), 11 already passed, 40
+  closing within a week; Felipe's 107 of 16 891 (0.6%), 4 passed, 46 closing within a week.
 
 ## Improving match quality (agreed levers, not yet built)
 The CV is a thin signal. Three additions, in order of expected payoff:
