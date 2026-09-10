@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, StringConstraints
 
 from jobscraper.ai.prompts import PROMPT_VERSION
+from jobscraper.config import WebPreset
 from jobscraper.facets import FACETS_VERSION, compute_facets
 from jobscraper.models import (
     AIVerdict,
@@ -167,6 +168,19 @@ class ReportMeta(BaseModel):
     path: str | None = None
 
 
+class UIConfig(BaseModel):
+    """How the page presents its profile-fact controls, from the profile's ``web.preset``."""
+
+    preset: WebPreset = "student"
+    default_languages: list[str] = Field(
+        default_factory=lambda: ["en"],
+        description="Codes ticked in 'languages you speak' for a viewer with no stored choice",
+    )
+    web_dev_toggle: bool = Field(
+        True, description="Whether to show the 'I have done Full Stack Open' box at all"
+    )
+
+
 class Meta(BaseModel):
     """Everything the filter panel needs in one request."""
 
@@ -185,6 +199,7 @@ class Meta(BaseModel):
     sources: dict[str, int] = Field(default_factory=dict)
     users: list[str] = Field(default_factory=list)
     decision_statuses: list[str] = Field(default_factory=list)
+    ui: UIConfig = Field(default_factory=UIConfig)
     facets_version: str = FACETS_VERSION
     database: str | None = Field(None, description="File name of the database being served")
 
@@ -382,7 +397,7 @@ def _counter(values) -> dict[str, int]:
 
 
 def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
-               languages: list[str] | None = None) -> FastAPI:
+               languages: list[str] | None = None, preset: WebPreset = "student") -> FastAPI:
     """Build the app over one database (``db_path``) or over a directory of copies.
 
     With neither argument the app serves ``$JOBSCRAPER_SERVE_DIR`` or ``data/serve/``: whatever
@@ -390,6 +405,11 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
 
     ``languages`` are the codes the served candidate speaks (``profile.languages.ok``); they are
     offered as tick boxes even when no posting in the report happens to use them.
+
+    ``preset`` is the profile's ``web.preset``. ``student`` is the page shared with fellow
+    students: every observed language is on offer, only English starts ticked, and the "I have
+    done Full Stack Open" box is there. ``tailored`` is a one-person search: only the profile's
+    languages are offered, all of them ticked, and no Full Stack Open box.
     """
     if db_path is None and serve_dir is None:
         from jobscraper.config import paths
@@ -399,27 +419,40 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
     app.state.db_path = db_path
     app.state.serve_dir = Path(serve_dir) if serve_dir is not None else None
     app.state.languages = [code.lower() for code in (languages or [])]
+    app.state.preset = preset
+
+    def _ui(jobs: list[JobView]) -> tuple[list[str], UIConfig]:
+        """The languages to offer as tick boxes and how the page should present itself."""
+        spoken = sorted(set(app.state.languages))
+        if app.state.preset == "tailored":
+            # A page for one known person: their languages, all ticked, no profile questions.
+            return spoken, UIConfig(preset="tailored", default_languages=spoken,
+                                    web_dev_toggle=False)
+        offered = sorted(
+            {j.facets.posting_language for j in jobs if j.facets.posting_language}
+            | {c for j in jobs for c in j.facets.languages_required}
+            | {"en", *app.state.languages}
+        )
+        return offered, UIConfig(preset="student", default_languages=["en"], web_dev_toggle=True)
 
     @app.get("/api/meta", response_model=Meta)
     def meta(store: StoreDep, report_id: int | None = None) -> Meta:
         view = load_view(store, report_id)
         jobs = _sorted_views(view)
+        offered, ui = _ui(jobs)
         return Meta(
             report=ReportMeta(**view.snapshot.model_dump(exclude={"items"})) if view.stored else None,
             sections=_counter(j.section for j in jobs),
             languages=_counter(j.facets.posting_language for j in jobs),
             languages_required=_counter(c for j in jobs for c in j.facets.languages_required),
-            languages_offered=sorted(
-                {j.facets.posting_language for j in jobs if j.facets.posting_language}
-                | {c for j in jobs for c in j.facets.languages_required}
-                | {"en", *app.state.languages}
-            ),
+            languages_offered=offered,
             stacks=_counter(s for j in jobs for s in j.facets.stacks),
             countries=_counter(j.country for j in jobs),
             remote=_counter(j.remote for j in jobs),
             sources=_counter(j.source for j in jobs),
             users=store.decision_users(),
             decision_statuses=DECISION_STATUSES,
+            ui=ui,
             facets_version=FACETS_VERSION,
             database=store.path.name,
         )

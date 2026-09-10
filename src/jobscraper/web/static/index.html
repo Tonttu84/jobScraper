@@ -118,7 +118,7 @@
     <div id="f-langs"></div>
 
     <h2>Stack</h2>
-    <label><input type="checkbox" id="f-webdev" checked> I have done Full Stack Open</label>
+    <label id="f-webdev-label"><input type="checkbox" id="f-webdev" checked> I have done Full Stack Open</label>
     <div class="chips" id="f-stacks" style="margin-top:6px"></div>
 
     <h2>Section</h2>
@@ -155,6 +155,10 @@
 
 var STATE = { offset: 0, total: 0, shown: 0 };
 var LIMIT = 50;
+
+// /api/meta's "ui" block: how this profile wants the page's profile-fact controls presented
+// (see config WebPolicy). These values stand in until the first /api/meta answer arrives.
+var UI = { preset: "student", default_languages: ["en"], web_dev_toggle: true };
 
 // The decision statuses in the order the cards show their buttons; /api/meta lists the same
 // set, and its order is mapped onto this one so both rows read alike.
@@ -240,7 +244,8 @@ function query(extra) {
   if (langs.length) { p.set("langs", langs.join(",")); }
   // A profile fact, not a filter: someone who has done Full Stack Open can take web jobs, so
   // ticked means "no web_dev restriction" and unticked drops the postings that expect web work.
-  if (!$("f-webdev").checked) { p.set("web_dev", "false"); }
+  // Where the box is not shown (tailored preset) the question is never asked or sent.
+  if (UI.web_dev_toggle && !$("f-webdev").checked) { p.set("web_dev", "false"); }
   var stacks = [];
   var chips = $("f-stacks").querySelectorAll(".chip.on");
   for (var i = 0; i < chips.length; i++) { stacks.push(chips[i].dataset.value); }
@@ -539,13 +544,24 @@ function syncDecisionNote() { $("decision-note").hidden = !!handle(); }
 function keys(obj) { return Object.keys(obj || {}).sort(); }
 
 function buildFilters(meta) {
-  // The server offers the languages seen in the data plus the ones the profile speaks.
+  if (meta.ui) { UI = meta.ui; }
+  // Which languages are on offer is the server's call: everything seen in the data plus the
+  // profile's on the student page, only the profile's on a tailored one.
   var langs = (meta.languages_offered || []).slice();
-  if (!langs.length) { langs = keys(meta.languages).concat(keys(meta.languages_required)); }
-  if (langs.indexOf("en") < 0) { langs.push("en"); }
+  if (!langs.length) {  // an old server, or a report with no language anywhere
+    langs = keys(meta.languages).concat(keys(meta.languages_required));
+    if (langs.indexOf("en") < 0) { langs.push("en"); }
+  }
   langs = langs.filter(function (v, i) { return langs.indexOf(v) === i; }).sort();
-  var saved = stored("jobscraper.langs", "en").split(",").filter(function (v) { return v; });
+  // The viewer's own choice wins; without one the preset decides what starts ticked.
+  var storedLangs = stored("jobscraper.langs", null);
+  var saved = storedLangs === null
+    ? (UI.default_languages || ["en"]).slice()
+    : storedLangs.split(",").filter(function (v) { return v; });
   checkboxes($("f-langs"), langs, saved);
+
+  // A tailored page is one person's own search: the Full Stack Open question does not apply.
+  $("f-webdev-label").hidden = !UI.web_dev_toggle;
 
   var stacks = keys(meta.stacks);
   var chips = $("f-stacks");
@@ -605,11 +621,13 @@ function wire() {
     $("hint").textContent = "";
     clearCardHints();
   });
-  $("f-webdev").checked = stored("jobscraper.fso", "1") === "1";
-  $("f-webdev").addEventListener("change", function () {
-    store("jobscraper.fso", $("f-webdev").checked ? "1" : "0");
-    reload();
-  });
+  if (UI.web_dev_toggle) {
+    $("f-webdev").checked = stored("jobscraper.fso", "1") === "1";
+    $("f-webdev").addEventListener("change", function () {
+      store("jobscraper.fso", $("f-webdev").checked ? "1" : "0");
+      reload();
+    });
+  }
   $("f-score").addEventListener("change", reload);
   $("f-decision").addEventListener("change", function () {
     store("jobscraper.decisions", selectedValues($("f-decision")).join(","));

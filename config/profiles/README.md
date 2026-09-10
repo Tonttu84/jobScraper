@@ -26,3 +26,20 @@ With `--profile ana` (or `JOBSCRAPER_PROFILE=ana`) the whole run moves:
 
 `data/profiles/ana/` gets its own `runs/`, `serve/`, `exports/` and `cache/`, so two candidates
 never share a database, a published copy or a report.
+
+## `web.preset`: who the served page is for
+
+`profile.yaml` decides how `jobscraper serve` presents the page to whoever opens it. The default
+`web.preset: student` is the page shared with fellow students: it offers every language seen in
+the postings plus the ones the profile speaks, ticks only English (each viewer picks their own
+and the choice is remembered in their browser), and shows the "I have done Full Stack Open" box
+so a viewer who has not done it can drop the postings that expect web work. `web.preset:
+tailored` is a one-person search: the only language boxes are the ones this profile speaks
+(`languages.ok`), they all start ticked, and the Full Stack Open box is gone — it is a fact
+about one candidate, not a question worth asking them. Everything else — the stack chips,
+sections, countries, scores, decisions — is the same on both.
+
+```yaml
+web:
+  preset: tailored     # or "student" (the default)
+```

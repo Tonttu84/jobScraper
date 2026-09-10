@@ -258,6 +258,26 @@ def test_meta_offers_the_served_profiles_languages(tmp_path):
     assert meta["languages_offered"] == ["de", "en", "pt"]
 
 
+def test_meta_ui_block_describes_the_student_preset(seeded):
+    """The default page is the one shared with fellow students: pick your languages, FSO box."""
+    client, _jobs = seeded
+    ui = client.get("/api/meta").json()["ui"]
+    assert ui == {"preset": "student", "default_languages": ["en"], "web_dev_toggle": True}
+
+
+def test_meta_ui_block_for_the_tailored_preset(tmp_path):
+    """A one-person page offers exactly the languages that person speaks, and no FSO box."""
+    _seed(tmp_path / "t.db")
+    with TestClient(create_app(tmp_path / "t.db", languages=["PT", "en"], preset="tailored")) as client:
+        meta = client.get("/api/meta").json()
+    # the observed "de" is not offered: nobody else is going to use this page
+    assert meta["languages_offered"] == ["en", "pt"]
+    assert meta["ui"] == {"preset": "tailored", "default_languages": ["en", "pt"],
+                          "web_dev_toggle": False}
+    # the observed counts are unchanged — only what is offered as a tick box narrows
+    assert meta["languages"] == {"en": 3, "de": 1}
+
+
 def test_meta_is_null_for_an_on_the_fly_view(unreported):
     client, _jobs = unreported
     meta = client.get("/api/meta").json()

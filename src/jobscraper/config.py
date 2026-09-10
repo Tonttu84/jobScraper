@@ -13,7 +13,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -171,6 +171,23 @@ class AIPolicy(BaseModel):
     max_description_chars: int = 6000
 
 
+#: The web UI presets a profile can pick between (see :class:`WebPolicy`).
+WebPreset = Literal["student", "tailored"]
+
+
+class WebPolicy(BaseModel):
+    """How the web UI presents itself for this candidate.
+
+    ``student``: the page is shared with fellow students, so the viewer says which languages
+    they speak (English pre-ticked) among everything the postings and the profile use, and the
+    "I have done Full Stack Open" box lets each of them narrow web jobs away.
+    ``tailored``: a one-person search — the profile's own languages are the only ones offered
+    and they start ticked, and the Full Stack Open box is not shown at all.
+    """
+
+    preset: WebPreset = "student"
+
+
 class Profile(BaseModel):
     name: str
     summary: str
@@ -183,6 +200,7 @@ class Profile(BaseModel):
     role: RolePolicy = Field(default_factory=RolePolicy)
     prompt: PromptPolicy = Field(default_factory=PromptPolicy)
     ai: AIPolicy = Field(default_factory=AIPolicy)
+    web: WebPolicy = Field(default_factory=WebPolicy)
     max_age_days: int = 45  # postings older than this are dropped by the rule filter (unknown dates stay)
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import socket
 import threading
+from contextlib import contextmanager
 
 import pytest
 import uvicorn
@@ -33,34 +34,50 @@ def browser():
         browser.close()
 
 
+@contextmanager
+def _serving(app):
+    """Run ``app`` under uvicorn on a free localhost port in a thread; yields the base URL."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            thread.join(0.05)
+        assert server.started, "uvicorn did not start"
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(5)
+
+
 @pytest.fixture
 def site(tmp_path):
     """Seeded database served by uvicorn on a free localhost port; yields (base_url, jobs)."""
     db = tmp_path / "jobs.db"
     jobs = _seed(db)
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
     # ``languages`` is what ``serve`` passes from the profile: "pt" is offered although no
-    # posting in the seeded report is Portuguese.
-    app = create_app(db, languages=["en", "pt"])
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    for _ in range(200):
-        if server.started:
-            break
-        thread.join(0.05)
-    assert server.started, "uvicorn did not start"
-    yield f"http://127.0.0.1:{port}", jobs
-    server.should_exit = True
-    thread.join(5)
+    # posting in the seeded report is Portuguese. No ``preset`` = the student default.
+    with _serving(create_app(db, languages=["en", "pt"])) as base_url:
+        yield base_url, jobs
 
 
 @pytest.fixture
-def page(browser, site):
-    """A fresh browser context (own localStorage) on the seeded site; fails on any JS error."""
-    base_url, _ = site
+def tailored_site(tmp_path):
+    """The same database served for a one-person profile (``web.preset: tailored``)."""
+    db = tmp_path / "jobs.db"
+    jobs = _seed(db)
+    with _serving(create_app(db, languages=["en", "pt"], preset="tailored")) as base_url:
+        yield base_url, jobs
+
+
+@contextmanager
+def _visiting(browser, base_url):
+    """A fresh browser context (own localStorage) on ``base_url``; fails on any JS error."""
     context = browser.new_context(base_url=base_url)
     page = context.new_page()
     errors: list[str] = []
@@ -71,6 +88,19 @@ def page(browser, site):
     yield page
     context.close()
     assert errors == [], f"browser errors: {errors}"
+
+
+@pytest.fixture
+def page(browser, site):
+    """A fresh browser context (own localStorage) on the seeded site; fails on any JS error."""
+    with _visiting(browser, site[0]) as page:
+        yield page
+
+
+@pytest.fixture
+def tailored_page(browser, tailored_site):
+    with _visiting(browser, tailored_site[0]) as page:
+        yield page
 
 
 def card(page, job):
@@ -290,6 +320,52 @@ def test_full_stack_open_choice_survives_a_reload_and_reset(page, site):
     expect(page.locator("#f-webdev")).not_to_be_checked()
     expect(count(page)).to_have_text("2 of 2")
     expect(card(page, jobs["web"])).to_have_count(0)
+
+
+# ------------------------------------------------------------------ tailored preset
+
+
+def test_tailored_preset_offers_only_the_profiles_languages_all_ticked(tailored_page):
+    """One person, known languages: every box the profile lists, all ticked, nothing else."""
+    expect(tailored_page.locator("#f-langs input")).to_have_count(2)
+    expect(lang(tailored_page, "en")).to_be_checked()
+    expect(lang(tailored_page, "pt")).to_be_checked()
+    # "de" is observed in the data but not spoken, so it is not on offer here
+    expect(lang(tailored_page, "de")).to_have_count(0)
+
+
+def test_tailored_preset_hides_the_full_stack_open_box(tailored_page):
+    expect(tailored_page.locator("label:has(#f-webdev)")).to_be_hidden()
+
+
+def test_tailored_preset_never_sends_web_dev(tailored_page):
+    # An "I have not done Full Stack Open" left in this browser by a student page must not leak
+    # into a profile that never asks the question.
+    tailored_page.evaluate("localStorage.setItem('jobscraper.fso', '0')")
+    tailored_page.reload()
+    expect(count(tailored_page)).to_contain_text(" of ")
+    with tailored_page.expect_request(lambda r: "/api/jobs?" in r.url) as info:
+        tailored_page.locator("#f-q").fill("dev")
+    assert "web_dev" not in info.value.url
+    expect(count(tailored_page)).to_contain_text(" of ")
+
+
+def test_tailored_preset_reset_keeps_the_languages_ticked(tailored_page):
+    tailored_page.locator("#f-q").fill("dev")
+    tailored_page.locator("#reset").click()
+    expect(tailored_page.locator("#f-q")).to_have_value("")
+    expect(lang(tailored_page, "en")).to_be_checked()
+    expect(lang(tailored_page, "pt")).to_be_checked()
+    expect(tailored_page.locator("label:has(#f-webdev)")).to_be_hidden()
+
+
+def test_tailored_preset_language_choice_still_survives_a_reload(tailored_page):
+    """The stored choice wins over the preset's defaults, exactly as on the student page."""
+    lang(tailored_page, "pt").uncheck()
+    tailored_page.reload()
+    expect(tailored_page.locator("#count")).to_contain_text(" of ")
+    expect(lang(tailored_page, "pt")).not_to_be_checked()
+    expect(lang(tailored_page, "en")).to_be_checked()
 
 
 # ------------------------------------------------------------------ other filters

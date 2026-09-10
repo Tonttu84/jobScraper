@@ -279,7 +279,8 @@ def serve(dir: Path | None = typer.Option(None, "--dir", help="Directory of data
     from jobscraper.web.app import create_app
 
     serve_dir = None if db else (dir or config.paths().data / "serve")
-    languages = list(load_settings().profile.languages.ok)
+    profile = load_settings().profile
+    languages = list(profile.languages.ok)
     if serve_dir is not None:
         serve_dir.mkdir(parents=True, exist_ok=True)
         console.print(f"serving copies from {serve_dir} (put a database there with `jobscraper publish`)")
@@ -290,10 +291,12 @@ def serve(dir: Path | None = typer.Option(None, "--dir", help="Directory of data
         if serve_dir is not None:
             os.environ["JOBSCRAPER_SERVE_DIR"] = str(serve_dir)
         # --reload builds the app in a worker process from the factory string, which takes no
-        # arguments: the profile's spoken languages are not offered there, only the observed ones.
+        # arguments: the profile's spoken languages and web preset are not applied there — the
+        # page falls back to the observed languages and the student preset.
         uvicorn.run("jobscraper.web.app:create_app", host=host, port=port, reload=True, factory=True)
     else:
-        uvicorn.run(create_app(db, serve_dir, languages=languages), host=host, port=port)
+        uvicorn.run(create_app(db, serve_dir, languages=languages, preset=profile.web.preset),
+                    host=host, port=port)
 
 
 @app.command()

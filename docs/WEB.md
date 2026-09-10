@@ -19,6 +19,25 @@ basic auth when sharing it.
 Stack tags (`facets.STACKS`): `web c_cpp python go rust java dotnet mobile embedded devops data game qa php ruby`.
 `web_dev` is true when `web` is among the tags.
 
+## Who the page is for: `web.preset`
+
+The profile's `web.preset` (`config/profile.yaml`, default `student`) decides how the page asks
+about the viewer. `serve` passes it to `create_app(..., languages=profile.languages.ok,
+preset=profile.web.preset)` and `/api/meta` reports the result in `ui`:
+
+| preset | `languages_offered` | `ui.default_languages` | `ui.web_dev_toggle` |
+|---|---|---|---|
+| `student` (default) | posting languages + required languages seen in the report, plus `en`, plus `languages.ok` | `["en"]` | `true` |
+| `tailored` | `languages.ok` only | the same list (all ticked) | `false` |
+
+`student` is the list shared with fellow students: each viewer ticks the languages they speak
+(remembered in their own browser as `jobscraper.langs`) and answers the "I have done Full Stack
+Open" question. `tailored` is a one-person search — the languages are known, so they are the only
+boxes and they start ticked, and the Full Stack Open box is hidden entirely: the page never sends
+`web_dev`, and "Reset" leaves both alone. A viewer's stored language choice still wins over
+`ui.default_languages` under either preset. With `serve --reload` the app is rebuilt from the
+argument-less factory, so the page falls back to the observed languages and the student preset.
+
 ## API
 
 All list endpoints return JSON. Query parameters that take lists accept comma-separated values
@@ -26,7 +45,7 @@ or repeated parameters.
 
 | method + path | purpose |
 |---|---|
-| `GET /api/meta` | latest report meta, facet values with counts (posting languages, required languages, stacks, countries, remote kinds, sources, sections), known users, decision statuses, and `languages_offered`: the codes the page turns into "languages you speak" boxes — those seen in the data, plus `en`, plus the ones the served profile speaks (`serve` passes `profile.languages.ok`, so a Portuguese profile always offers `pt`) |
+| `GET /api/meta` | latest report meta, facet values with counts (posting languages, required languages, stacks, countries, remote kinds, sources, sections), known users, decision statuses, `languages_offered` (the codes the page turns into "languages you speak" boxes) and `ui` (how the page presents its profile-fact controls — see below) |
 | `GET /api/jobs` | list `JobView`s (see below) from a report, filtered and sorted by score desc. Params: `report_id` (default latest; if the DB has no report yet the view is built on the fly from the current state), `section`, `langs` (languages the viewer speaks; a job passes when its posting language is unknown or spoken, and every required language is spoken), `stack` (any-of), `web_dev` (`true`/`false`; the UI sends `false` only, when the viewer says they have not done Full Stack Open, and omits it otherwise), `country`, `remote`, `source`, `min_score`, `q` (title/company substring), `user` (whose decisions to attach), `decision` (any-of, comma-separated or repeated: `none` and/or statuses — a job passes when its status, or `none` when this user never decided on it, is in the set; requires `user`; the page sends everything except `skipped` and `rejected` by default), `limit` (default 200), `offset`. Response `{ "total": n, "items": [...] }` |
 | `GET /api/jobs/{id}` | one `JobView` including `description`; `?user=` attaches that user's decision |
 | `PUT /api/jobs/{id}/decision` | body `{ "user": "...", "status": "applied", "note": "..." }` → stored `Decision` |

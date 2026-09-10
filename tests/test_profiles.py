@@ -7,6 +7,7 @@ own ``config/``, ``data/`` and ``results/`` are never touched.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from jobscraper import cli as cli_mod
@@ -184,3 +185,54 @@ def test_publish_and_serve_use_the_profiles_serve_directory(dirs, monkeypatch):
     assert served.exit_code == 0, served.output
     assert calls["app"].state.serve_dir == dirs / "data" / "profiles" / "ana" / "serve"
     assert calls["app"].state.languages == ["en", "fi", "de"]  # LanguagePolicy defaults
+    assert calls["app"].state.preset == "student"  # WebPolicy default
+
+
+# ----------------------------------------------------------------------- web preset
+
+
+def test_web_preset_defaults_to_student(dirs):
+    """A profile that says nothing about the web UI gets the page shared with students."""
+    assert config.load_settings(dirs / "config").profile.web.preset == "student"
+
+
+def test_web_preset_parses_tailored(dirs):
+    (dirs / "config" / "profile.yaml").write_text(
+        DEFAULT_PROFILE_YAML + "web:\n  preset: tailored\n", encoding="utf-8"
+    )
+    assert config.load_settings(dirs / "config").profile.web.preset == "tailored"
+
+
+def test_web_preset_rejects_an_unknown_value(dirs):
+    (dirs / "config" / "profile.yaml").write_text(
+        DEFAULT_PROFILE_YAML + "web:\n  preset: whatever\n", encoding="utf-8"
+    )
+    with pytest.raises(ValidationError):
+        config.load_settings(dirs / "config")
+
+
+def test_profile_init_round_trips_the_web_preset(dirs):
+    """``profile-init`` copies the file verbatim, so the new key survives the copy."""
+    (dirs / "config" / "profile.yaml").write_text(
+        DEFAULT_PROFILE_YAML + "web:\n  preset: tailored\n", encoding="utf-8"
+    )
+    result = runner.invoke(cli_mod.app, ["profile-init", "ana"])
+    assert result.exit_code == 0, result.output
+    config.use_profile("ana")
+    assert config.load_settings().profile.web.preset == "tailored"
+
+
+def test_serve_passes_the_tailored_preset_to_the_app(dirs, monkeypatch):
+    d = dirs / "config" / "profiles" / "ana"
+    d.mkdir(parents=True)
+    (d / "profile.yaml").write_text(
+        "name: ana\nsummary: A senior developer.\n"
+        "languages:\n  ok: [pt, en]\nweb:\n  preset: tailored\n", encoding="utf-8"
+    )
+    (d / "sources.yaml").write_text(DEFAULT_SOURCES_YAML, encoding="utf-8")
+    calls: dict = {}
+    monkeypatch.setattr("uvicorn.run", lambda app, **kw: calls.update(app=app, kwargs=kw))
+    served = runner.invoke(cli_mod.app, ["--profile", "ana", "serve"])
+    assert served.exit_code == 0, served.output
+    assert calls["app"].state.preset == "tailored"
+    assert calls["app"].state.languages == ["pt", "en"]
