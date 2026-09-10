@@ -24,3 +24,6 @@ data/profiles/
 # Other candidates' profiles carry their personal data; only the layout note is tracked.
 config/profiles/*
 !config/profiles/README.md
+
+# persistent headless-browser profile (Cloudflare clearance cookie)
+data/browser/

@@ -33,7 +33,7 @@ the first real run; expect a few to need small parser fixes.
 | tyomarkkinatori | FI | internal JSON search + detail | medium | detail endpoint 403s after a few hundred calls; capped |
 | thehub | Nordics | JSON `/api/v2/jobs` | high | startup jobs, some junior |
 | teamtailor | FI/EE/Nordics | `<tenant>.teamtailor.com/jobs.json` / RSS | high | tenant list in sources.yaml; add companies you like |
-| ats_boards | any | ats-scrapers (Greenhouse/Lever/Ashby/Workable/…) | high | careers URLs in sources.yaml; custom-domain enterprise sites (Phenom/Workday/Oracle) as explicit `ats:` + `slug:` entries; per-board `include`/`exclude` title regexes (source-level `default_include`/`default_exclude`) filter before conversion, and a filtered board with per-posting detail support fetches descriptions lazily for the survivors only 2026-09-10: 13 enterprise boards (Nokia, Siemens, SAP, Bosch, Ericsson, …) added unverified — probe first |
+| ats_boards | any | ats-scrapers (Greenhouse/Lever/Ashby/Workable/…) | high | careers URLs in sources.yaml; custom-domain enterprise sites (Eightfold/Oracle/SuccessFactors) as explicit `ats:` + `slug:` entries; per-board `include`/`exclude` title regexes (source-level `default_include`/`default_exclude`) filter before conversion, and a filtered board with per-posting detail support fetches descriptions lazily for the survivors only. Verified live 2026-09-10: Nokia, SAP, Wärtsilä, Volvo, Bosch, Ubisoft, Spotify, Adyen, N26, Celonis, Ericsson, Microsoft (counts in `sources.yaml`); Siemens (Avature, 6/page) and Delivery Hero (Attrax) not scrapeable with this library |
 | cvee | EE | JSON search API | medium | postings mostly EE/EN; language filter handles it |
 | cvkeskus | EE | HTML + JSON-LD | medium | |
 | linkedin | any | python-jobspy guest endpoint | medium | rate-limited; polite delays; no descriptions by default |
@@ -45,10 +45,10 @@ the first real run; expect a few to need small parser fixes.
 | wttj | EU | Algolia | medium-high | public keys rotate; fetched from `/api/env` |
 | landingjobs | PT/EU | JSON | medium | company derived from URL |
 | remotive, jobicy, himalayas, remoteok, weworkremotely | remote | JSON/RSS | high | region text kept for the filter |
-| jobly | FI | HTML via headless browser, JSON-LD detail | low | Cloudflare; `enabled: false` until `probe jobly` confirms it — written without access to the site |
+| jobly | FI | HTML via headless browser, JSON-LD detail | medium | Cloudflare; verified live 2026-09-10 through the headless browser (~10 s for 5 postings) |
 | bayt | AE | HTML | low | cookie handshake; may need a headless browser |
 | eures | EU | JSON | off | huge; enable with a narrow query if wanted |
-| microsoft | global (filtered by country) | JSON search API + detail | medium | undocumented careers endpoint; `lc` repeated per country, `exp`/`p` filters |
+| ~~microsoft~~ | | | | removed 2026-09-10: careers moved to Eightfold (`apply.careers.microsoft.com`); now an `ats_boards` entry |
 | Skipped | | | | finn.no (Norwegian, client-rendered), Indeed direct, relocate.me, meetfrank |
 
 ## Pipeline details
@@ -78,28 +78,31 @@ the first real run; expect a few to need small parser fixes.
 ## TODO on the owner's machine (added 2026-09-10, nothing here can run in the sandbox)
 Launch from the desktop; tick items off here (or delete the section) as they are done.
 
-- [ ] **Install the browser once**: `uv sync --extra dev && uv run playwright install chromium`.
-- [ ] **Probe the new sources**: `uv run jobscraper probe ats_boards microsoft jobly -v`.
-  - `ats_boards`: 13 enterprise boards were added unverified (Nokia, Siemens, SAP, Wärtsilä,
-    Volvo, Bosch, Ubisoft, Spotify, Adyen, N26, Celonis, Delivery Hero, Ericsson — see the
-    comments in `config/sources.yaml`). Keep the ones that answer, fix or delete the rest.
-    A failing board is only logged; the source aborts only when *all* boards fail.
-  - `microsoft`: the search/detail endpoint is undocumented; the adapter docstring lists the
-    assumptions (param names, `totalJobs` pagination, `workSiteFlexibility` wording,
-    teaser-vs-full description). If descriptions come back full, set `fetch_details: false`.
-  - `jobly`: disabled; written blind. Expect selector fixes. Enable it in `sources.yaml` once
-    the probe shows real postings.
+- [x] **Install the browser once** — done 2026-09-09; `tests/test_browser.py` + `tests/test_web_browser.py`
+  run for real (47 passed 2026-09-10).
+- [x] **Probe the new sources** — done 2026-09-10. `ats_boards`: 10 of the 13 enterprise boards
+  answer (counts in `config/sources.yaml`); Siemens (Avature, 6 per page) and Delivery Hero
+  (Attrax) dropped, Ericsson fixed to its Eightfold site. `microsoft`: the old endpoint is gone
+  (careers moved to Eightfold), adapter removed, replaced by an `ats_boards` entry. `jobly`:
+  works as written, enabled.
 - [ ] **One real batch run**: `uv run jobscraper prefilter --batch` on a small DB (or
   `--max-jobs 20`) to confirm the Message Batches wire format is accepted; then decide whether
-  to set `ai.prefilter_batch: true` in `config/profile.yaml`.
-- [ ] **Check the diff output**: run the pipeline twice (`uv run jobscraper run`, then again
-  next day) and read `results/diff-<date>.md` and the "New since report #N" section at the top
-  of the report.
-- [ ] **Schedule it**: either the crontab line in `scripts/scheduled_run.sh` (with `MAILTO=`) or
-  register a self-hosted runner and set the repository variable `SCHEDULED_RUNS=true` for
-  `.github/workflows/scheduled-run.yml`. See docs/SCHEDULING.md.
-- [ ] **Browser smoke tests**: `uv run pytest tests/test_browser.py tests/test_web_browser.py -q`
-  should no longer skip after the Chromium install.
+  to set `ai.prefilter_batch: true` in `config/profile.yaml`. Needs `ANTHROPIC_API_KEY` in the
+  environment or `.env` — not set on this machine as of 2026-09-10 (the AI stages have run
+  through subagents via `scripts/ai_batches.py` so far).
+- [x] **Check the diff output** — verified 2026-09-10: `jobscraper diff` between reports #1 and
+  #2 listed 4 new / 4 dropped ranked jobs, and `jobscraper report` (#3) wrote
+  `results/diff-2026-09-10.md` plus the "New since report #2" section.
+- [ ] **Schedule it**: `scripts/scheduled_run.sh` is a cron/bash script; on this Windows machine
+  it needs Task Scheduler running it through Git Bash, or the self-hosted-runner route with
+  the repository variable `SCHEDULED_RUNS=true` for `.github/workflows/scheduled-run.yml`.
+  See docs/SCHEDULING.md. Also decide which profiles the schedule covers (`--profile felipe`
+  runs are separate).
+- [x] **Browser smoke tests** — see the first item.
+- [ ] **Location-aware board filtering**: Microsoft/Ericsson list every job worldwide and the
+  title filter still leaves ~350/~200 postings whose descriptions are fetched lazily even
+  though most are in the US/India and the rule filter drops them afterwards. A per-board
+  `countries:` filter applied before the detail fetch would cut that.
 
 ## Improving match quality (agreed levers, not yet built)
 The CV is a thin signal. Three additions, in order of expected payoff:

@@ -33,11 +33,11 @@ sources:
   cvkeskus:
     enabled: true
   jobly:
-    # Disabled until it is checked live: verify with `jobscraper probe jobly` first; needs Chromium
-    # (`uv run playwright install chromium`). The site is behind Cloudflare, so every page goes
-    # through the headless browser (`mode: browser`); `auto` tries plain HTTP first, `http` never
-    # starts a browser. The adapter was written without access to the site — expect selector fixes.
-    enabled: false
+    # Verified live 2026-09-10 (5/5 postings parsed with title, company, city, date, description).
+    # Needs Chromium (`uv run playwright install chromium`). The site is behind Cloudflare, so every
+    # page goes through the headless browser (`mode: browser`); `auto` tries plain HTTP first,
+    # `http` never starts a browser.
+    enabled: true
     queries: ["software developer", "ohjelmistokehittäjä", "junior developer"]
     max_pages: 3
     max_details: 100
@@ -81,18 +81,19 @@ sources:
       - https://boards.greenhouse.io/wise
       - https://jobs.ashbyhq.com/supercell
       - https://jobs.lever.co/pipedrive
-      # ---- Enterprise boards, added 2026-09-10 from the sandbox: NONE VERIFIED YET. Run
-      # `jobscraper probe ats_boards -v`, keep the boards that answer, fix or delete the rest
-      # (a failing board is logged and skipped; only "all boards failed" aborts the source).
-      # Each line says which ATS the company is believed to use. The default title filter above
-      # applies to all of them, which is what keeps a 5 000-posting site affordable.
-      - ats: oracle                                   # Nokia: Oracle Recruiting Cloud (thousands of postings)
+      # ---- Enterprise boards. Probed live 2026-09-10 (listed / after the default title filter):
+      # Nokia 606/223, SAP 1011/260, Wärtsilä 139/41, Volvo 597/63, Bosch 4837/1359 (hence its own
+      # include), Ubisoft 286/30, Spotify 78/4, Adyen 228/27, N26 66/19, Celonis 275/58,
+      # Ericsson 529/194, Microsoft 2247/344.
+      # Dropped: Delivery Hero (careers.deliveryhero.com runs on Attrax, which ats-scrapers has no
+      # scraper for). Eightfold/Oracle/SmartRecruiters/Avature boards fetch descriptions lazily,
+      # i.e. only for the title survivors, so the title filter is what bounds the scrape time.
+      - ats: oracle                                   # Nokia: Oracle Recruiting Cloud
         slug: https://fa-evmr-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1
         company: Nokia
-      - ats: eightfold                                # Siemens: Eightfold on a custom domain
-        slug: siemens
-        company: Siemens
-        options: {base_url: https://jobs.siemens.com, domain: siemens.com}
+      # Siemens (jobs.siemens.com, Avature): NOT usable. The tenant serves 6 postings per page whatever
+      # jobRecordsPerPage asks for, and ats-scrapers stops paging at the first short page, so
+      # `{ats: avature, slug: https://jobs.siemens.com/en_US/externaljobs}` returns 6 of 999+ jobs.
       - ats: successfactors                           # SAP: SuccessFactors recruiting-marketing site
         slug: https://jobs.sap.com
         company: SAP
@@ -102,14 +103,21 @@ sources:
       - ats: successfactors                           # Volvo Group (Gothenburg): SuccessFactors
         slug: https://jobs.volvogroup.com
         company: Volvo Group
-      - https://jobs.smartrecruiters.com/BoschGroup   # Bosch: SmartRecruiters (very large)
+      - url: https://jobs.smartrecruiters.com/BoschGroup   # Bosch: SmartRecruiters, ~5 000 postings, most of them
+        include: 'software|developer|entwickler|firmware|embedded|programm|intern|trainee|graduate|working student|werkstudent'
       - https://jobs.smartrecruiters.com/Ubisoft2     # Ubisoft incl. RedLynx Helsinki: SmartRecruiters
       - https://jobs.lever.co/spotify                 # Spotify (Stockholm): Lever
       - https://boards.greenhouse.io/adyen            # Adyen (Amsterdam): Greenhouse
       - https://boards.greenhouse.io/n26              # N26 (Berlin): Greenhouse
       - https://boards.greenhouse.io/celonis          # Celonis (Munich): Greenhouse
-      - https://boards.greenhouse.io/deliveryhero     # Delivery Hero (Berlin): Greenhouse
-      - https://ericsson.wd3.myworkdayjobs.com/Ericsson_Careers   # Ericsson: Workday (site name is a guess)
+      - ats: eightfold                                # Ericsson: Eightfold on a custom domain
+        slug: ericsson
+        company: Ericsson
+        options: {base_url: https://jobs.ericsson.com, domain: ericsson.com}
+      - ats: eightfold                                # Microsoft: Eightfold since 2026 (replaces the old `microsoft` adapter)
+        slug: microsoft
+        company: Microsoft
+        options: {base_url: https://apply.careers.microsoft.com, domain: microsoft.com}
       # Big-tech sites with their own scrapers in ats-scrapers (`ats: amazon|google|apple|meta|uber|tesla`,
       # slug is ignored). They list 10 000+ jobs worldwide and most do not support per-posting
       # description fetches, so a probe first; enable one at a time:
@@ -182,14 +190,3 @@ sources:
     max_pages: 3
 
   # ---------------------------------------------------------------- Company career sites
-  microsoft:
-    # jobs.careers.microsoft.com; verify with `jobscraper probe microsoft` — the endpoint is undocumented.
-    enabled: true
-    queries: ["software engineer", "software developer"]
-    # Each location is sent as a repeated `lc` param in one request per query.
-    locations: ["Finland", "Estonia", "Sweden", "Denmark", "Norway", "Germany", "Netherlands", "Ireland", "Czech Republic", "Poland", "Spain", "Portugal", "United Arab Emirates"]
-    experience: ["Students and graduates"]   # [] = no experience filter
-    profession: "Software Engineering"       # null = every profession
-    max_pages: 10                            # 20 jobs per page
-    fetch_details: true                      # search gives a teaser only; detail has the full text
-    max_details: 150
