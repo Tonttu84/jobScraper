@@ -39,6 +39,18 @@ Disable anything broken in `config/sources.yaml` (`enabled: false`) or fix the a
 `src/jobscraper/sources/<name>.py`. Cached responses live in `data/cache/` and are handy as new
 test fixtures.
 
+`ats_boards` is 80-odd company career boards behind one source, so `probe ats_boards` stops at
+the first five jobs and tells you nothing about the rest. Probe them one at a time instead:
+
+```bash
+uv run python scripts/probe_boards.py                    # every board: listed / kept / seconds / a sample
+uv run python scripts/probe_boards.py greenhouse workday # only boards whose label matches
+```
+
+Which companies are worth adding, and how that list was built, is in
+[`docs/boards-ranked-2026-09-10.md`](docs/boards-ranked-2026-09-10.md); the ranking script is
+`scripts/rank_boards_from_jobhive.py`.
+
 ### Cloudflare sites (headless browser)
 
 Some boards (jobly.fi, sometimes duunitori.fi) answer a plain HTTP client with Cloudflare's

@@ -102,7 +102,18 @@ Launch from the desktop; tick items off here (or delete the section) as they are
 - [ ] **Location-aware board filtering**: Microsoft/Ericsson list every job worldwide and the
   title filter still leaves ~350/~200 postings whose descriptions are fetched lazily even
   though most are in the US/India and the rule filter drops them afterwards. A per-board
-  `countries:` filter applied before the detail fetch would cut that.
+  `countries:` filter applied before the detail fetch would cut that. This got a lot more
+  valuable on 2026-09-10: `ats_boards` now has 81 boards, and the probe samples of the big
+  ones came back from Kuala Lumpur, Bengaluru, Portage MI and Petaling Jaya.
+- [ ] **Time one full `ats_boards` run** and decide whether it still fits the schedule. Probing
+  the 63 new boards one at a time took ~4 minutes of listing in total, but JPMorgan alone is
+  78 s / 7 379 postings and Hitachi 20 s / 4 246, and the descriptions of the title survivors
+  are fetched on top of that in a real run. If it is too slow, split the source in two
+  (`ats_boards` + `ats_boards_enterprise`) or add the `countries:` filter above first.
+- [ ] **Decide on the big-tech boards** (`ats: google|amazon|tesla|tiktok|apple`). The dataset
+  ranks Google at 204 tech postings in our countries, TikTok 110, Amazon 64, Tesla 53 — worth
+  having, but they list 10 000+ jobs each and mostly cannot fetch a description per posting, so
+  enable one at a time and watch the first run. They are commented out in `config/sources.yaml`.
 
 ## Improving match quality (agreed levers, not yet built)
 The CV is a thin signal. Three additions, in order of expected payoff:

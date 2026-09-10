@@ -123,6 +123,252 @@ sources:
       # description fetches, so a probe first; enable one at a time:
       #   - {ats: google, slug: google, company: Google}
       #   - {ats: apple, slug: apple, company: Apple}
+      # The dataset ranks Google 204 / TikTok 110 / Amazon 64 / Tesla 53 tech postings in our
+      # countries, so they are worth the probe — but not before someone has watched one run.
+      #
+      # ========================================================================================
+      # Boards picked from the ats-scrapers `jobhive` dataset (2026-09-09) and verified live
+      # 2026-09-10 with `python scripts/probe_boards.py`. Full ranking, method and the ~1 300
+      # boards that did not make the cut: docs/boards-ranked-2026-09-10.md.
+      #
+      # The per-board comment is `<tech postings in our target countries> tech / <of those,
+      # non-senior> jr / <postings on the whole board worldwide>` from that dataset. Every board
+      # over ~500 postings worldwide carries `include: *software_titles` so the listing is
+      # narrowed before any description is fetched — without it a single one of these can take
+      # longer than the whole rest of the run.
+      #
+      # Probe result 2026-09-10: all 63 answered with real postings, none rejected. Slowest are
+      # JPMorgan (7 379 listed, 78 s) and Hitachi (4 246, 20 s); everything else is under 15 s.
+      # Three Cornerstone tenants needed `options: {site_id: N}` — their `careersite/1` (what
+      # the dataset's companies.csv advertises) lists 0 jobs, the live site is another number.
+      # Fields the ATS simply does not give us, seen while probing: SuccessFactors and Workday
+      # return no `posted_at` at all, and a lot of Workday/Oracle rows have no country (the
+      # location string is "2 Locations" or a bare city), so the rule filter has to fall back on
+      # `guess_country`. `company` is the raw tenant slug on URL-resolved boards, hence the
+      # `company:` overrides below.
+      # ========================================================================================
+
+      # ---- Germany / Austria / Switzerland
+      - url: https://careers.smartrecruiters.com/DreesSommerSE   # Drees & Sommer  157 tech / 77 jr / 1501
+        company: Drees & Sommer
+        include: &software_titles 'software|developer|entwickler|firmware|embedded|programm|backend|frontend|full.?stack|devops|data engineer|cloud engineer|intern|trainee|graduate|working student|werkstudent'
+      - ats: phenom                                    # Allianz  154 / 122 / 1630
+        slug: https://careers.allianz.com
+        company: Allianz
+        include: *software_titles
+      - ats: successfactors                            # Liebherr  142 / 118 / 1161
+        slug: https://careers.liebherr.com
+        company: Liebherr
+        include: *software_titles
+      - ats: successfactors                            # Deloitte Germany  138 / 85 / 596
+        slug: https://jobs.deloitte.de
+        company: Deloitte Germany
+        include: *software_titles
+      - ats: workday                                   # ABB  111 / 92 / 2073
+        slug: https://abb.wd3.myworkdayjobs.com/External_Career_Page
+        company: ABB
+        include: *software_titles
+      - url: https://careers.smartrecruiters.com/aboutyougmbh         # ABOUT YOU  103 / 27 / 207
+        company: ABOUT YOU
+      - ats: cornerstone                               # OHB (space systems, Bremen)  93 / 73 / 229
+        slug: career-ohb
+        company: OHB
+        options: {site_id: 4}          # careersite/1 exists but lists 0 jobs; 4 is the live one
+      - ats: phenom                                    # DHL  89 / 62 / 8890
+        slug: https://careers.dhl.com
+        company: DHL
+        include: *software_titles
+      - ats: successfactors                            # Deutsche Börse  85 / 64 / 225
+        slug: https://career.deutsche-boerse.com
+        company: Deutsche Börse
+      - url: https://careers.smartrecruiters.com/sixt            # SIXT  78 / 65 / 506
+        company: SIXT
+        include: *software_titles
+      - ats: successfactors                            # Vodafone  74 / 47 / 1215
+        slug: https://opportunities.vodafone.com
+        company: Vodafone
+        include: *software_titles
+      - url: https://careers.smartrecruiters.com/renesaselectronics   # Renesas  72 / 24 / 890
+        company: Renesas Electronics
+        include: *software_titles
+      - ats: workday                                   # KION Group  70 / 62 / 969
+        slug: https://kiongroup.wd3.myworkdayjobs.com/kiongroup
+        company: KION Group
+        include: *software_titles
+      - ats: workday                                   # Stryker  69 / 45 / 1420
+        slug: https://stryker.wd1.myworkdayjobs.com/strykercareers
+        company: Stryker
+        include: *software_titles
+      - ats: cornerstone                               # Henkel  68 / 59 / 1005
+        slug: https://henkel.csod.com/ux/ats/careersite/1/home?c=henkel
+        company: Henkel
+        include: *software_titles
+      - url: https://careers.smartrecruiters.com/redcare-pharmacy     # Redcare Pharmacy  68 / 21 / 236
+        company: Redcare Pharmacy
+      - ats: workday                                   # Johnson Controls  68 / 52 / 2631
+        slug: https://jci.wd5.myworkdayjobs.com/jci
+        company: Johnson Controls
+        include: *software_titles
+
+      # ---- Netherlands / Belgium
+      - url: https://careers.smartrecruiters.com/deloittenetherlands  # Deloitte NL  130 / 81 / 675
+        company: Deloitte Netherlands
+        include: *software_titles
+      - ats: successfactors                            # Werken voor Nederland (Dutch government)  121 / 92 / 4974
+        slug: https://jobs.werkenvoornederland.nl
+        company: Werken voor Nederland
+        include: *software_titles
+      - url: https://job-boards.greenhouse.io/teampicnic              # Picnic  78 / 60 / 307
+        company: Picnic
+      - url: https://job-boards.greenhouse.io/nebius                  # Nebius  74 / 23 / 377
+        company: Nebius
+      - ats: phenom                                    # Philips  65 / 56 / 831
+        slug: https://www.careers.philips.com
+        company: Philips
+        include: *software_titles
+      - url: https://job-boards.greenhouse.io/databricks         # Databricks  48 / 12 / 868
+        company: Databricks
+        include: *software_titles
+      - ats: cornerstone                               # imec (Leuven)  52 / 41 / 161
+        slug: imec
+        company: imec
+        options: {site_id: 29}
+
+      # ---- Ireland
+      - ats: oracle                                    # JPMorgan Chase  127 / 81 / 7378
+        slug: https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001
+        company: JPMorgan Chase
+        include: *software_titles
+      - ats: workday                                   # Cisco  91 / 67 / 1305
+        slug: https://cisco.wd5.myworkdayjobs.com/cisco_careers
+        company: Cisco
+        include: *software_titles
+      - ats: workday                                   # Salesforce  89 / 60 / 1449
+        slug: https://salesforce.wd12.myworkdayjobs.com/external_career_site
+        company: Salesforce
+        include: *software_titles
+      - ats: workday                                   # Abbott  81 / 62 / 2686
+        slug: https://abbott.wd5.myworkdayjobs.com/abbottcareers
+        company: Abbott
+        include: *software_titles
+      - ats: workday                                   # Analog Devices (Limerick)  72 / 27 / 833
+        slug: https://analogdevices.wd1.myworkdayjobs.com/external
+        company: Analog Devices
+        include: *software_titles
+      - ats: workday                                   # Mastercard  55 / 2 / 1058
+        slug: https://mastercard.wd1.myworkdayjobs.com/corporatecareers
+        company: Mastercard
+        include: *software_titles
+
+      # ---- Spain / Portugal
+      - url: https://careers.smartrecruiters.com/devoteam         # Devoteam  385 / 280 / 944
+        company: Devoteam
+        include: *software_titles
+      - url: https://careers.smartrecruiters.com/inetum2          # Inetum  308 / 225 / 1530
+        company: Inetum
+        include: *software_titles
+      - ats: cornerstone                               # GMV (space/defence software, Madrid)  140 / 121 / 216
+        slug: gmv
+        company: GMV
+        options: {site_id: 4}
+      - ats: phenom                                    # Roche  139 / 85 / 1203
+        slug: https://careers.roche.com
+        company: Roche
+        include: *software_titles
+      - url: https://careers.smartrecruiters.com/AlterSolutions       # act digital / Alter Solutions  110 / 77 / 261
+        company: act digital
+      - url: https://careers.smartrecruiters.com/T-SystemsIberia      # T-Systems Iberia  72 / 39 / 118
+        company: T-Systems Iberia
+      - ats: phenom                                    # TD SYNNEX  71 / 56 / 752
+        slug: https://careers.tdsynnex.com
+        company: TD SYNNEX
+        include: *software_titles
+      - url: https://job-boards.greenhouse.io/elastic                 # Elastic  71 / 10 / 353
+        company: Elastic
+      - url: https://job-boards.greenhouse.io/indiecampers       # Indie Campers (Lisbon)  57 / 57 / 697
+        company: Indie Campers
+        include: *software_titles
+      - url: https://knowmadmood.teamtailor.com                       # knowmad mood  57 / 43 / 100
+        company: knowmad mood
+      - ats: phenom                                    # BCG  70 / 61 / 909
+        slug: https://careers.bcg.com
+        company: BCG
+        include: *software_titles
+
+      # ---- Poland / Czechia
+      - ats: workday                                   # Hitachi  290 / 221 / 4215
+        slug: https://hitachi.wd1.myworkdayjobs.com/hitachi
+        company: Hitachi
+        include: *software_titles
+      - url: https://job-boards.greenhouse.io/sentinellabs            # SentinelOne (Prague)  63 / 3 / 217
+        company: SentinelOne
+      - ats: phenom                                    # State Street  59 / 37 / 1166
+        slug: https://careers.statestreet.com
+        company: State Street
+        include: *software_titles
+      - ats: oracle                                    # ArcelorMittal  37 / 31 / 791
+        slug: https://emfg.fa.em4.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1
+        company: ArcelorMittal
+        include: *software_titles
+
+      # ---- Nordics / Finland / Estonia (tier-1 countries: kept even at low counts)
+      - url: https://careers.smartrecruiters.com/ramboll3        # Ramboll  115 / 41 / 1160 (DK 99, NO 98, FI/EE 58)
+        company: Ramboll
+        include: *software_titles
+      - url: https://careers.smartrecruiters.com/afry            # AFRY  47 / 22 / 934 (SE 296, FI/EE 32)
+        company: AFRY
+        include: *software_titles
+      - url: https://careers.smartrecruiters.com/deloittenordic       # Deloitte Nordic  40 / 36 / 156 (FI/EE 33)
+        company: Deloitte Nordic
+      - url: https://apply.workable.com/winthrop-technologies         # Winthrop Technologies  37 / 34 / 224 (FI/EE 75)
+        company: Winthrop Technologies
+      - url: https://careers.smartrecruiters.com/Vattenfall           # Vattenfall  34 / 27 / 316 (SE 213)
+        company: Vattenfall
+      - url: https://nexergroup.teamtailor.com                        # Nexer Group  29 / 22 / 100 (SE 98)
+        company: Nexer Group
+      - url: https://job-boards.greenhouse.io/smartlyio               # Smartly (Helsinki)  18 / 1 / 70
+        company: Smartly
+      # Aiven's Greenhouse slug is `aiven36` — the one the 2026-09-07 note above says could not
+      # be worked out from aiven.io/careers. The dataset had it all along.
+      - url: https://job-boards.greenhouse.io/aiven36                 # Aiven (Helsinki)  17 / 5 / 38
+        company: Aiven
+      - ats: successfactors                            # OP-Palvelut (OP Financial Group, Helsinki)  16 / 12 / 49
+        slug: https://op-careers.fi
+        company: OP-Palvelut
+
+      # ---- France / Luxembourg (mostly French-language postings; the language filter drops
+      #      those, but these tenants also carry the DE/NL/ES/PT/Nordic offices)
+      - url: https://careers.smartrecruiters.com/SopraSteria1    # Sopra Steria  521 / 356 / 1953
+        company: Sopra Steria
+        include: *software_titles
+      - ats: phenom                                    # Thales  371 / 243 / 2608
+        slug: https://careers.thalesgroup.com
+        company: Thales
+        include: *software_titles
+      - ats: successfactors                            # Alstom  214 / 167 / 2282
+        slug: https://jobsearch.alstom.com
+        company: Alstom
+        include: *software_titles
+      - ats: successfactors                            # Atos  198 / 130 / 952
+        slug: https://jobs.atos.net
+        company: Atos
+        include: *software_titles
+      - url: https://careers.smartrecruiters.com/aecom2          # AECOM  136 / 58 / 5209
+        company: AECOM
+        include: *software_titles
+      - url: https://careers.smartrecruiters.com/alten           # ALTEN  131 / 107 / 1133
+        company: ALTEN
+        include: *software_titles
+      - ats: successfactors                            # Atlas Copco  112 / 101 / 1284
+        slug: https://career5.successfactors.eu/career?company=atlascopcoP
+        company: Atlas Copco
+        include: *software_titles
+      - url: https://careers.smartrecruiters.com/sia             # Sia Partners  96 / 65 / 592
+        company: Sia Partners
+        include: *software_titles
+      - url: https://job-boards.greenhouse.io/datadog            # Datadog  51 / 13 / 449
+        company: Datadog
+        include: *software_titles
   linkedin:
     enabled: true
     queries: ["junior software developer", "junior developer", "software developer intern", "graduate software engineer", "trainee developer"]
