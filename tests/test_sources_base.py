@@ -7,6 +7,7 @@ import pytest
 
 from jobscraper.http import SourceHTTPError
 from jobscraper.sources._common import is_cloudflare_challenge
+from jobscraper.sources.base import get_source
 
 URL = "https://www.jobly.fi/tyopaikka/1"
 PAGE = "<html><body><h1>Developer</h1></body></html>"
@@ -138,3 +139,26 @@ def test_browser_mode_without_a_factory_says_so(make_ctx):
     with pytest.raises(SourceHTTPError) as excinfo:
         ctx.page(URL, mode="browser")
     assert HINT in str(excinfo.value)
+
+
+def test_a_source_module_that_fails_to_import_is_logged_not_fatal(monkeypatch, caplog):
+    """One adapter with a bad import must not take the whole registry down with it."""
+    import importlib
+
+    from jobscraper import sources
+
+    monkeypatch.setattr(sources, "_loaded", False)
+
+    def boom(name: str):
+        raise ImportError(f"no module named {name}")
+
+    monkeypatch.setattr(importlib, "import_module", boom)
+    with caplog.at_level("WARNING"):
+        sources._load_all()
+    assert "failed to import" in caplog.text
+
+
+def test_get_source_names_the_sources_it_knows():
+    with pytest.raises(KeyError, match="unknown source"):
+        get_source("not-a-source")
+    assert get_source("arbeitnow").name == "arbeitnow"

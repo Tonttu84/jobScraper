@@ -137,3 +137,35 @@ def test_limit_stops_early(monkeypatch, make_ctx):
 def test_missing_options_raise(make_ctx):
     with pytest.raises(ValueError, match="countries"):
         list(Indeed().fetch(make_ctx({}, options={"queries": ["a"]})))
+
+
+def test_country_iso_of_nothing_is_nothing():
+    assert country_iso(None) is None
+    assert country_iso("") is None
+
+
+def test_cell_reads_the_shapes_a_dataframe_row_can_hold():
+    """pandas hands out NaN/NaT for "missing", and ``pd.isna`` raises on some containers."""
+    row = {
+        "emails": [],
+        "job_type": ["fulltime"],
+        "location": np.nan,
+        "date_posted": pd.NaT,
+        "company": "  Acme Oy  ",
+        "min_amount": 3000.0,
+    }
+    assert mod.cell(row, "emails") is None  # an empty list is "missing" too
+    assert mod.cell(row, "job_type") == ["fulltime"]
+    assert mod.cell(row, "location") is None
+    assert mod.cell(row, "date_posted") is None
+    assert mod.cell(row, "company") == "Acme Oy"
+    assert mod.cell(row, "min_amount") == 3000.0
+    assert mod.cell(row, "missing_key") is None
+    # an array-like that pd.isna answers element-wise: kept as it is, not treated as missing
+    assert mod.cell({"x": np.array([1, 2])}, "x").tolist() == [1, 2]
+
+
+def test_salary_text_without_a_currency_or_an_interval():
+    assert mod.salary_text({"min_amount": 3000, "max_amount": 4000}) == "3 000–4 000"
+    assert mod.salary_text({"min_amount": 3000, "currency": "EUR"}) == "3 000 EUR"
+    assert mod.salary_text({}) is None

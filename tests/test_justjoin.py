@@ -8,6 +8,7 @@ from jobscraper.filters.language import find_language_requirements
 from jobscraper.http import SourceHTTPError
 from jobscraper.sources.justjoin import (
     JustJoin,
+    _names,
     hydrate,
     languages_line,
     parse_offer,
@@ -189,6 +190,66 @@ def test_justjoin_salary_text_tolerates_junk():
                          "currencySource": "original"}]) == "9,000 PLN"
     # nothing marked original (old payload shape) → fall back to every row
     assert salary_text([{"from": 100, "currency": "usd"}]) == "100 USD"
+    # figures the API wrote as text, and a currency field that is not a string
+    assert salary_text([{"from": "13 440", "to": "25 200", "currency": 7}]) == "13 440 - 25 200"
+
+
+def test_justjoin_skill_lists_come_in_several_shapes():
+    assert _names(["Python", 7, {"label": "unnamed"}, {"value": " SQL "}]) == ["Python", "SQL"]
+    assert _names("Python") == []  # a bare string is not a list of skills
+
+
+def test_justjoin_hydrate_survives_a_detail_that_is_not_an_object():
+    job = parse_offer(_rec("g1", "s1", "Kraków"))
+
+    class _Http:
+        def get_json(self, url, **kwargs):
+            return ["unexpected", "array"]
+
+    hydrate(SimpleNamespace(http=_Http()), job, "s1")
+    assert job.description is None and "detail" not in job.raw
+
+
+def test_justjoin_hydrate_reads_an_experience_level_object():
+    job = parse_offer(_rec("g1", "s1", "Kraków"))
+
+    class _Http:
+        def get_json(self, url, **kwargs):
+            return {"slug": "s1", "body": "<p>Body</p>", "experienceLevel": {"value": "mid"}}
+
+    hydrate(SimpleNamespace(http=_Http()), job, "s1")
+    assert job.seniority_raw == "mid"
+    assert job.description.strip() == "Body"
+
+
+def test_justjoin_without_experience_levels_sends_none(make_ctx):
+    ctx = make_ctx(ROUTES, options={"experience_levels": [], "max_pages": 1, "fetch_details": False})
+    list(JustJoin().fetch(ctx))
+    assert "experienceLevels" not in str(ctx.http.calls[0].url)
+
+
+def test_justjoin_stops_when_the_cursor_stops_advancing(make_ctx):
+    """A page whose ``next.cursor`` does not move is the last page, whatever totalItems says."""
+    ctx = make_ctx(
+        {("GET", "/candidate-api/offers"): _page(0, 999, [_rec("a", "a-slug", "Kraków")])},
+        options={"max_pages": 5, "fetch_details": False},
+    )
+    assert len(list(JustJoin().fetch(ctx))) == 1
+    assert len(ctx.http.calls) == 1
+
+
+def test_justjoin_dedupes_across_pages_and_stops_at_max_pages(make_ctx):
+    """Advancing cursor, repeated records: the page budget ends the loop, the guid dedupes."""
+    calls: list[httpx.Request] = []
+
+    def route(req: httpx.Request) -> httpx.Response:
+        calls.append(req)
+        return httpx.Response(200, json=_page(len(calls), 999, [_rec("a", "a-slug", "Kraków")]))
+
+    ctx = make_ctx({("GET", "/candidate-api/offers"): route},
+                   options={"max_pages": 2, "fetch_details": False})
+    assert [j.source_id for j in JustJoin().fetch(ctx)] == ["a"]
+    assert len(calls) == 2
 
 
 def _lang_rec(languages):

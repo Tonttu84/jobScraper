@@ -130,6 +130,13 @@ def test_profile_init_rejects_an_unsafe_name(dirs):
     assert result.exit_code != 0
 
 
+def test_profile_init_needs_a_default_config_to_copy(dirs):
+    (dirs / "config" / "sources.yaml").unlink()
+    result = runner.invoke(cli_mod.app, ["profile-init", "ana"])
+    assert result.exit_code != 0
+    assert not (dirs / "config" / "profiles" / "ana").exists()  # nothing half-created
+
+
 def test_profiles_lists_names_and_marks_the_active_one(dirs):
     _make_profile(dirs, "ana")
     listed = runner.invoke(cli_mod.app, ["profiles"])

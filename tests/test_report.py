@@ -121,6 +121,66 @@ def test_write_report_creates_missing_directories(tmp_path, state):
     assert "Ranked (Opus)" in path.read_text(encoding="utf-8")
 
 
+def test_write_report_shows_the_work_rights_note_of_a_ranked_job(tmp_path, state):
+    """The note lives on the filter result and only reaches the report through the Opus block."""
+    jobs, filters, prefilter, ranked = state
+    ranked_job = jobs[0]
+    filters[ranked_job.id] = FilterResult(
+        job_id=ranked_job.id, status="keep", location_tier=3,
+        signals={"work_rights_note": "Georgia: visa-free for one year."},
+    )
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text(
+        encoding="utf-8"
+    )
+    assert "**Work rights:** Georgia: visa-free for one year." in text
+
+
+def test_write_report_ignores_verdicts_whose_job_is_gone(tmp_path, state):
+    """A verdict can outlive its job row (a re-scrape that dropped the posting)."""
+    jobs, filters, prefilter, ranked = state
+    ghost = "teamtailor:vanished"
+    ranked[ghost] = make_verdict(ghost, "rank", 99)
+    prefilter[ghost] = make_verdict(ghost, "prefilter", 70)
+    filters[ghost] = FilterResult(job_id=ghost, status="keep")
+    # ... and one that only the rule filter ever saw
+    stale_review = "teamtailor:also-gone"
+    filters[stale_review] = FilterResult(
+        job_id=stale_review, status="review", reasons=["location unknown"]
+    )
+
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text(
+        encoding="utf-8"
+    )
+    assert "vanished" not in text and "also-gone" not in text
+    assert "### 91 · " in text  # the surviving ranked job is still there
+
+    snapshot = build_snapshot(jobs, filters, prefilter, ranked, days=30, prompt_version="v1")
+    assert all(i.job_id not in (ghost, stale_review) for i in snapshot.items)
+
+
+def test_write_report_skips_an_irrelevant_prefilter_survivor(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    pre_job = jobs[1]
+    prefilter[pre_job.id] = make_verdict(pre_job.id, "prefilter", 20, relevant=False)
+
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Prefilter survivors not ranked in detail (Sonnet)" in text
+    assert pre_job.url not in text
+
+
+def test_write_report_omits_an_empty_prefilter_table(tmp_path, state):
+    """Every prefilter survivor was ranked in detail: there is no leftover table to print."""
+    jobs, filters, prefilter, ranked = state
+    ranked_job, pre_job, _review = jobs
+    prefilter.pop(pre_job.id)
+    text = write_report(jobs, filters, {ranked_job.id: prefilter[ranked_job.id]}, ranked,
+                        tmp_path / "r.md").read_text(encoding="utf-8")
+    assert "## Prefilter survivors not ranked in detail (Sonnet)" not in text
+    assert "## Ranked (Opus)" in text
+
+
 def test_write_report_without_any_ai_verdicts(tmp_path, state):
     jobs, filters, _prefilter, _ranked = state
     path = write_report(jobs, filters, {}, {}, tmp_path / "empty.md")
@@ -341,6 +401,14 @@ def test_diff_reports_moved_only_lists_swings_of_ten_or_more():
     assert (moved["big"].old_position, moved["big"].new_position) == (1, 2)
     assert moved["big"].delta == 11
     assert moved["down"].delta == -30
+
+
+def test_a_move_without_both_scores_has_no_delta():
+    """An unscored side (a report written before scores were stored) is not a swing of -70."""
+    from jobscraper.models import ReportMove
+
+    move = ReportMove(job_id="a", old_score=None, new_score=70, old_position=3, new_position=1)
+    assert move.delta == 0
 
 
 def test_diff_reports_new_prefilter_ignores_jobs_that_were_ranked_before():

@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 
-from jobscraper.sources.himalayas import Himalayas
+import httpx
+
+from jobscraper.sources.himalayas import Himalayas, _strings, region_country
 
 CURSOR = "MjAyNi0wOS0wN1QwNzoxNzowMy4yNTMzMjJafDIxNzI4OTk"
 
@@ -67,3 +69,48 @@ def test_himalayas_respects_limit(make_ctx):
     ctx = _one_page(make_ctx, limit=1)
     assert len(list(Himalayas().fetch(ctx))) == 1
     assert len(ctx.http.calls) == 1
+
+
+def test_himalayas_region_country_needs_exactly_one_country():
+    assert region_country(None) is None
+    assert region_country("Anywhere in the World") is None  # a worldwide posting names no country
+    assert region_country("Germany or Austria") is None  # two countries: no single answer
+    assert region_country("Germany") == "DE"
+
+
+def test_himalayas_restriction_lists_come_in_every_shape():
+    assert _strings("Poland") == ["Poland"]  # a bare string where a list is normal
+    assert _strings("   ") == []
+    assert _strings(["Poland", None, {"country": "PL"}, True, -7.5]) == ["Poland", "UTC-7.5"]
+    assert _strings(42) == []  # not a list and not a string
+
+
+def test_himalayas_skips_a_record_that_is_not_an_object(make_ctx):
+    routes = {
+        "cursor=": {"jobs": [], "nextCursor": None},
+        "himalayas.app/jobs/api": {"jobs": ["a bare string", {"title": "Dev", "guid": "g1"}]},
+    }
+    jobs = list(Himalayas().fetch(make_ctx(routes)))
+    assert [j.source_id for j in jobs] == ["g1"]
+
+
+def test_himalayas_stops_when_the_cursor_stops_moving(make_ctx):
+    """A feed that keeps handing back the same cursor must not be paged forever."""
+    page = {"jobs": [{"title": "Dev", "guid": "g1"}], "nextCursor": CURSOR}
+    ctx = make_ctx({"himalayas.app/jobs/api": page}, options={"max_pages": 5})
+    assert len(list(Himalayas().fetch(ctx))) == 2  # page 1, then the repeat, then stop
+    assert len(ctx.http.calls) == 2
+
+
+def test_himalayas_stops_at_max_pages(make_ctx):
+    """Fresh cursors all the way down: only the page budget ends the loop."""
+    cursors = iter(["c1", "c2", "c3", "c4"])
+
+    def page(_req):
+        return httpx.Response(
+            200, json={"jobs": [{"title": "Dev", "guid": next(cursors)}], "nextCursor": next(cursors)}
+        )
+
+    ctx = make_ctx({"himalayas.app/jobs/api": page}, options={"max_pages": 2})
+    assert len(list(Himalayas().fetch(ctx))) == 2
+    assert len(ctx.http.calls) == 2

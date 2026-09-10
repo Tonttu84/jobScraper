@@ -11,14 +11,20 @@ import json
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 
+from jobscraper.http import SourceHTTPError
 from jobscraper.sources.wttj import (
     API_KEY,
     APP_ID,
     WTTJ,
+    build_description,
     build_filters,
     build_tags,
     credentials,
+    detail_url,
+    parse_hit,
+    salary_text,
 )
 from tests.conftest import fixture_text
 
@@ -202,3 +208,89 @@ def test_wttj_detail_fetch_can_be_turned_off(make_ctx):
     jobs = list(WTTJ().fetch(ctx))
     assert not [c for c in ctx.http.calls if "/api/v1/organizations/" in str(c.url)]
     assert "Votre challenge" not in jobs[0].description
+
+
+def test_wttj_salary_keeps_a_figure_it_cannot_parse():
+    assert salary_text({"salary_minimum": "40k"}) == "40k"  # currency/period are not strings here
+    assert salary_text({"salary_yearly_minimum": 30000, "salary_currency": 7}) == "30,000"
+    assert salary_text({}) is None
+
+
+def test_wttj_description_without_key_missions_has_no_bullet_list():
+    assert build_description({"summary": "A short synopsis and nothing else."}).strip() == (
+        "A short synopsis and nothing else."
+    )
+
+
+def test_wttj_detail_url_needs_both_slugs():
+    assert detail_url({"slug": "x"}) is None
+    assert detail_url({"organization": {"slug": "acme"}}) is None
+    assert detail_url({"organization": {"slug": "acme"}, "slug": "x"}).endswith(
+        "/organizations/acme/jobs/x"
+    )
+    assert parse_hit("a hit is always an object") is None
+
+
+#: A hit the index can produce without the slugs the detail API is addressed by.
+HIT_WITHOUT_SLUGS = {
+    "objectID": "abc123",
+    "name": "Data Engineer",
+    "organization": {"reference": "acme", "name": "Acme"},
+}
+#: A hit with slugs but no text at all, so the detail document has nothing to improve.
+BARE_HIT = {
+    "objectID": "b1",
+    "name": "Dev",
+    "slug": "dev",
+    "organization": {"slug": "acme", "name": "Acme"},
+}
+
+
+def _one_hit_routes(hit: dict, **extra) -> dict:
+    return {**ENV_ROUTE, **extra, "algolia.net": {"hits": [hit], "nbPages": 1}}
+
+
+def test_wttj_skips_hydration_for_a_hit_without_slugs(make_ctx):
+    ctx = make_ctx(_one_hit_routes(HIT_WITHOUT_SLUGS), options={"max_pages": 1})
+    jobs = list(WTTJ().fetch(ctx))
+
+    assert [j.source_id for j in jobs] == ["abc123"]
+    assert not [c for c in ctx.http.calls if "/api/v1/organizations/" in str(c.url)]
+
+
+def test_wttj_detail_that_adds_nothing_leaves_the_job_alone(make_ctx):
+    routes = _one_hit_routes(
+        BARE_HIT,
+        **{"/api/v1/organizations/acme/jobs/dev": {"job": {"apply_url": "mailto:jobs@acme.test"}}},
+    )
+    job = next(iter(WTTJ().fetch(make_ctx(routes, options={"max_pages": 1}))))
+
+    assert job.description is None
+    assert "apply_url" not in job.raw  # a mailto: link is not an apply URL
+
+
+def test_wttj_detail_without_a_job_object_is_logged(make_ctx, caplog):
+    routes = _one_hit_routes(BARE_HIT, **{"/api/v1/organizations/acme/jobs/dev": {"data": {}}})
+    with caplog.at_level("WARNING"):
+        jobs = list(WTTJ().fetch(make_ctx(routes, options={"max_pages": 1})))
+
+    assert len(jobs) == 1 and jobs[0].description is None
+    assert "no 'job' object" in caplog.text
+
+
+def test_wttj_sends_no_filters_when_nothing_is_restricted(make_ctx):
+    ctx = make_ctx(LIST_ROUTES, options={"countries": [], "include_remote": False, **NO_DETAILS})
+    list(WTTJ().fetch(ctx))
+    assert "filters" not in json.loads(ctx.http.calls[1].content)
+
+
+def test_wttj_raises_on_an_unexpected_algolia_response(make_ctx):
+    ctx = make_ctx({**ENV_ROUTE, "algolia.net": {"message": "Invalid Application-ID or API key"}})
+    with pytest.raises(SourceHTTPError, match="unexpected Algolia response"):
+        list(WTTJ().fetch(ctx))
+
+
+def test_wttj_stops_on_an_empty_page(make_ctx):
+    ctx = make_ctx({**ENV_ROUTE, "algolia.net": {"hits": []}}, options={"max_pages": 3, **NO_DETAILS})
+    assert list(WTTJ().fetch(ctx)) == []
+    assert len([c for c in ctx.http.calls if "algolia.net" in str(c.url)]) == 1

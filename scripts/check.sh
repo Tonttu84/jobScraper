@@ -2,7 +2,7 @@
 # Definition of done: lint clean + full test suite + coverage threshold.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-THRESHOLD="${COV_THRESHOLD:-94}"
+THRESHOLD="${COV_THRESHOLD:-99}"
 # Interpreter: $PY if set, else the project venv (POSIX or Windows layout), else `python`.
 PY="${PY:-}"
 if [ -z "$PY" ]; then

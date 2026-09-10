@@ -1,6 +1,12 @@
 from datetime import UTC, datetime
 
-from jobscraper.sources.jobicy import Jobicy, salary_text
+from jobscraper.sources.jobicy import (
+    Jobicy,
+    _strings,
+    parse_record,
+    region_country,
+    salary_text,
+)
 
 
 def test_jobicy_parses_fixture(make_ctx):
@@ -55,6 +61,27 @@ def test_jobicy_queries_both_geos_and_dedupes(make_ctx):
 def test_jobicy_respects_limit(make_ctx):
     ctx = make_ctx({"api/v2/remote-jobs": "jobicy.json"}, limit=1)
     assert len(list(Jobicy().fetch(ctx))) == 1
+
+
+def test_jobicy_can_be_asked_without_a_geo_or_an_industry(make_ctx):
+    ctx = make_ctx(
+        {"api/v2/remote-jobs": "jobicy.json"},
+        options={"geos": [], "industry": "", "tag": "python"},
+    )
+    jobs = list(Jobicy().fetch(ctx))
+
+    url = str(ctx.http.calls[0].url)
+    assert "geo=" not in url and "industry=" not in url
+    assert "tag=python" in url
+    assert len(jobs) == 3
+
+
+def test_jobicy_region_and_list_helpers():
+    assert region_country(None) is None
+    assert region_country("Anywhere in the World") is None  # not a country statement
+    assert region_country("Poland") == "PL"
+    assert _strings(42) == []  # jobLevel/jobType are strings or lists, never numbers
+    assert parse_record(["not", "an", "object"]) is None
 
 
 def test_salary_text_tolerates_junk():

@@ -6,8 +6,11 @@ languages the posting *requires* versus merely appreciates.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from jobscraper.filters import language
 from jobscraper.filters.language import detect_language, find_language_requirements
 
 # Realistic multi-sentence job-ad paragraphs, all well over the 80-character floor that
@@ -239,3 +242,35 @@ def test_portuguese_language_names_do_not_match_inside_english_words() -> None:
     assert req.mentioned == set()
     assert req.required == set()
     assert req.optional == set()
+
+
+def _fake_detector(values):
+    return lambda: SimpleNamespace(compute_language_confidence_values=lambda _s: values)
+
+
+def test_detect_language_gives_up_when_the_detector_cannot_help(monkeypatch) -> None:
+    text = SAMPLE_PARAGRAPHS["en"]
+
+    def boom():
+        raise RuntimeError("lingua model files are missing")
+
+    monkeypatch.setattr(language, "_detector", boom)
+    assert detect_language(text) == (None, 0.0)
+
+    monkeypatch.setattr(language, "_detector", _fake_detector([]))
+    assert detect_language(text) == (None, 0.0)
+
+
+def test_detect_language_reports_bokmal_as_norwegian(monkeypatch) -> None:
+    """lingua has no generic "no"; the policy lists in the profile do."""
+    best = SimpleNamespace(
+        language=SimpleNamespace(iso_code_639_1=SimpleNamespace(name="NB")), value=0.99
+    )
+    monkeypatch.setattr(language, "_detector", _fake_detector([best]))
+    assert detect_language(SAMPLE_PARAGRAPHS["en"]) == ("no", 0.99)
+
+
+def test_find_language_requirements_skips_nothing_and_walls_of_text() -> None:
+    assert find_language_requirements(None).mentioned == set()
+    # One "sentence" past the 600-character cap: a nav blob or a tag soup, not a requirement.
+    assert find_language_requirements("Finnish " * 200).mentioned == set()

@@ -7,9 +7,16 @@ them to the AI screen as "on-site with unknown country", and Sonnet paid to reje
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
-from jobscraper.sources._common import guess_country, guess_remote, is_cloudflare_challenge
+from jobscraper.sources._common import (
+    guess_country,
+    guess_remote,
+    is_cloudflare_challenge,
+    parse_date,
+)
 
 
 @pytest.mark.parametrize(
@@ -148,3 +155,18 @@ def test_guess_remote_and_cloudflare_still_work():
 )
 def test_guess_country_place_names(text, expected):
     assert guess_country(text) == expected
+
+
+def test_parse_date_reads_the_shapes_the_boards_send():
+    naive = datetime(2026, 9, 7, 12, 0, 0)
+    assert parse_date(naive) == naive.replace(tzinfo=UTC)  # a naive datetime is read as UTC
+    assert parse_date(naive.replace(tzinfo=UTC)) == naive.replace(tzinfo=UTC)
+    # epoch seconds and milliseconds, both as numbers and as the strings some feeds send
+    assert parse_date("1787735594") == datetime.fromtimestamp(1787735594, tz=UTC)
+    assert parse_date("1787735594863") == datetime.fromtimestamp(1787735594.863, tz=UTC)
+    assert parse_date(1787735594) == datetime.fromtimestamp(1787735594, tz=UTC)
+    assert parse_date("2026-09-07T12:00:00Z") == naive.replace(tzinfo=UTC)
+    assert parse_date("Mon, 07 Sep 2026 12:00:00 +0000") == naive.replace(tzinfo=UTC)
+    assert parse_date("07.09.2026") == datetime(2026, 9, 7, tzinfo=UTC)
+    assert parse_date(None) is None and parse_date("") is None
+    assert parse_date("not a date at all") is None

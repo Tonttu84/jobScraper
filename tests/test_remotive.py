@@ -7,7 +7,12 @@ non-software posting to pin the client-side category filter down.
 
 from datetime import UTC, datetime
 
-from jobscraper.sources.remotive import Remotive, matches_category, region_country
+from jobscraper.sources.remotive import (
+    Remotive,
+    matches_category,
+    parse_record,
+    region_country,
+)
 
 ROUTE = {"api/remote-jobs": "remotive.json"}
 
@@ -81,6 +86,24 @@ def test_matches_category_is_permissive():
     assert not matches_category({"category": "Writing"}, wanted)
     assert matches_category({}, wanted)  # no category stated → keep it, the AI stages decide
     assert matches_category({"category": "Writing"}, [])  # filter off
+
+
+def test_remotive_skips_a_record_that_is_not_an_object():
+    assert parse_record("the feed sometimes has a stray string") is None
+
+
+def test_remotive_does_not_repeat_the_category_in_the_tags():
+    job = parse_record(
+        {"id": 1, "title": "Dev", "category": "Software Development",
+         "tags": ["Software Development", "Python"]}
+    )
+    assert job.tags == ["Software Development", "Python"]
+
+
+def test_remotive_can_be_asked_without_a_category(make_ctx):
+    ctx = make_ctx(ROUTE, options={"category": "", "categories": []})
+    assert list(Remotive().fetch(ctx))
+    assert "category=" not in str(ctx.http.calls[0].url)
 
 
 def test_region_country_only_for_single_countries():

@@ -505,3 +505,131 @@ def test_probe_does_not_mark_sources_that_did_not_need_it(data_dir, fake_http, m
     assert "✓ arbeitnow" in result.output
     assert "(browser)" not in result.output
     assert factory.browser.calls == []
+
+
+def test_enabled_defaults_to_every_source_the_config_does_not_disable(data_dir):
+    from jobscraper.config import load_settings
+
+    settings = load_settings()
+    names = cli_mod._enabled(settings, [])
+    assert "arbeitnow" in names
+    assert all(settings.sources.get(n) is None or settings.sources[n].enabled for n in names)
+
+
+def test_probe_reports_a_source_that_returns_nothing(data_dir, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: None)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({"job-board-api": {"data": []}}))
+    result = runner.invoke(cli_mod.app, ["probe", "arbeitnow", "--limit", "2"])
+
+    assert result.exit_code == 0, result.output
+    assert "0 jobs" in result.output
+    assert "0 sources OK, 1 failed" in result.output
+    assert "arbeitnow: returned 0 jobs" in result.output
+
+
+def test_probe_reports_a_source_that_raises(data_dir, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: None)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({}))  # every request fails
+    result = runner.invoke(cli_mod.app, ["probe", "arbeitnow", "--limit", "1"])
+
+    assert result.exit_code == 0, result.output  # a dead source is a report, not a crash
+    assert "✗ arbeitnow" in result.output
+    assert "0 sources OK, 1 failed" in result.output
+
+
+def test_scrape_logs_a_failing_source_and_carries_on(data_dir, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: None)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({}))
+    result = runner.invoke(cli_mod.app, ["scrape", "arbeitnow"])
+
+    assert result.exit_code == 0, result.output
+    assert "✗ arbeitnow" in result.output
+    store = store_mod.Store()
+    try:
+        rows = [tuple(r) for r in store.conn.execute("SELECT source, fetched, new FROM runs")]
+    finally:
+        store.close()
+    assert rows == [("arbeitnow", 0, 0)]
+
+
+def test_filter_marks_duplicates_as_drops(data_dir, fake_http):
+    from jobscraper.models import Job
+
+    store = store_mod.Store()
+    try:
+        store.upsert_jobs([
+            Job(source="linkedin", source_id="a", url="https://x.test/1", country="FI",
+                title="Junior Backend Developer", company="Acme Oy"),
+            Job(source="arbeitnow", source_id="b", url="https://x.test/2", country="FI",
+                title="Junior Backend Developer", company="Acme"),
+        ])
+    finally:
+        store.close()
+
+    result = runner.invoke(cli_mod.app, ["filter"])
+    assert result.exit_code == 0, result.output
+    assert "1 duplicate groups" in result.output
+
+    store = store_mod.Store()
+    try:
+        dropped = [r for r in store.filter_results().values() if r.status == "drop"]
+    finally:
+        store.close()
+    assert any("duplicate of" in r.reasons[0] for r in dropped)
+
+
+def test_prefilter_prints_each_verdict_and_honours_max_jobs(data_dir, fake_http, monkeypatch):
+    from jobscraper.ai import client as ai_client
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    seen: dict[str, int] = {}
+
+    def init(self, stage, profile, store, model=None) -> None:
+        self.stage = stage
+
+    def run(self, jobs, filters, **kw):
+        seen["jobs"] = len(list(jobs))
+        kw["progress"](SimpleNamespace(score=87, relevant=True, summary="A good junior match"))
+        return {}
+
+    monkeypatch.setattr(ai_client.AIStage, "__init__", init)
+    monkeypatch.setattr(ai_client.AIStage, "run", run)
+
+    runner.invoke(cli_mod.app, ["scrape", "arbeitnow", "--limit", "2"])
+    runner.invoke(cli_mod.app, ["filter"])
+    result = runner.invoke(cli_mod.app, ["prefilter", "--max-jobs", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert seen["jobs"] == 1
+    assert "A good junior match" in result.output
+
+
+def test_serve_with_a_single_database_has_no_serve_directory(data_dir, monkeypatch, tmp_path):
+    calls = _fake_uvicorn(monkeypatch)
+    db = tmp_path / "copy.db"
+    db.touch()
+    result = runner.invoke(cli_mod.app, ["serve", "--db-file", str(db)])
+
+    assert result.exit_code == 0, result.output
+    assert "serving copies from" not in result.output
+    assert hasattr(calls["app"], "routes")
+
+
+def test_serve_with_reload_and_a_single_database_sets_no_serve_dir(data_dir, monkeypatch, tmp_path):
+    import os
+
+    monkeypatch.delenv("JOBSCRAPER_SERVE_DIR", raising=False)
+    calls = _fake_uvicorn(monkeypatch)
+    db = tmp_path / "copy.db"
+    db.touch()
+    result = runner.invoke(cli_mod.app, ["serve", "--reload", "--db-file", str(db)])
+
+    assert result.exit_code == 0, result.output
+    assert calls["app"] == "jobscraper.web.app:create_app"
+    assert "JOBSCRAPER_SERVE_DIR" not in os.environ
+
+
+def test_publish_without_a_database_is_rejected(data_dir):
+    result = runner.invoke(cli_mod.app, ["publish"])
+    assert result.exit_code != 0
+    assert "does not exist" in result.output

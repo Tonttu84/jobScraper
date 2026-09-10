@@ -89,6 +89,52 @@ def test_run_is_incremental(stage, monkeypatch):
     assert n["calls"] == 4
 
 
+def test_stage_warns_when_no_api_credentials_are_set(settings, tmp_path, monkeypatch, caplog):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setattr("anthropic.Anthropic", lambda **kw: SimpleNamespace(messages=None))
+    with caplog.at_level("WARNING"):
+        st = AIStage("prefilter", settings.profile, Store(tmp_path / "k.db"))
+    assert "ANTHROPIC_API_KEY not set" in caplog.text
+    assert st.stage == "prefilter"
+
+
+def test_run_survives_an_api_error_and_reports_progress(stage, monkeypatch):
+    import anthropic
+    import httpx
+
+    calls = {"n": 0}
+
+    def fake_parse(**kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise anthropic.APIConnectionError(
+                request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            )
+        return _response(Screening(relevant=True, score=64, language_ok=True, seniority_ok=True,
+                                   location_ok=True, summary="Junior Go role"))
+
+    monkeypatch.setattr(stage.client.messages, "parse", fake_parse)
+    scored: list = []
+    results = stage.run([_job(source_id="1"), _job(source_id="2")], {}, progress=scored.append)
+
+    assert calls["n"] == 2
+    assert len(results) == 1  # the failed job simply has no verdict yet
+    assert [v.score for v in scored] == [64]
+
+
+def test_prompt_rules_for_a_profile_with_no_language_or_remote_policy(settings):
+    from jobscraper.config import LanguagePolicy
+
+    profile = settings.profile.model_copy(update={
+        "languages": LanguagePolicy(ok=[], weak=[], drop_if_written_in=[]),
+        "location": settings.profile.location.model_copy(update={"keep_all_remote": False}),
+    })
+    text = system_prompt("prefilter", profile)
+    assert "any language the candidate reads" in text
+    assert "Remote roles count only when their stated region overlaps" in text
+
+
 def test_rank_stage_uses_ranking_schema(settings, tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     st = AIStage("rank", settings.profile, Store(tmp_path / "r.db"))

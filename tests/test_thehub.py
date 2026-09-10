@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 import httpx
 from conftest import fixture_json
 
-from jobscraper.sources.thehub import TheHub
+from jobscraper.sources.thehub import TheHub, parse_record
 
 LIST = "api/v2/jobs"
 DETAIL = "api/jobs/"
@@ -179,3 +179,117 @@ def test_thehub_respects_limit(make_ctx):
     jobs, ctx = fetch(make_ctx, options={"countries": ["FI", "SE"], "max_pages": 5}, limit=1)
     assert len(jobs) == 1
     assert len([c for c in ctx.http.calls if DETAIL in str(c.url)]) == 1  # no wasted detail calls
+
+
+def bulk_page(count: int, start: int = 0, **extra) -> dict:
+    """A list page of ``count`` synthetic docs, with the id shape thehub actually uses."""
+    docs = [
+        {"id": f"{i:024x}", "title": f"Synthetic Job {i}", "company": {"name": "Acme"}}
+        for i in range(start, start + count)
+    ]
+    return {"docs": docs, **extra}
+
+
+def test_thehub_reads_the_alternate_shapes_of_a_single_document():
+    """A doc with an integer ``_id``, a plain-string location and a salary range."""
+    job = parse_record(
+        {
+            "_id": 4711,
+            "title": "  Backend Engineer  ",
+            "company": "Nordic Widgets",  # a string, not the usual {name: ...} object
+            "companyName": "Nordic Widgets",
+            "location": "   ",  # present but empty: fall through to geoLocation
+            "geoLocation": "Oslo, Norway",
+            "salaryRange": {"min": 60000, "max": 80000, "currency": "EUR"},
+            "jobPositionTypes": "Full-time",  # a bare string where a list is normal
+        }
+    )
+    assert job is not None
+    assert job.source_id == "4711" and job.url.endswith("/jobs/4711")
+    assert job.title == "Backend Engineer"
+    assert job.company == "Nordic Widgets"
+    assert job.location_raw == "Oslo, Norway" and job.country == "NO"
+    assert job.salary_text == "60000 - 80000 EUR"
+    assert job.employment_type == "Full-time"
+
+
+def test_thehub_builds_a_location_from_the_parts_when_there_is_no_address():
+    job = parse_record(
+        {
+            "id": "abc",
+            "title": "Data Engineer",
+            "location": {"locality": "Tampere", "country": "Finland"},
+        }
+    )
+    assert job.location_raw == "Tampere, Finland"
+    assert job.city == "Tampere" and job.country == "FI"
+
+
+def test_thehub_ignores_a_salary_range_without_numbers():
+    job = parse_record(
+        {"id": "abc", "title": "Dev", "salaryRange": {"currency": "EUR", "from": 0}}
+    )
+    assert job.salary_text is None
+
+
+def test_thehub_drops_a_list_doc_that_already_says_it_is_expired():
+    assert parse_record({"id": "abc", "title": "Gone", "status": "EXPIRED"}) is None
+    assert parse_record({"id": "abc", "title": "Here", "status": "  "}) is not None
+
+
+def test_thehub_accepts_a_single_country_and_an_empty_search(make_ctx):
+    jobs, ctx = fetch(make_ctx, options={"countries": "FI", "search": ""})
+
+    assert len(jobs) == 3
+    list_calls = [c for c in ctx.http.calls if LIST in str(c.url)]
+    assert len(list_calls) == 1
+    assert "search=" not in str(list_calls[0].url)
+
+
+def test_thehub_stops_on_the_first_empty_page(make_ctx):
+    """No ``pages`` in the envelope: paging only stops when a page comes back empty."""
+    jobs, ctx = fetch(
+        make_ctx,
+        {
+            "page=2": {"docs": []},
+            LIST: bulk_page(15),
+            DETAIL: lambda _req: httpx.Response(404, text="not found"),
+        },
+        options={"max_pages": 5},
+    )
+    assert len(jobs) == 15
+    assert len([c for c in ctx.http.calls if LIST in str(c.url)]) == 2
+
+
+def test_thehub_stops_on_a_short_page(make_ctx):
+    """Fewer docs than the API's fixed page size means this was the last page."""
+    jobs, ctx = fetch(
+        make_ctx,
+        {LIST: bulk_page(3), DETAIL: lambda _req: httpx.Response(404, text="not found")},
+        options={"max_pages": 5},
+    )
+    assert len(jobs) == 3
+    assert len([c for c in ctx.http.calls if LIST in str(c.url)]) == 1
+
+
+def test_thehub_gives_up_at_max_pages(make_ctx):
+    """Full pages all the way: the page budget, not the API, ends the loop."""
+    jobs, ctx = fetch(
+        make_ctx,
+        {
+            "page=2": bulk_page(15, start=100),
+            LIST: bulk_page(15),
+            DETAIL: lambda _req: httpx.Response(404, text="not found"),
+        },
+        options={"max_pages": 2},
+    )
+    assert len(jobs) == 30
+    assert len([c for c in ctx.http.calls if LIST in str(c.url)]) == 2
+
+
+def test_thehub_keeps_the_teaser_values_the_detail_does_not_improve(make_ctx):
+    """A detail without isRemote or link leaves the list doc's remote flag and no apply URL."""
+    jobs, _ctx = fetch(make_ctx, routes(**{VERDA: detail_doc(drop=("isRemote", "link"))}))
+    assert jobs[0].remote == "onsite"  # from the list doc's isRemote: false
+    assert "apply_url" not in jobs[0].raw
+    assert "detail" in jobs[0].raw

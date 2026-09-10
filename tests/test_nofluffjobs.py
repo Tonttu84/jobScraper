@@ -3,9 +3,17 @@
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 
 from jobscraper.filters.language import find_language_requirements
-from jobscraper.sources.nofluffjobs import NoFluffJobs, build_description, salary_text
+from jobscraper.http import SourceHTTPError
+from jobscraper.sources.nofluffjobs import (
+    NoFluffJobs,
+    _texts,
+    build_description,
+    parse_posting,
+    salary_text,
+)
 from tests.conftest import fixture_json, fixture_text
 
 ROUTES = {
@@ -190,3 +198,62 @@ def test_nofluffjobs_language_block_feeds_the_rule_filter(make_ctx):
     found = find_language_requirements(job.description)
     assert "pl" in found.required and "en" in found.required
     assert "de" in found.optional and "cs" in found.optional
+
+
+def test_nofluffjobs_only_nice_to_have_languages():
+    detail = {"requirements": {"languages": [{"type": "NICE", "code": "fi", "level": "B1"}]}}
+    assert build_description(detail).strip() == "Nice-to-have languages: Finnish (B1)."
+
+
+def test_nofluffjobs_text_flattener_and_salary_read_the_odd_shapes():
+    # a dict whose first keys are empty falls through to the one that is filled
+    assert _texts({"value": "", "name": None, "description": "Build things"}) == ["Build things"]
+    assert _texts({"id": 7}) == []  # none of the known keys
+    assert _texts(7) == []
+    # a figure the API wrote as text, and a currency that is not a string
+    assert salary_text({"from": "2 084", "to": "3 242", "currency": 7}) == "2 084 - 3 242"
+    assert parse_posting("not an object", region="pl") is None
+
+
+def test_nofluffjobs_detail_failures_keep_the_job(make_ctx, caplog):
+    def boom(_req):
+        raise httpx.ReadTimeout("the posting endpoint never answered")
+
+    routes = {**ROUTES, ("GET", "/api/posting/"): boom}
+    with caplog.at_level("WARNING"):
+        jobs = list(NoFluffJobs().fetch(make_ctx(routes, options={"regions": ["pl"], "max_pages": 1})))
+    assert len(jobs) == 3 and all(j.description is None for j in jobs)
+    assert "detail" in caplog.text
+
+    routes = {**ROUTES, ("GET", "/api/posting/"): ["an array, not an object"]}
+    jobs = list(NoFluffJobs().fetch(make_ctx(routes, options={"regions": ["pl"], "max_pages": 1})))
+    assert len(jobs) == 3 and all("detail" not in j.raw for j in jobs)
+
+
+def test_nofluffjobs_raises_when_the_search_is_not_an_object(make_ctx):
+    ctx = make_ctx({("POST", "/api/search/posting"): lambda _req: httpx.Response(200, json=[])})
+    with pytest.raises(SourceHTTPError, match="expected an object"):
+        list(NoFluffJobs().fetch(ctx))
+
+
+def test_nofluffjobs_stops_on_an_empty_page_and_at_total_pages(make_ctx):
+    payload = fixture_json("nofluffjobs.json")
+    pages = [{**payload, "totalPages": 2}, {"postings": [], "totalPages": 2}]
+    calls: list[httpx.Request] = []
+
+    def search(req: httpx.Request) -> httpx.Response:
+        calls.append(req)
+        return httpx.Response(200, json=pages[min(len(calls) - 1, 1)])
+
+    # region "pl": page 1 is full and totalPages says 2, so page 2 is asked for and is empty;
+    # region "en": the same, and the empty page stops it again.
+    ctx = make_ctx({("POST", "/api/search/posting"): search},
+                   options={"regions": ["pl", "en"], "max_pages": 9, "fetch_details": False})
+    assert len(list(NoFluffJobs().fetch(ctx))) == 3  # the second region repeats the references
+    assert len(calls) == 3
+
+    only_page = {**payload, "totalPages": 1}
+    ctx = make_ctx({("POST", "/api/search/posting"): only_page},
+                   options={"regions": ["pl"], "max_pages": 9, "fetch_details": False})
+    assert len(list(NoFluffJobs().fetch(ctx))) == 3
+    assert len(ctx.http.calls) == 1  # totalPages 1: no second request

@@ -419,3 +419,102 @@ def test_stale_check_accepts_naive_datetimes(settings):
 
     old = make_job(posted_at=datetime.now() - timedelta(days=200))  # naive on purpose
     assert evaluate(old, settings.profile).status == "drop"
+
+
+def test_a_year_count_is_only_read_next_to_experience_words(settings):
+    """"founded 5 years ago" is company history, and "25 years" is a typo, not a requirement."""
+    history = make_job(
+        title="Junior Software Developer",
+        country="FI",
+        description="The company was founded 5 years ago in Helsinki. " + ENGLISH_DESC,
+    )
+    res = evaluate(history, settings.profile)
+    assert "years_required" not in res.signals
+    assert res.status == "keep"
+
+    absurd = make_job(
+        title="Junior Software Developer",
+        country="FI",
+        description="We ask for 25 years of experience with our stack. " + ENGLISH_DESC,
+    )
+    assert "years_required" not in evaluate(absurd, settings.profile).signals
+
+    within = make_job(
+        title="Junior Software Developer",
+        country="FI",
+        description="You have up to 2 years of experience with web development. " + ENGLISH_DESC,
+    )
+    res = evaluate(within, settings.profile)
+    assert res.signals["years_required"] == 2 and res.status == "keep"
+
+
+def test_a_year_count_between_the_two_thresholds_is_review_not_drop(settings):
+    """A profile that keeps up to 2 years but reviews up to 5: a 4-year ad is worth a look."""
+    lenient = settings.profile.model_copy(update={
+        "seniority": SeniorityPolicy(
+            max_years_keep=2,
+            max_years_review=5,
+            drop_title_terms=settings.profile.seniority.drop_title_terms,
+            keep_title_terms=settings.profile.seniority.keep_title_terms,
+            drop_label_terms=settings.profile.seniority.drop_label_terms,
+        ),
+    })
+    job = make_job(
+        title="Software Developer",
+        country="FI",
+        description="We expect 4 years of experience with backend development. " + ENGLISH_DESC,
+    )
+    res = evaluate(job, lenient)
+    assert res.status == "review"
+    assert res.signals["years_required"] == 4
+    assert any("4 years of experience" in r for r in res.reasons)
+
+
+def test_a_title_the_role_gate_does_not_recognize(settings):
+    """The description gets one chance; without it the posting is not a software job at all."""
+    rescued = make_job(title="Junior Analyst", country="FI", description=ENGLISH_DESC)
+    res = evaluate(rescued, settings.profile)
+    assert res.status == "review"
+    assert any("description mentions it" in r for r in res.reasons)
+
+    dropped = make_job(
+        title="Junior Analyst",
+        country="FI",
+        description="You will read spreadsheets and write summaries for the management team.",
+    )
+    res = evaluate(dropped, settings.profile)
+    assert res.status == "drop"
+    assert any("not a software/IT role" in r for r in res.reasons)
+
+
+def test_a_posting_too_short_to_have_a_language(settings):
+    job = make_job(title="Junior Developer", country="FI", description=None)
+    res = evaluate(job, settings.profile)
+    assert "posting_language" not in res.signals
+    assert res.status == "keep"
+
+
+def test_a_posting_in_a_weak_language_is_reviewed_not_dropped(settings):
+    """Swedish is on the profile's ``weak`` list: readable enough to let a human decide."""
+    swedish = (
+        "Vi söker en junior systemutvecklare till vårt team i Stockholm som vill lära sig mer "
+        "om moderna webbtjänster. Du kommer att arbeta tillsammans med erfarna kollegor och "
+        "utveckla nya funktioner i våra produkter. Vi erbjuder flexibla arbetstider och en "
+        "trevlig arbetsmiljö."
+    )
+    job = make_job(title="Junior Developer", country="SE", description=swedish)
+    res = evaluate(job, settings.profile)
+    assert res.signals["posting_language"] == "sv"
+    assert res.status == "review"
+    assert any("written in sv" in r for r in res.reasons)
+
+
+def test_an_only_clause_that_names_no_country_says_nothing():
+    assert classify_remote_region("Full time only") == "unknown"
+
+
+def test_a_job_with_neither_a_country_nor_a_remote_flag_is_reviewed(settings):
+    job = make_job(title="Junior Developer", country=None, location_raw=None, remote="unknown")
+    res = evaluate(job, settings.profile)
+    assert res.status == "review"
+    assert "location unknown" in res.reasons

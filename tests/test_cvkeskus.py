@@ -154,3 +154,127 @@ def test_cvkeskus_reads_the_estonian_location_labels(location, expected_remote, 
     assert job.remote == expected_remote
     assert job.city == expected_city
     assert job.country == "EE"
+
+
+EXTRA_PAGE = """<html><body>
+<article data-component="jobad">
+  <a class="jobad-url" href="/back-end-developer-tartus-turnit-ou-1047845">link text</a>
+  <h2></h2><h3>Back-End Developer</h3>
+  <div class="job-company">Turnit</div>
+  <span class="location">Tartu</span><span class="location"></span><span class="location">Tartu</span>
+</article></body></html>"""
+
+
+def test_cvkeskus_card_reader_survives_empty_headings_and_repeated_spans():
+    """Live cards ship an empty ``h2`` and the town twice; neither may reach the record."""
+    from jobscraper.sources.cvkeskus import _text
+
+    assert _text(None) is None
+    records = parse_search_html(EXTRA_PAGE)
+    assert len(records) == 1
+    assert records[0]["title"] == "Back-End Developer"  # the empty h2 is skipped for the h3
+    assert records[0]["location"] == "Tartu"  # not "Tartu / Tartu"
+
+
+GRAPH_DETAIL = """<html><body>
+<script type="application/ld+json">{ this is not json </script>
+<script type="application/ld+json">[
+  "a bare string the site puts in the array",
+  {"@context": "https://schema.org", "@graph": [
+    {"@id": "https://cv.ee/#/schema/Address/listing-9", "@type": "PostalAddress",
+     "addressRegion": "Tartu", "addressCountry": {"name": "Estonia"}},
+    {"@id": "https://cv.ee/#/schema/Place/listing-9", "@type": "Place",
+     "address": {"@id": "https://cv.ee/#/schema/PostalAddress/listing-9"}},
+    {"@id": "https://cv.ee/#/schema/JobPosting/listing-9", "@type": "JobPosting",
+     "title": "Platform Engineer",
+     "hiringOrganization": [null, {"@id": "https://cv.ee/#/schema/Organization/listing-9"}],
+     "jobLocation": {"@id": "https://cv.ee/#/schema/Place/listing-9"},
+     "employmentType": ["FULL_TIME", "PART_TIME"],
+     "jobLocationType": "TELECOMMUTE",
+     "description": "<p>Build the platform.</p>",
+     "datePosted": "2026-09-01T10:00:00+03:00"},
+    {"@id": "https://cv.ee/#/schema/Organization/listing-9",
+     "@type": ["Organization", "Thing"], "name": "Acme O\\u00dc"}
+  ]}
+]</script>
+</body></html>"""
+
+
+def test_cvkeskus_walks_the_whole_json_ld_graph():
+    """Broken script, array envelope, list ``@type``, list ``hiringOrganization``, dict country."""
+    job = parse_detail(GRAPH_DETAIL, "https://www.cvkeskus.ee/platform-engineer-tartus-9999")
+
+    assert job.title == "Platform Engineer"
+    assert job.company == "Acme OÜ"  # the Organization node is reached through its @id
+    # Place.address points at .../PostalAddress/listing-9 but the node is .../Address/listing-9
+    assert job.location_raw == "Tartu" and job.city == "Tartu"
+    assert job.country == "EE"  # from the addressCountry object, not the location string
+    assert job.employment_type == "FULL_TIME, PART_TIME"
+    assert job.remote == "remote"  # jobLocationType
+    assert job.description == "Build the platform."
+
+
+def test_cvkeskus_gives_up_on_an_employer_link_it_cannot_read():
+    """The Organization node is missing from the graph; the page link is the only fallback."""
+    not_an_id = """<html><body><script type="application/ld+json">
+    {"@type": "JobPosting", "title": "Dev",
+     "hiringOrganization": {"@id": "https://cv.ee/#/schema/Organization/wise"}}
+    </script></body></html>"""
+    assert parse_detail(not_an_id, "https://www.cvkeskus.ee/dev-1").company is None
+
+    textless_link = """<html><body><script type="application/ld+json">
+    {"@type": "JobPosting", "title": "Dev",
+     "hiringOrganization": {"@id": "https://cv.ee/#/schema/Organization/179285"}}
+    </script>
+    <a href="/wise-toopakkumised-179285"><img src="/logo.png"/></a>
+    </body></html>"""
+    assert parse_detail(textless_link, "https://www.cvkeskus.ee/dev-1").company is None
+
+    empty_list = """<html><body><script type="application/ld+json">
+    {"@type": "JobPosting", "title": "Dev", "hiringOrganization": []}
+    </script></body></html>"""
+    assert parse_detail(empty_list, "https://www.cvkeskus.ee/dev-1").company is None
+
+
+def test_cvkeskus_accepts_a_bare_category_and_a_bare_keyword(make_ctx):
+    ctx = make_ctx(ROUTES, options={"categories": 8, "keywords": "developer"})
+    list(CvKeskus().fetch(ctx))
+
+    params = query(search_calls(ctx)[0])
+    assert [v for k, v in params if k == "search[categories][]"] == ["8"]
+    assert ("search[keyword]", "developer") in params
+
+
+def test_cvkeskus_keeps_paging_while_each_page_is_new(make_ctx):
+    routes = {"start=30": EXTRA_PAGE, "1047845": "cvkeskus_detail_nojsonld.html", **ROUTES}
+    ctx = make_ctx(routes, options={"max_details": 60})
+    jobs = list(CvKeskus().fetch(ctx))
+
+    assert [j.source_id for j in jobs] == ["1052794", "1053023", "1047845"]
+    assert len(search_calls(ctx)) == 2  # the page budget, not a repeat, ends the loop
+
+
+def test_cvkeskus_stops_quietly_when_a_later_page_runs_out(make_ctx):
+    """Only a first page without cards is worth a warning; a short last page is normal."""
+    routes = {"start=30": "<html><body>end of results</body></html>", **ROUTES}
+    ctx = make_ctx(routes, options={"max_details": 60})
+    jobs = list(CvKeskus().fetch(ctx))
+
+    assert len(jobs) == 2
+    assert len(search_calls(ctx)) == 2
+
+
+def test_cvkeskus_warns_once_when_the_first_page_has_no_cards(make_ctx, caplog):
+    ctx = make_ctx({SEARCH: "<html><body>no cards at all</body></html>"})
+    with caplog.at_level("WARNING"):
+        assert list(CvKeskus().fetch(ctx)) == []
+    assert len(search_calls(ctx)) == 1
+    assert "no job cards found" in caplog.text
+
+
+def test_cvkeskus_stops_asking_further_keywords_once_it_has_enough(make_ctx):
+    ctx = make_ctx(ROUTES, options={"keywords": ["developer", "engineer"], "max_details": 1})
+    jobs = list(CvKeskus().fetch(ctx))
+
+    assert len(jobs) == 1
+    assert len(search_calls(ctx)) == 1  # the second keyword is never asked for

@@ -15,6 +15,7 @@ from conftest import fixture_text
 
 from jobscraper.sources.jobly import (
     Jobly,
+    _description_from_markup,
     parse_detail,
     parse_listing_html,
     salary_text,
@@ -164,6 +165,57 @@ def test_the_markup_fallbacks_take_what_they_can_find():
     assert job.company == "Epsilon Oy"  # class contains "organization"
     assert job.location_raw == "Turku, Suomi" and job.city == "Turku"
     assert "Harjoittelupaikka" in job.description
+
+
+def test_json_ld_published_as_a_bare_array():
+    """Some pages ship the array itself, with stray strings and half-filled objects in it."""
+    html = """
+    <html><body><h1>ignored</h1>
+    <script type="application/ld+json">[
+      {"@type": "JobPosting", "title": "Data Analyst",
+       "hiringOrganization": ["not an object", {"name": "Zeta Oy"}],
+       "baseSalary": {"currency": "EUR",
+                      "value": {"minValue": "3200 e", "maxValue": "4000 e"}}},
+      "a stray string the CMS left behind"
+    ]</script></body></html>
+    """
+    job = parse_detail(html, "https://www.jobly.fi/tyopaikka/data-analyst-3")
+    assert job.title == "Data Analyst"
+    assert job.company == "Zeta Oy"
+    assert job.salary_text == "3200 e - 4000 e EUR"  # figures the CMS wrote as text survive
+
+
+def test_the_markup_fallbacks_come_up_empty():
+    html = """
+    <html><body>
+      <h1>Kesätyö</h1>
+      <span class="company-name"></span>
+      <div class="location-wrapper">   </div>
+      <p>Ei muuta tietoa tarjolla tässä ilmoituksessa.</p>
+    </body></html>
+    """
+    job = parse_detail(html, "https://www.jobly.fi/tyopaikka/kesatyo-4")
+    assert job.company is None
+    assert job.location_raw is None and job.city is None
+    assert job.country == "FI"  # the board is Finnish; that much is always known
+
+
+def test_a_country_only_location_has_no_city():
+    html = """
+    <html><body><script type="application/ld+json">
+    {"@type": "JobPosting", "title": "Etätyö",
+     "jobLocation": {"address": {"addressLocality": "Suomi, Finland"}}}
+    </script></body></html>
+    """
+    job = parse_detail(html, "https://www.jobly.fi/tyopaikka/etatyo-5")
+    assert job.location_raw == "Suomi, Finland"
+    assert job.city is None and job.country == "FI"
+
+
+def test_description_fallback_gives_up_on_an_empty_page():
+    from bs4 import BeautifulSoup
+
+    assert _description_from_markup(BeautifulSoup("", "lxml")) is None
 
 
 @pytest.mark.parametrize(

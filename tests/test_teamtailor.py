@@ -11,7 +11,13 @@ from xml.etree import ElementTree as ET
 import httpx
 import pytest
 
-from jobscraper.sources.teamtailor import Teamtailor, parse_rss_item
+from jobscraper.sources.teamtailor import (
+    Teamtailor,
+    TeamtailorTenantError,
+    parse_json_item,
+    parse_rss,
+    parse_rss_item,
+)
 
 TENANT = "upcloud"
 EEST = timezone(timedelta(hours=3))
@@ -169,6 +175,58 @@ def test_invalid_slug_is_never_requested(make_ctx):
 def test_missing_tenants_option_raises(make_ctx):
     with pytest.raises(ValueError, match="no tenant slugs"):
         list(Teamtailor().fetch(make_ctx({})))
+
+
+def _json_item(posting: dict) -> dict:
+    return {
+        "id": "x",
+        "title": "Dev",
+        "url": "https://upcloud.teamtailor.com/jobs/1-dev",
+        "_jobposting": posting,
+    }
+
+
+def test_json_feed_reads_every_shape_of_job_location():
+    """One address object instead of a list, and a nested schema.org Country."""
+    job = parse_json_item(
+        _json_item(
+            {"jobLocation": {"address": {"addressLocality": "Oslo",
+                                         "addressCountry": {"name": "Norway"}}}}
+        ),
+        TENANT,
+    )
+    assert job.city == "Oslo" and job.country == "NO"
+    assert job.location_raw == "Oslo, Norway" and job.remote == "onsite"
+
+
+def test_json_feed_survives_job_locations_it_cannot_read():
+    job = parse_json_item(
+        _json_item({"jobLocation": ["not an object", {"address": "Helsinki"}, {"address": {}}]}),
+        TENANT,
+    )
+    assert job.city is None and job.country is None and job.location_raw is None
+    assert job.company == TENANT  # no hiringOrganization: the slug stands in
+    assert job.remote == "unknown"  # no address at all, so nothing says on-site
+
+
+def test_rss_that_is_not_a_feed_is_reported():
+    with pytest.raises(TeamtailorTenantError, match="not XML"):
+        parse_rss("<html><body>login", TENANT)
+    with pytest.raises(TeamtailorTenantError, match="is not <rss>"):
+        parse_rss("<html><body>login</body></html>", TENANT)
+
+
+def test_falls_back_to_rss_when_the_json_feed_has_no_items(make_ctx, caplog):
+    ctx = make_ctx(
+        {
+            f"{TENANT}.teamtailor.com/jobs.json": {"version": "https://jsonfeed.org/version/1.1"},
+            f"{TENANT}.teamtailor.com/jobs.rss": "teamtailor.rss",
+        },
+        options={"tenants": [TENANT]},
+    )
+    with caplog.at_level("INFO"):
+        assert len(list(Teamtailor().fetch(ctx))) == 2
+    assert "no items[]" in caplog.text
 
 
 def test_limit_stops_early(make_ctx):

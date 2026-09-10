@@ -7,7 +7,7 @@ country half ("Budapest, "), HTML entities in ``company`` and auto-generated ``t
 
 from datetime import UTC, datetime
 
-from jobscraper.sources.remoteok import RemoteOK, clean_location, salary_text
+from jobscraper.sources.remoteok import RemoteOK, clean_location, parse_record, salary_text
 
 ROUTE = {"remoteok.com/api": "remoteok.json"}
 
@@ -74,6 +74,30 @@ def test_clean_location_strips_the_dangling_separator():
     assert clean_location("Vancouver, BC, Canada") == "Vancouver, BC, Canada"
     assert clean_location("") is None
     assert clean_location(None) is None
+
+
+def test_remoteok_builds_the_url_the_feed_leaves_out():
+    site = "https://remoteok.com"
+    assert parse_record({"id": 1, "position": "Dev", "url": "/remote-jobs/dev-1"}).url == (
+        f"{site}/remote-jobs/dev-1"
+    )
+    assert parse_record({"id": 42, "position": "Dev", "slug": "dev-42"}).url == (
+        f"{site}/remote-jobs/dev-42"
+    )
+    bare = parse_record({"id": 43, "position": "Dev"})
+    assert bare.url == f"{site}/remote-jobs/43"  # the id is the last resort
+    assert bare.description is None  # nothing to strip, nothing to de-spam
+    assert parse_record("element 0 is a legal notice, not an object") is None
+
+
+def test_remoteok_emits_each_id_once(make_ctx):
+    payload = [
+        {"legal": "See https://remoteok.com/api"},
+        {"id": 7, "position": "Dev"},
+        {"id": 7, "position": "Dev (reposted)"},
+    ]
+    ctx = make_ctx({"remoteok.com/api": payload}, options={"tags": []})
+    assert [j.title for j in RemoteOK().fetch(ctx)] == ["Dev"]
 
 
 def test_salary_text_uses_the_feeds_usd_integers():

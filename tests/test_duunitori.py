@@ -145,3 +145,68 @@ def test_duunitori_raises_on_cloudflare_challenge(make_ctx):
     )
     with pytest.raises(SourceHTTPError):
         list(Duunitori().fetch(ctx))
+
+
+def test_duunitori_raises_when_the_challenge_comes_back_as_a_200(make_ctx):
+    """Cloudflare serves the interstitial with a 200 as often as with a 403."""
+    ctx = make_ctx(
+        {"jobentries": lambda req: httpx.Response(200, text="<html>Just a moment...</html>")}
+    )
+    with pytest.raises(SourceHTTPError, match="headless browser"):
+        list(Duunitori().fetch(ctx))
+
+
+def test_duunitori_raises_on_a_challenge_on_the_search_page(make_ctx):
+    ctx = make_ctx(
+        {
+            "jobentries": lambda req: httpx.Response(200, text="<html><body>Api Root</body></html>"),
+            "/tyopaikat": "<html>Checking your browser before accessing duunitori.fi</html>",
+        },
+        options={"queries": ["x"], "max_pages": 1},
+    )
+    with pytest.raises(SourceHTTPError, match="search page"):
+        list(Duunitori().fetch(ctx))
+
+
+def test_duunitori_uses_the_html_the_api_itself_returned(make_ctx):
+    """When /api/v1/jobentries answers with the search markup, no second request is needed."""
+    ctx = make_ctx({"jobentries": "duunitori_search.html"}, options={"queries": ["x"], "max_pages": 1})
+    jobs = list(Duunitori().fetch(ctx))
+
+    assert [j.title for j in jobs] == ["Junior Frontend Developer", "DevOps Engineer, etätyö"]
+    assert len(ctx.http.calls) == 1
+
+
+def test_duunitori_treats_a_non_list_results_field_as_empty(make_ctx):
+    ctx = make_ctx(
+        {"jobentries": {"count": 0, "next": None, "results": None}},
+        options={"queries": ["x"], "max_pages": 5},
+    )
+    assert list(Duunitori().fetch(ctx)) == []
+    assert len(ctx.http.calls) == 1
+
+
+def test_duunitori_accepts_a_single_query_string(make_ctx):
+    ctx = make_ctx({"jobentries": "duunitori.json"}, options={"queries": "python", "max_pages": 1})
+    assert len(list(Duunitori().fetch(ctx))) == 3
+    assert "search=python" in str(ctx.http.calls[0].url)
+
+
+def test_duunitori_record_without_a_location_is_still_finnish():
+    job = parse_record({"slug": "s1", "heading": "Dev"})
+    assert job.location_raw is None and job.city is None
+    assert job.country == "FI" and job.remote == "unknown"
+
+
+CARDS = """<html><body>
+<div class="job-box"><a href="/tyopaikat/tyo/x-1">   </a></div>
+<div class="job-box">
+  <a class="job-box__hover-title" href="/tyopaikat/tyo/y-2"></a><h3>Data Engineer</h3>
+</div>
+</body></html>"""
+
+
+def test_duunitori_card_without_a_readable_title_is_dropped():
+    records = parse_search_html(CARDS)
+    assert [r["heading"] for r in records] == ["Data Engineer"]  # the empty anchor wins nothing
+    assert records[0]["url"] == "https://duunitori.fi/tyopaikat/tyo/y-2"

@@ -1,6 +1,15 @@
 from datetime import UTC, datetime
 
-from jobscraper.sources.landingjobs import LandingJobs, company_from_url, salary_text
+import httpx
+import pytest
+
+from jobscraper.http import SourceHTTPError
+from jobscraper.sources.landingjobs import (
+    LandingJobs,
+    company_from_url,
+    parse_record,
+    salary_text,
+)
 
 ROUTES = {"/api/v1/jobs": "landingjobs.json"}
 
@@ -86,3 +95,56 @@ def test_landingjobs_helpers_tolerate_junk():
     assert salary_text({}) is None
     assert salary_text({"gross_salary_low": 30000}) == "30,000"
     assert salary_text({"gross_salary_low": 30000, "currency_code": "brl"}) == "30,000 BRL"
+    # a figure the feed wrote as text is kept verbatim rather than dropped
+    assert salary_text({"gross_salary_low": "40k"}) == "40k"
+
+
+def test_landingjobs_reads_the_half_filled_location_rows():
+    job = parse_record(
+        {
+            "id": 1,
+            "title": "Dev",
+            "url": "https://landing.jobs/at/acme/dev",
+            "locations": [{}, {"city": "Porto"}, {"country_code": "123"}],
+        }
+    )
+    assert job.location_raw == "Porto"
+    assert job.city == "Porto" and job.country is None  # "123" is not a country code
+
+    plain = parse_record(
+        {
+            "id": 2,
+            "title": "Dev",
+            "url": "https://landing.jobs/at/acme/dev-2",
+            "location": "  Braga, Portugal  ",  # some rows carry a string instead of a list
+        }
+    )
+    assert plain.location_raw == "Braga, Portugal"
+    assert plain.city == "Braga" and plain.country == "PT"
+
+    assert parse_record(["not", "an", "object"]) is None
+
+
+def test_landingjobs_unwraps_an_array_the_feed_put_in_an_envelope(make_ctx):
+    row = {"id": 9, "title": "Dev", "url": "https://landing.jobs/at/acme/dev-9"}
+    ctx = make_ctx({"/api/v1/jobs": {"jobs": [row]}}, options={"max_pages": 1})
+    assert [j.source_id for j in LandingJobs().fetch(ctx)] == ["9"]
+
+
+def test_landingjobs_raises_when_the_feed_is_not_a_list(make_ctx):
+    ctx = make_ctx({"/api/v1/jobs": lambda _req: httpx.Response(200, json=42)})
+    with pytest.raises(SourceHTTPError, match="expected a list"):
+        list(LandingJobs().fetch(ctx))
+
+
+def test_landingjobs_dedupes_across_pages_and_stops_at_max_pages(make_ctx):
+    """The feed is not date-ordered, so a full second page can repeat the first one entirely."""
+    page = [
+        {"id": i, "title": f"Junior Dev {i}", "url": f"https://landing.jobs/at/acme/junior-dev-{i}"}
+        for i in range(50)
+    ]
+    ctx = make_ctx({"/api/v1/jobs": page}, options={"max_pages": 2})
+    jobs = list(LandingJobs().fetch(ctx))
+
+    assert len(jobs) == 50  # the repeats are dropped
+    assert len(ctx.http.calls) == 2

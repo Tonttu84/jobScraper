@@ -558,4 +558,4 @@ def stats() -> None:
 
 
 if __name__ == "__main__":
-    app()
+    app()  # pragma: no cover - only reached by `python -m jobscraper.cli`
