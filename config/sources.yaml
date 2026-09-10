@@ -89,6 +89,8 @@ sources:
     # `country:` instead; source-level `default_countries:` (same shape) would cover every
     # board that names neither, and is left unset so a board in, say, Bucharest or Athens —
     # in the profile's tier-2 list but not in the anchor below — still reaches the rule filter.
+    workers: 4                      # boards fetched at once; they are independent hosts, and
+                                    # the client's per-host delay still applies (1 = sequential)
     default_include: 'engineer|developer|software|intern|trainee|graduate|working student|harjoittelija|kehittäjä'
     default_exclude: 'senior|lead|principal|staff|manager|director|head of|architect|vp\b'
     urls:

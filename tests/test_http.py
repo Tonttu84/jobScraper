@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import threading
 
 import httpx
 import pytest
@@ -110,3 +111,113 @@ def test_a_dead_host_is_retried_and_then_reported(monkeypatch):
     assert len(attempts) == 3 and slept == [2, 4]
     assert err.value.status is None
     assert "no route to host" in str(err.value)
+
+
+# --------------------------------------------------------------- thread safety
+
+
+def test_two_threads_on_the_same_host_wait_the_delay_out(monkeypatch):
+    """Sources fetch their boards from a thread pool: the polite delay must survive that."""
+    clock = [100.0]
+    slept: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        clock[0] += seconds  # serialised by the host's lock, so this stays consistent
+
+    monkeypatch.setattr(http_mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(http_mod.time, "sleep", sleep)
+
+    http = Http(min_delay=2.0, retries=0)
+    threads = [
+        threading.Thread(target=http._throttle, args=("https://example.test/a",))
+        for _ in range(3)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert slept == [2.0, 2.0]  # the first call waits for nothing, the two behind it do
+    assert http._last_call == {"example.test": 104.0}
+
+
+def test_the_same_host_is_throttled_one_thread_at_a_time(monkeypatch):
+    """Two threads may not sit out the same host's delay at once — that halves it."""
+    entered: list[str] = []
+    sleeping = threading.Event()
+    release = threading.Event()
+
+    def sleep(_seconds: float) -> None:
+        entered.append(threading.current_thread().name)
+        sleeping.set()
+        assert release.wait(10), "the throttled host was never released"
+
+    monkeypatch.setattr(http_mod.time, "sleep", sleep)
+
+    http = Http(min_delay=5.0, retries=0)
+    http._throttle("https://example.test/a")  # primes the host: the next call has to wait
+
+    first = threading.Thread(target=http._throttle, args=("https://example.test/b",))
+    first.start()
+    assert sleeping.wait(10)
+
+    second = threading.Thread(target=http._throttle, args=("https://example.test/c",))
+    second.start()
+    second.join(0.3)
+    assert entered == [first.name]  # the second thread queues behind, it does not overlap
+
+    release.set()
+    first.join(10)
+    second.join(10)
+    assert entered == [first.name, second.name]  # and then waits out its own delay
+
+
+def test_a_sleeping_host_does_not_hold_up_another_one(monkeypatch):
+    """One lock per host: waiting out example.test must not stall a call to other.test."""
+    sleeping = threading.Event()
+    release = threading.Event()
+
+    def sleep(_seconds: float) -> None:
+        sleeping.set()
+        assert release.wait(10), "the throttled host was never released"
+
+    monkeypatch.setattr(http_mod.time, "sleep", sleep)
+
+    http = Http(min_delay=5.0, retries=0)
+    http._throttle("https://example.test/a")  # primes the host: the next call has to wait
+
+    slow = threading.Thread(target=http._throttle, args=("https://example.test/b",))
+    slow.start()
+    assert sleeping.wait(10)
+
+    fast = threading.Thread(target=http._throttle, args=("https://other.test/a",))
+    fast.start()
+    fast.join(10)
+    assert not fast.is_alive()  # a different host waits for nothing
+
+    release.set()
+    slow.join(10)
+    assert set(http._last_call) == {"example.test", "other.test"}
+
+
+def test_the_delay_map_stays_consistent_under_many_threads():
+    hosts = [f"h{i}.test" for i in range(8)]
+    http = Http(min_delay=0, retries=0)
+    errors: list[Exception] = []
+
+    def hammer(host: str) -> None:
+        try:
+            for _ in range(20):
+                http._throttle(f"https://{host}/x")
+        except Exception as exc:  # pragma: no cover - only reached if the map is unsafe
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer, args=(host,)) for host in hosts * 2]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert not errors
+    assert set(http._last_call) == set(hosts)

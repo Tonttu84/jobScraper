@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,11 @@ class Http:
         self.min_delay = min_delay
         self.retries = retries
         self._last_call: dict[str, float] = {}
+        # One lock per host (created under ``_locks_lock``): a source that fetches from a
+        # thread pool must still honour the delay, and a thread waiting out host A must not
+        # keep a thread on host B waiting. A single lock would do both jobs badly.
+        self._host_locks: dict[str, threading.Lock] = {}
+        self._locks_lock = threading.Lock()
         use_cache = os.environ.get("JOBSCRAPER_HTTP_CACHE") == "1"
         self.cache_dir = cache_dir or (paths().data / "cache" if use_cache else None)
         base_headers = {
@@ -69,14 +75,24 @@ class Http:
         )
 
     # ------------------------------------------------------------------ helpers
+    def _host_lock(self, host: str) -> threading.Lock:
+        with self._locks_lock:
+            lock = self._host_locks.get(host)
+            if lock is None:
+                lock = self._host_locks[host] = threading.Lock()
+            return lock
+
     def _throttle(self, url: str) -> None:
         host = urlsplit(url).netloc
-        last = self._last_call.get(host)
-        if last is not None:
-            wait = self.min_delay - (time.monotonic() - last)
-            if wait > 0:
-                time.sleep(wait)
-        self._last_call[host] = time.monotonic()
+        # Held across the wait: two threads on one host take their turns instead of both
+        # deciding the delay is over. Threads on other hosts hold other locks and go on.
+        with self._host_lock(host):
+            last = self._last_call.get(host)
+            if last is not None:
+                wait = self.min_delay - (time.monotonic() - last)
+                if wait > 0:
+                    time.sleep(wait)
+            self._last_call[host] = time.monotonic()
 
     def _cache_path(self, method: str, url: str, body: Any) -> Path | None:
         if not self.cache_dir:

@@ -6,6 +6,8 @@ The library does the HTTP, so the tests monkeypatch ``get_scraper_for_url`` (and
 """
 
 import logging
+import threading
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -91,6 +93,17 @@ class EmptyLazyScraper(LazyScraper):
         return None
 
 
+class ThreadedScraper(FakeScraper):
+    """Records the thread it listed on, and is slow enough for the pool to overlap boards."""
+
+    thread: str | None = None
+
+    def fetch(self):
+        self.thread = threading.current_thread().name
+        time.sleep(0.01)
+        return list(self.jobs)
+
+
 def patch_boards(monkeypatch, mapping):
     """mapping: board key → list of ats Jobs, an exception to raise, or (cls, jobs).
 
@@ -155,7 +168,8 @@ def test_one_board_failing_does_not_stop_the_rest(monkeypatch, make_ctx):
         monkeypatch,
         {LEVER: ScraperError("Could not recognize an ATS"), GREENHOUSE: ats_jobs()},
     )
-    jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": [LEVER, GREENHOUSE]})))
+    options = {"urls": [LEVER, GREENHOUSE], "workers": 1}  # sequential: the order is fixed
+    jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
     assert calls == [LEVER, GREENHOUSE]
     assert len(jobs) == 3
 
@@ -178,7 +192,7 @@ def test_bad_record_is_skipped_not_raised(monkeypatch, make_ctx):
 
 def test_limit_stops_early(monkeypatch, make_ctx):
     calls = patch_boards(monkeypatch, {GREENHOUSE: ats_jobs(), LEVER: ats_jobs()})
-    ctx = make_ctx({}, options={"urls": [GREENHOUSE, LEVER]}, limit=2)
+    ctx = make_ctx({}, options={"urls": [GREENHOUSE, LEVER], "workers": 1}, limit=2)
     assert len(list(ATSBoards().fetch(ctx))) == 2
     assert calls == [GREENHOUSE]  # second board never touched
 
@@ -186,6 +200,69 @@ def test_limit_stops_early(monkeypatch, make_ctx):
 def test_missing_urls_option_raises(make_ctx):
     with pytest.raises(ValueError, match="no careers URLs"):
         list(ATSBoards().fetch(make_ctx({})))
+
+
+# --------------------------------------------------------------- parallel boards
+
+
+def threaded_boards(count: int, per_board: int = 1) -> dict[str, tuple]:
+    """``count`` distinct boards, each listing ``per_board`` postings, on slow scrapers."""
+    return {
+        f"https://boards.greenhouse.io/co{i}": (
+            ThreadedScraper,
+            [make_job(f"Engineer {i}-{n}", ats_id=f"{i}-{n}") for n in range(per_board)],
+        )
+        for i in range(count)
+    }
+
+
+def test_boards_are_fetched_in_parallel(monkeypatch, make_ctx, caplog):
+    boards = threaded_boards(6)
+    calls = patch_boards(monkeypatch, boards)
+    options = {"urls": list(boards), "workers": 3}
+    with caplog.at_level(logging.INFO, logger="jobscraper.sources.ats_boards"):
+        jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
+
+    # Board order is not fixed in this mode, so compare as a set.
+    assert {j.title for j in jobs} == {f"Engineer {i}-0" for i in range(6)}
+    assert len({s.thread for s in calls.made}) > 1  # more than one worker ran a board
+    assert caplog.text.count("after title filter") == 6  # every board still logs its line
+
+
+def test_one_worker_keeps_the_configured_board_order(monkeypatch, make_ctx):
+    boards = threaded_boards(3)
+    calls = patch_boards(monkeypatch, boards)
+    options = {"urls": list(boards), "workers": 1}
+    jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
+
+    assert calls == list(boards)
+    assert [j.title for j in jobs] == [f"Engineer {i}-0" for i in range(3)]
+    assert {s.thread for s in calls.made} == {threading.current_thread().name}
+
+
+@pytest.mark.parametrize("workers", [1, 3])
+def test_a_failing_board_is_skipped_whatever_the_worker_count(
+    monkeypatch, make_ctx, caplog, workers
+):
+    boards = threaded_boards(3)
+    mapping = dict(boards)
+    mapping[LEVER] = ScraperError("Could not recognize an ATS")
+    patch_boards(monkeypatch, mapping)
+    options = {"urls": [LEVER, *boards], "workers": workers}
+    with caplog.at_level(logging.WARNING, logger="jobscraper.sources.ats_boards"):
+        jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
+
+    assert {j.title for j in jobs} == {f"Engineer {i}-0" for i in range(3)}
+    assert f"board {LEVER} failed" in caplog.text
+
+
+def test_the_limit_stops_the_pool_early(monkeypatch, make_ctx):
+    boards = threaded_boards(12, per_board=2)
+    calls = patch_boards(monkeypatch, boards)
+    ctx = make_ctx({}, options={"urls": list(boards), "workers": 3}, limit=2)
+
+    assert len(list(ATSBoards().fetch(ctx))) == 2
+    assert len(calls) < len(boards)  # the boards still queued are dropped, not fetched
 
 
 # --------------------------------------------------------------- explicit ATS entries
@@ -251,7 +328,7 @@ def test_unknown_ats_name_fails_that_board_only(monkeypatch, make_ctx):
         },
     )
     entries = [{"ats": "nosuchats", "slug": "acme"}, GREENHOUSE]
-    jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": entries})))
+    jobs = list(ATSBoards().fetch(make_ctx({}, options={"urls": entries, "workers": 1})))
     assert calls == [("nosuchats", "acme"), GREENHOUSE]
     assert len(jobs) == 3
 
@@ -289,6 +366,7 @@ def test_source_level_defaults_apply_only_to_boards_without_their_own(monkeypatc
         "urls": [GREENHOUSE, {"url": LEVER, "exclude": "nothing-here"}],
         "default_include": "engineer",
         "default_exclude": "senior",
+        "workers": 1,  # sequential: the boards keep their configured order
     }
     jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
     # first board takes both defaults, the second keeps default_include but overrides exclude
@@ -657,6 +735,7 @@ def test_default_countries_apply_only_to_boards_without_their_own(monkeypatch, m
     options = {
         "urls": [GREENHOUSE, {"url": LEVER, "countries": ["IN"]}],
         "default_countries": ["FI", "SE"],
+        "workers": 1,  # sequential: the boards keep their configured order
     }
     jobs = list(ATSBoards().fetch(make_ctx({}, options=options)))
     assert [j.country for j in jobs] == ["FI", "IN"]

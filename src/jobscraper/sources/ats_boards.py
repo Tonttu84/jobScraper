@@ -48,13 +48,20 @@ requisition service instead (``_cornerstone``).
 One board failing (dead company, ATS change, unknown ATS name, 403) never stops the rest;
 only an *all boards failed* run raises. A malformed board entry, on the other hand, is a
 config bug and raises before any fetching starts.
+
+The boards are independent hosts, so ``workers`` of them are fetched at once (a thread pool;
+``workers: 1`` keeps the old sequential path) and each board is emitted as it finishes. The
+polite per-host delay still applies — it is enforced per host, not per client — so this
+parallelism costs no site anything; what it buys is a wall time near the slowest board
+instead of the sum of all of them.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
@@ -455,6 +462,63 @@ def _fill_descriptions(
             job.description = description[:_MAX_DESCRIPTION]
 
 
+def _run_board(
+    board: Board, *, timeout: float, include_descriptions: bool, http: Any
+) -> tuple[list[Job], str]:
+    """Everything one board costs: list → title filter → country filter → descriptions →
+    convert. Returns the board's jobs and the summary line its caller logs.
+
+    This is what a worker thread runs, so it touches no shared state of its own: the only
+    thing it shares is ``ctx.http``, whose per-host delay is thread-safe (see ``http.py``).
+    """
+    scraper, describe = _open_board(
+        board, timeout=timeout, include_descriptions=include_descriptions, http=http
+    )
+    ats_jobs = list(scraper.fetch())
+    kept = [job for job in ats_jobs if board.keep(job.title)]
+    # Country before descriptions: an out-of-region posting must not cost a request.
+    in_region = [job for job in kept if board.in_region(job)]
+    summary = f"{NAME}: {board.label} -> {len(ats_jobs)} jobs, {len(kept)} after title filter"
+    if board.countries:
+        summary += f", {len(in_region)} after country filter"
+    _fill_descriptions(in_region, describe, board.label)
+    convert_one = partial(convert, company=board.company, country=board.country)
+    return list(safe_records(in_region, convert_one, NAME)), summary
+
+
+#: A board's finished work: call it for ``(jobs, summary)``, or let it re-raise its failure.
+BoardWork = Callable[[], tuple[list[Job], str]]
+
+
+def _board_results(
+    boards: list[Board], run: Callable[[Board], tuple[list[Job], str]], workers: int
+) -> Iterator[tuple[Board, BoardWork]]:
+    """Each board paired with its result, ready to be logged and yielded.
+
+    With one worker the boards are fetched lazily, in configured order — the sequential path
+    the ``ctx.limit`` short-circuit and the ordering tests rely on. With more, they run in a
+    thread pool and arrive as they finish, so one slow enterprise board no longer holds up
+    the 80 others (boards are independent hosts). Board order in the output then varies
+    between runs; nothing downstream depends on it — the store upserts by job id.
+    """
+    if workers <= 1:
+        for board in boards:
+            yield board, partial(run, board)
+        return
+
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ats-board")
+    try:
+        pending: dict[Future[tuple[list[Job], str]], Board] = {
+            pool.submit(run, board): board for board in boards
+        }
+        for future in as_completed(pending):
+            yield pending[future], future.result
+    finally:
+        # Reached early when ``ctx.limit`` was filled: drop the boards still queued and stop
+        # waiting on the ones in flight, whose output nobody is going to read anyway.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 class ATSBoards:
     name = NAME
     description = "Company career boards (Greenhouse/Lever/Ashby/Workday/… via ats-scrapers)"
@@ -469,6 +533,7 @@ class ATSBoards:
             raise ValueError(f"{NAME}: no careers URLs configured (option 'urls')")
         timeout = float(ctx.opt("timeout", 30.0))
         include_descriptions = bool(ctx.opt("include_descriptions", True))
+        workers = int(ctx.opt("workers", 4) or 1)
         defaults = {
             "default_include": _compile(ctx.opt("default_include"), "default_include", "options"),
             "default_exclude": _compile(ctx.opt("default_exclude"), "default_exclude", "options"),
@@ -480,34 +545,20 @@ class ATSBoards:
         # Malformed config is a bug, not a flaky board: fail before any HTTP happens.
         boards = [make_board(entry, **defaults) for entry in entries]
 
+        run = partial(
+            _run_board, timeout=timeout, include_descriptions=include_descriptions, http=ctx.http
+        )
         seen = 0
         failures: list[str] = []
-        for board in boards:
+        for board, work in _board_results(boards, run, workers):
             try:
-                scraper, describe = _open_board(
-                    board,
-                    timeout=timeout,
-                    include_descriptions=include_descriptions,
-                    http=ctx.http,
-                )
-                ats_jobs = list(scraper.fetch())
+                jobs, summary = work()
             except Exception as exc:
                 failures.append(board.label)
                 log.warning("%s: board %s failed: %s", self.name, board.label, exc)
                 continue
-            kept = [job for job in ats_jobs if board.keep(job.title)]
-            # Country before descriptions: an out-of-region posting must not cost a request.
-            in_region = [job for job in kept if board.in_region(job)]
-            log.info(
-                "%s: %s -> %d jobs, %d after title filter%s",
-                self.name,
-                board.label,
-                len(ats_jobs),
-                len(kept),
-                f", {len(in_region)} after country filter" if board.countries else "",
-            )
-            _fill_descriptions(in_region, describe, board.label)
-            for job in safe_records(in_region, partial(convert, company=board.company, country=board.country), self.name):
+            log.info("%s", summary)
+            for job in jobs:
                 yield job
                 seen += 1
                 if ctx.limit and seen >= ctx.limit:
