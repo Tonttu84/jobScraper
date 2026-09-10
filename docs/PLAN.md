@@ -45,10 +45,11 @@ the first real run; expect a few to need small parser fixes.
 | wttj | EU | Algolia | medium-high | public keys rotate; fetched from `/api/env` |
 | landingjobs | PT/EU | JSON | medium | company derived from URL |
 | remotive, jobicy, himalayas, remoteok, weworkremotely | remote | JSON/RSS | high | region text kept for the filter |
+| jobly | FI | HTML via headless browser, JSON-LD detail | low | Cloudflare; `enabled: false` until `probe jobly` confirms it — written without access to the site |
 | bayt | AE | HTML | low | cookie handshake; may need a headless browser |
 | eures | EU | JSON | off | huge; enable with a narrow query if wanted |
 | microsoft | global (filtered by country) | JSON search API + detail | medium | undocumented careers endpoint; `lc` repeated per country, `exp`/`p` filters |
-| Skipped | | | | jobly.fi (Cloudflare), finn.no (Norwegian, client-rendered), Indeed direct, relocate.me, meetfrank |
+| Skipped | | | | finn.no (Norwegian, client-rendered), Indeed direct, relocate.me, meetfrank |
 
 ## Pipeline details
 - **Normalized `Job`** (`models.py`): source, source_id, url, title, company, description (plain
@@ -107,7 +108,11 @@ Trigger: whenever a new CV arrives, offer these (CLAUDE.md → "When the owner h
 - ~~Message Batches API for the prefilter (50% cheaper, async).~~ Done: `jobscraper prefilter --batch`
   (or `ai.prefilter_batch: true`) submits the pending jobs as one Message Batch and polls until it
   ends; submitted batch ids are stored, so an interrupted wait is resumed instead of paid twice.
-- Headless-browser fallback (Playwright is already a skill of yours) for Cloudflare sites.
+- ~~Headless-browser fallback (Playwright is already a skill of yours) for Cloudflare sites.~~
+  Done: `browser.py` wraps a persistent headless Chromium (profile in `data/browser/`, so the
+  clearance cookie survives), `SourceContext.page(url, mode=…)` falls back to it on 403/503 or
+  a challenge page, `http.browser: auto|never` in `config/sources.yaml` is the switch, and
+  `jobly` is the first source that uses it.
 - Auth module for the web UI, for when it is shared with other students (today it is
   handle-only, see docs/WEB.md). Not urgent; the spec depends on later decisions (who hosts
   it, one DB per person or shared, whether profiles become per-user).

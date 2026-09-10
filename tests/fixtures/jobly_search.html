@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="utf-8">
+  <title>Työpaikat | Jobly.fi</title>
+</head>
+<body class="path-tyopaikat">
+<div class="dialog-off-canvas-main-canvas">
+  <header>
+    <nav>
+      <!-- not a job link: must never be fetched as a posting -->
+      <a href="/yritykset/acme-software-oy">Acme Software Oy</a>
+      <a href="/tyopaikat?search=software+developer&amp;page=1">Seuraava sivu</a>
+    </nav>
+  </header>
+
+  <div class="view view-job-search">
+    <div class="view-content">
+
+      <div class="views-row">
+        <article class="node--type-job teaser">
+          <h2 class="node__title">
+            <a href="https://www.jobly.fi/tyopaikka/ohjelmistokehittaja-helsinki-12345">
+              Ohjelmistokehittäjä (Junior)
+            </a>
+          </h2>
+          <div class="field--name-field-company">Acme Software Oy</div>
+          <div class="field--name-field-location">Helsinki</div>
+        </article>
+      </div>
+
+      <div class="views-row">
+        <article class="node--type-job teaser">
+          <h2 class="node__title">
+            <a href="/tyopaikka/junior-developer-espoo-12346">Junior Developer</a>
+          </h2>
+          <div class="field--name-field-company">Beta Consulting Oy</div>
+          <div class="field--name-field-location">Espoo</div>
+        </article>
+      </div>
+
+      <div class="views-row">
+        <article class="node--type-job teaser">
+          <h2 class="node__title">
+            <a href="/tyopaikka/full-stack-developer-tampere-12347">Full Stack Developer</a>
+          </h2>
+          <div class="field--name-field-company">Gamma Digital Oy</div>
+          <div class="field--name-field-location">Tampere</div>
+        </article>
+        <!-- the card's "read more" link repeats the first posting's URL -->
+        <a class="more-link" href="/tyopaikka/ohjelmistokehittaja-helsinki-12345">Lue lisää</a>
+      </div>
+
+    </div>
+    <nav class="pager">
+      <a href="/tyopaikat?search=software+developer&amp;page=1" title="Siirry seuraavalle sivulle">Seuraava ›</a>
+    </nav>
+  </div>
+</div>
+</body>
+</html>

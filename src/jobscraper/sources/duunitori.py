@@ -41,7 +41,13 @@ from urllib.parse import urlsplit
 
 from jobscraper.http import SourceHTTPError, _raise_for_status, strip_html
 from jobscraper.models import Job
-from jobscraper.sources._common import COUNTRY_NAMES, guess_country, guess_remote, parse_date
+from jobscraper.sources._common import (
+    COUNTRY_NAMES,
+    guess_country,
+    guess_remote,
+    is_cloudflare_challenge,
+    parse_date,
+)
 from jobscraper.sources.base import SourceContext, register, safe_records
 
 log = logging.getLogger(__name__)
@@ -190,11 +196,6 @@ def parse_search_html(html: str | None) -> list[dict[str, Any]]:
     return records
 
 
-def _looks_like_challenge(text: str) -> bool:
-    low = (text or "")[:4000].lower()
-    return "just a moment" in low or "cloudflare" in low
-
-
 class Duunitori:
     name = "duunitori"
     description = "duunitori.fi search API (Finland), with a server-rendered HTML fallback"
@@ -228,7 +229,7 @@ class Duunitori:
         params = {"search": query, "search_also_descr": 1, "page": page}
         resp = ctx.http.get(API, params=params, headers=JSON_HEADERS)
         _raise_for_status(resp)
-        if _looks_like_challenge(resp.text):
+        if is_cloudflare_challenge(resp.text):
             raise SourceHTTPError(
                 "duunitori: bot challenge instead of JSON (this source needs a headless browser)",
                 resp.status_code,
@@ -250,7 +251,7 @@ class Duunitori:
             html = ctx.http.get_text(
                 SEARCH_HTML, params={"haku": query, "sivu": page}, headers=HTML_HEADERS
             )
-            if _looks_like_challenge(html):
+            if is_cloudflare_challenge(html):
                 raise SourceHTTPError("duunitori: bot challenge on the search page", 403)
             records = parse_search_html(html)
         return records, bool(records)
