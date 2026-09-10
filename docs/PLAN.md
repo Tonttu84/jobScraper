@@ -47,6 +47,7 @@ the first real run; expect a few to need small parser fixes.
 | remotive, jobicy, himalayas, remoteok, weworkremotely | remote | JSON/RSS | high | region text kept for the filter |
 | bayt | AE | HTML | low | cookie handshake; may need a headless browser |
 | eures | EU | JSON | off | huge; enable with a narrow query if wanted |
+| microsoft | global (filtered by country) | JSON search API + detail | medium | undocumented careers endpoint; `lc` repeated per country, `exp`/`p` filters |
 | Skipped | | | | jobly.fi (Cloudflare), finn.no (Norwegian, client-rendered), Indeed direct, relocate.me, meetfrank |
 
 ## Pipeline details

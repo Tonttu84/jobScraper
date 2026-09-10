@@ -110,3 +110,16 @@ sources:
     enabled: false
     queries: ["junior developer", "software developer", "software engineer intern"]
     max_pages: 3
+
+  # ---------------------------------------------------------------- Company career sites
+  microsoft:
+    # jobs.careers.microsoft.com; verify with `jobscraper probe microsoft` — the endpoint is undocumented.
+    enabled: true
+    queries: ["software engineer", "software developer"]
+    # Each location is sent as a repeated `lc` param in one request per query.
+    locations: ["Finland", "Estonia", "Sweden", "Denmark", "Norway", "Germany", "Netherlands", "Ireland", "Czech Republic", "Poland", "Spain", "Portugal", "United Arab Emirates"]
+    experience: ["Students and graduates"]   # [] = no experience filter
+    profession: "Software Engineering"       # null = every profession
+    max_pages: 10                            # 20 jobs per page
+    fetch_details: true                      # search gives a teaser only; detail has the full text
+    max_details: 150
