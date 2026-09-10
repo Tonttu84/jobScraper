@@ -43,6 +43,8 @@
   aside h2:first-child { margin-top: 0; }
   aside label { display: block; font-size: 14px; }
   aside select[multiple] { width: 100%; height: 92px; }
+  aside #f-decision { height: 118px; }
+  .note-line { font-size: 12px; margin-top: 4px; }
   aside input[type=text], aside input[type=number], aside select:not([multiple]) { width: 100%; }
   main { flex: 1; min-width: 0; }
   .chips { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -132,7 +134,8 @@
     <input type="number" id="f-score" min="0" max="100" step="5" placeholder="any">
 
     <h2>Decision</h2>
-    <select id="f-decision"><option value="">all</option><option value="none">no decision</option></select>
+    <select id="f-decision" multiple></select>
+    <div id="decision-note" class="muted note-line">applies once you pick a handle</div>
 
     <h2>Search</h2>
     <input type="text" id="f-q" placeholder="title or company">
@@ -152,6 +155,35 @@
 
 var STATE = { offset: 0, total: 0, shown: 0 };
 var LIMIT = 50;
+
+// The decision statuses in the order the cards show their buttons; /api/meta lists the same
+// set, and its order is mapped onto this one so both rows read alike.
+var STATUSES = ["applied", "skipped", "interested", "interview", "rejected", "offer"];
+// Marked as dead ends: still selectable, just not part of the default view.
+var DECISIONS_OFF_BY_DEFAULT = ["skipped", "rejected"];
+
+// ISO-3166 alpha-2 → the name to show. The API keeps receiving the code (the option value);
+// this only decides what the reader sees. Europe in full, plus the places the sources reach.
+var COUNTRY_NAMES = {
+  AD: "Andorra", AL: "Albania", AM: "Armenia", AT: "Austria", AZ: "Azerbaijan",
+  BA: "Bosnia and Herzegovina", BE: "Belgium", BG: "Bulgaria", BY: "Belarus",
+  CH: "Switzerland", CY: "Cyprus", CZ: "Czechia", DE: "Germany", DK: "Denmark",
+  EE: "Estonia", ES: "Spain", FI: "Finland", FO: "Faroe Islands", FR: "France",
+  GB: "United Kingdom", GE: "Georgia", GG: "Guernsey", GI: "Gibraltar", GR: "Greece",
+  HR: "Croatia", HU: "Hungary", IE: "Ireland", IM: "Isle of Man", IS: "Iceland",
+  IT: "Italy", JE: "Jersey", LI: "Liechtenstein", LT: "Lithuania", LU: "Luxembourg",
+  LV: "Latvia", MC: "Monaco", MD: "Moldova", ME: "Montenegro", MK: "North Macedonia",
+  MT: "Malta", NL: "Netherlands", NO: "Norway", PL: "Poland", PT: "Portugal",
+  RO: "Romania", RS: "Serbia", RU: "Russia", SE: "Sweden", SI: "Slovenia", SK: "Slovakia",
+  SM: "San Marino", TR: "Türkiye", UA: "Ukraine", VA: "Vatican City", XK: "Kosovo",
+  AE: "United Arab Emirates", AR: "Argentina", AU: "Australia", BR: "Brazil", CA: "Canada",
+  CL: "Chile", CN: "China", CO: "Colombia", EG: "Egypt", IL: "Israel", IN: "India",
+  JP: "Japan", KR: "South Korea", MA: "Morocco", MX: "Mexico", NZ: "New Zealand",
+  SG: "Singapore", US: "United States", ZA: "South Africa"
+};
+function countryName(code) {
+  return COUNTRY_NAMES[String(code || "").toUpperCase()] || code;
+}
 
 function esc(value) {
   return String(value === null || value === undefined ? "" : value)
@@ -222,7 +254,9 @@ function query(extra) {
   if ($("f-score").value !== "") { p.set("min_score", $("f-score").value); }
   if ($("f-q").value.trim()) { p.set("q", $("f-q").value.trim()); }
   if (handle()) { p.set("user", handle()); }
-  if ($("f-decision").value && handle()) { p.set("decision", $("f-decision").value); }
+  // Without a handle the server has no decisions to match on, so the box stays inert.
+  var decisions = selectedValues($("f-decision"));
+  if (decisions.length && handle()) { p.set("decision", decisions.join(",")); }
   for (var key in (extra || {})) { p.set(key, extra[key]); }
   return p.toString();
 }
@@ -274,7 +308,7 @@ function cardHtml(job) {
   var score = (job.score === null || job.score === undefined) ? "–" : job.score;
   var teaser = teaserFor(job);
 
-  var buttons = ["applied", "skipped", "interested", "interview", "rejected", "offer"];
+  var buttons = STATUSES;
   // Rendered closed; refreshCard/toggleDetail move it with setToggle when the detail is open.
   var actions = '<button class="toggle" type="button" aria-expanded="false">Details ▾</button>';
   for (var b = 0; b < buttons.length; b++) {
@@ -446,6 +480,62 @@ function options(select, values) {
   });
 }
 
+// Countries read as names ("Luxembourg (3)"), sorted by that name, but the value stays the code
+// so ?country=LU keeps working.
+function countryOptions(select, counts) {
+  var rows = Object.keys(counts || {}).map(function (code) {
+    return { code: code, label: countryName(code) + " (" + counts[code] + ")",
+             name: countryName(code) };
+  });
+  rows.sort(function (a, b) {
+    return a.name.localeCompare(b.name) || a.code.localeCompare(b.code);
+  });
+  select.innerHTML = "";
+  rows.forEach(function (row) {
+    var option = document.createElement("option");
+    option.value = row.code;
+    option.textContent = row.label;
+    select.appendChild(option);
+  });
+}
+
+// "no decision" first, then the statuses in the card-button order; anything the server knows
+// about but the page does not is appended rather than dropped.
+function decisionValues(meta) {
+  var known = (meta.decision_statuses || []).slice();
+  var out = ["none"];
+  STATUSES.forEach(function (status) {
+    if (known.indexOf(status) >= 0) { out.push(status); }
+  });
+  known.forEach(function (status) {
+    if (out.indexOf(status) < 0) { out.push(status); }
+  });
+  return out;
+}
+
+function defaultDecisions(values) {
+  return values.filter(function (value) {
+    return DECISIONS_OFF_BY_DEFAULT.indexOf(value) < 0;
+  });
+}
+
+function selectValues(select, values) {
+  for (var i = 0; i < select.options.length; i++) {
+    select.options[i].selected = values.indexOf(select.options[i].value) >= 0;
+  }
+}
+
+function resetDecisions() {
+  var select = $("f-decision");
+  var all = [];
+  for (var i = 0; i < select.options.length; i++) { all.push(select.options[i].value); }
+  selectValues(select, defaultDecisions(all));
+  store("jobscraper.decisions", selectedValues(select).join(","));
+}
+
+// The box does nothing until the viewer says who they are; say so instead of leaving it dead.
+function syncDecisionNote() { $("decision-note").hidden = !!handle(); }
+
 function keys(obj) { return Object.keys(obj || {}).sort(); }
 
 function buildFilters(meta) {
@@ -471,16 +561,23 @@ function buildFilters(meta) {
 
   var sections = ["ranked", "prefilter", "review"];
   checkboxes($("f-sections"), sections, sections);
-  options($("f-country"), keys(meta.countries));
+  countryOptions($("f-country"), meta.countries);
   options($("f-remote"), keys(meta.remote));
 
   var decision = $("f-decision");
-  (meta.decision_statuses || []).forEach(function (status) {
+  var values = decisionValues(meta);
+  decision.innerHTML = "";
+  values.forEach(function (value) {
     var option = document.createElement("option");
-    option.value = status;
-    option.textContent = status;
+    option.value = value;
+    option.textContent = value === "none" ? "no decision" : value;
     decision.appendChild(option);
   });
+  // No stored choice yet means the default view: everything except the dead ends.
+  var savedDecisions = stored("jobscraper.decisions", null);
+  selectValues(decision, savedDecisions === null
+    ? defaultDecisions(values)
+    : savedDecisions.split(",").filter(function (v) { return v; }));
 
   var info = "no stored report — live view";
   if (meta.report) {
@@ -493,14 +590,17 @@ function buildFilters(meta) {
 
 function wire() {
   $("user").value = stored("jobscraper.user", "");
+  syncDecisionNote();
   $("user").addEventListener("change", function () {
     store("jobscraper.user", handle());
     $("hint").textContent = "";
     clearCardHints();
+    syncDecisionNote();
     reload();
   });
   // The complaint is answered the moment a handle appears — no need to wait for the change event.
   $("user").addEventListener("input", function () {
+    syncDecisionNote();
     if (!handle()) { return; }
     $("hint").textContent = "";
     clearCardHints();
@@ -510,8 +610,10 @@ function wire() {
     store("jobscraper.fso", $("f-webdev").checked ? "1" : "0");
     reload();
   });
-  ["f-score", "f-decision"].forEach(function (id) {
-    $(id).addEventListener("change", reload);
+  $("f-score").addEventListener("change", reload);
+  $("f-decision").addEventListener("change", function () {
+    store("jobscraper.decisions", selectedValues($("f-decision")).join(","));
+    reload();
   });
   $("f-q").addEventListener("input", reload);
   $("f-score").addEventListener("input", reload);
@@ -530,7 +632,8 @@ function wire() {
     // Profile facts (spoken languages, Full Stack Open) describe the viewer and survive a reset.
     $("f-score").value = "";
     $("f-q").value = "";
-    $("f-decision").value = "";
+    // "Reset" means the default view, which is not "all": the dead ends stay out.
+    resetDecisions();
     var chips = $("f-stacks").querySelectorAll(".chip");
     for (var i = 0; i < chips.length; i++) { chips[i].classList.remove("on"); }
     [$("f-country"), $("f-remote")].forEach(function (select) {

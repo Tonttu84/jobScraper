@@ -423,6 +423,39 @@ def test_decisions_are_attached_and_filterable(seeded):
     assert jobs["cpp"].id not in ids(none)
 
 
+def test_decision_takes_several_values(seeded):
+    """The page's decision box is a multi-select: ``none`` and statuses mix freely."""
+    client, jobs = seeded
+    client.put(f"/api/jobs/{jobs['web'].id}/decision",
+               json={"user": "ada", "status": "applied"})
+    client.put(f"/api/jobs/{jobs['py'].id}/decision",
+               json={"user": "ada", "status": "rejected"})
+
+    # two statuses, no "none"
+    both = client.get("/api/jobs?user=ada&decision=applied,skipped").json()
+    assert set(ids(both)) == {jobs["web"].id, jobs["cpp"].id}
+
+    # "none" alongside a status: undecided jobs plus that one
+    mixed = client.get("/api/jobs?user=ada&decision=none,applied").json()
+    assert set(ids(mixed)) == {jobs["web"].id, jobs["rev"].id}
+
+    # repeated parameters say the same thing as the comma list
+    repeated = client.get("/api/jobs?user=ada&decision=none&decision=applied").json()
+    assert ids(repeated) == ids(mixed)
+
+    # the page's default: everything except skipped and rejected
+    default = "decision=none&decision=applied&decision=interested&decision=interview&decision=offer"
+    assert set(ids(client.get(f"/api/jobs?user=ada&{default}").json())) == {
+        jobs["web"].id, jobs["rev"].id
+    }
+
+    # case and spacing are normalized like the other list params
+    assert ids(client.get("/api/jobs?user=ada&decision=APPLIED, skipped").json()) == ids(both)
+
+    # an empty value is no filter at all (and needs no user)
+    assert client.get("/api/jobs?decision=").json()["total"] == 4
+
+
 # ------------------------------------------------------------------------ detail
 
 

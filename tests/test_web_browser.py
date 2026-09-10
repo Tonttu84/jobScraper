@@ -435,3 +435,102 @@ def test_decision_filter_shows_only_the_users_marked_jobs(page, site):
     page.locator("#f-decision").select_option("none")
     expect(count(page)).to_have_text("2 of 2")
     expect(card(page, jobs["py"])).to_have_count(0)
+
+
+# ------------------------------------------------------------------ country names
+
+
+def options_of(page, select_id):
+    return page.eval_on_selector(
+        f"#{select_id}", "el => Array.from(el.options).map(o => o.value + '|' + o.textContent)")
+
+
+def selected_of(page, select_id):
+    return page.eval_on_selector(
+        f"#{select_id}", "el => Array.from(el.selectedOptions).map(o => o.value)")
+
+
+def test_country_options_show_names_with_counts_sorted_by_name(page):
+    # the seed holds one job each in FI, DE, PT and SE — by name Finland comes before Germany
+    assert options_of(page, "f-country") == [
+        "FI|Finland (1)", "DE|Germany (1)", "PT|Portugal (1)", "SE|Sweden (1)"
+    ]
+    # the code is still the value the API gets
+    assert page.evaluate("() => countryName('LU')") == "Luxembourg"
+    assert page.evaluate("() => countryName('GB')") == "United Kingdom"
+    assert page.evaluate("() => countryName('ZZ')") == "ZZ"  # unknown codes fall back
+
+
+def test_choosing_a_country_by_its_name_filters_like_the_code_did(page, site):
+    _, jobs = site
+    page.locator("#f-country").select_option(label="Finland (1)")
+    expect(count(page)).to_have_text("1 of 1")
+    expect(card(page, jobs["web"])).to_have_count(1)
+    assert selected_of(page, "f-country") == ["FI"]
+    page.locator("#f-country").select_option([])
+    expect(count(page)).to_have_text("3 of 3")
+
+
+# ------------------------------------------------------------------ decision multi-select
+
+
+DEFAULT_DECISIONS = ["none", "applied", "interested", "interview", "offer"]
+
+
+def test_decision_multi_select_defaults_to_everything_but_skipped_and_rejected(page):
+    expect(page.locator("#f-decision")).to_have_attribute("multiple", "")
+    assert options_of(page, "f-decision") == [
+        "none|no decision", "applied|applied", "skipped|skipped", "interested|interested",
+        "interview|interview", "rejected|rejected", "offer|offer",
+    ]
+    assert selected_of(page, "f-decision") == DEFAULT_DECISIONS
+
+
+def test_the_muted_line_explains_the_filter_needs_a_handle(page):
+    note = page.locator("#decision-note")
+    expect(note).to_have_text("applies once you pick a handle")
+    page.locator("#user").fill("tonttu")
+    expect(note).to_be_hidden()
+    page.locator("#user").fill("")
+    expect(note).to_be_visible()
+
+
+def test_marking_a_job_skipped_hides_it_on_the_next_reload_but_not_under_the_cursor(page, site):
+    _, jobs = site
+    page.locator("#user").fill("tonttu")
+    page.locator("#user").press("Enter")
+    expect(count(page)).to_have_text("3 of 3")
+
+    py = card(page, jobs["py"])
+    py.locator('button.act[data-status="skipped"]').click()
+    expect(py.locator("button.act.on")).to_have_attribute("data-status", "skipped")
+    # the card is refreshed in place — it must not vanish while it is being clicked
+    expect(py).to_have_count(1)
+    expect(count(page)).to_have_text("3 of 3")
+
+    page.reload()
+    expect(count(page)).to_have_text("2 of 2")
+    expect(card(page, jobs["py"])).to_have_count(0)
+
+    # asking for only the skipped ones brings it back
+    page.locator("#f-decision").select_option("skipped")
+    expect(count(page)).to_have_text("1 of 1")
+    expect(card(page, jobs["py"])).to_have_count(1)
+
+
+def test_decision_selection_survives_a_reload_and_reset_restores_the_default(page):
+    page.locator("#user").fill("tonttu")
+    page.locator("#user").press("Enter")
+    page.locator("#f-decision").select_option(["skipped", "rejected"])
+    expect(count(page)).to_have_text("0 of 0")
+
+    page.reload()
+    assert selected_of(page, "f-decision") == ["skipped", "rejected"]
+    expect(count(page)).to_have_text("0 of 0")
+
+    page.locator("#reset").click()
+    assert selected_of(page, "f-decision") == DEFAULT_DECISIONS
+    expect(count(page)).to_have_text("3 of 3")
+    # and the restored default is what a reload brings back
+    page.reload()
+    assert selected_of(page, "f-decision") == DEFAULT_DECISIONS

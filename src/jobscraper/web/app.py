@@ -348,7 +348,7 @@ def _codes(values: list[str] | None, *, upper: bool = False) -> list[str]:
 
 def _matches(view: View, job: JobView, *, langs: list[str], stack: list[str], section: list[str],
              country: list[str], remote: list[str], source: list[str], web_dev: bool | None,
-             min_score: int | None, q: str | None, decision: str | None) -> bool:
+             min_score: int | None, q: str | None, decision: list[str]) -> bool:
     facets = job.facets
     if langs and not view.facets[job.id].language_ok(langs):
         return False
@@ -370,12 +370,8 @@ def _matches(view: View, job: JobView, *, langs: list[str], stack: list[str], se
         needle = q.lower()
         if needle not in job.title.lower() and needle not in (job.company or "").lower():
             return False
-    if decision:
-        if decision == "none":
-            return job.decision is None
-        if job.decision is None or job.decision.status != decision:
-            return False
-    return True
+    # "none" stands for "no decision by this user", so every job has exactly one value here.
+    return not decision or (job.decision.status if job.decision else "none") in decision
 
 
 def _counter(values) -> dict[str, int]:
@@ -442,11 +438,12 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
         min_score: int | None = None,
         q: str | None = None,
         user: str | None = None,
-        decision: str | None = None,
+        decision: list[str] | None = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         offset: int = Query(0, ge=0),
     ) -> JobList:
-        if decision and not user:
+        decisions = _codes(decision)
+        if decisions and not user:
             raise HTTPException(status_code=400, detail="decision= requires user=")
         view = load_view(store, report_id, user)
         jobs = [
@@ -454,7 +451,7 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
             if _matches(view, j, langs=_codes(langs), stack=_codes(stack), section=_codes(section),
                         country=_codes(country, upper=True), remote=_codes(remote),
                         source=_codes(source), web_dev=web_dev, min_score=min_score, q=q,
-                        decision=decision.lower() if decision else None)
+                        decision=decisions)
         ]
         return JobList(total=len(jobs), items=jobs[offset:offset + limit])
 
