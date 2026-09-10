@@ -56,4 +56,7 @@ Before touching `config/profile.yaml`, ask one question with these options and w
    verdicts as prompt anchors, and explicit scoring weights. Offer them one at a time; each is
    optional.
 The dossier and weights live in the profile but are fed only to the Opus ranking prompt; the
-Sonnet screening prompt stays short and cheap.
+Sonnet screening prompt stays short and cheap. Exception: **deal-breakers** (`deal_breakers` in
+the profile) go to BOTH prompts. The screen rejects clear matches so they never reach ranking;
+the ranker keeps them too, because a borderline case (e.g. "is this consultancy?") that gets
+through would otherwise be graded as if the objection didn't exist.

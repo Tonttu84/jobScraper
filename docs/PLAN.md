@@ -90,6 +90,11 @@ The CV is a thin signal. Three additions, in order of expected payoff:
    location, pay, company type, each with a weight) so the score is composed the same way in
    every batch instead of each call inventing its own balance.
 
+Deal-breakers are the one part of the dossier that also goes into the Sonnet screen: a clear
+match is rejected there (cheap, never reaches ranking), and the ranker still sees the list so a
+borderline match that slips through is capped instead of graded as a great fit. Implemented as
+`deal_breakers` in `config/profile.yaml`.
+
 Trigger: whenever a new CV arrives, offer these (CLAUDE.md → "When the owner hands over a new CV").
 
 ## Later ideas

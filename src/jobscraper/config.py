@@ -194,6 +194,9 @@ class Profile(BaseModel):
     cv_text: str = ""
     skills: list[str] = Field(default_factory=list)
     interests: list[str] = Field(default_factory=list)
+    #: Hard no's, checked by both AI stages (see :mod:`jobscraper.ai.prompts`). Empty by
+    #: default, and an empty list leaves the prompts exactly as they were before the feature.
+    deal_breakers: list[str] = Field(default_factory=list)
     languages: LanguagePolicy = Field(default_factory=LanguagePolicy)
     seniority: SeniorityPolicy = Field(default_factory=SeniorityPolicy)
     location: LocationPolicy = Field(default_factory=LocationPolicy)

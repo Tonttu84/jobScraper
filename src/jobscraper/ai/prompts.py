@@ -106,10 +106,40 @@ angle the application (which projects or background to emphasise). Score 0-100 w
 """
 
 
+#: What each stage is told to do with a posting that hits a deal-breaker. The screen rejects
+#: outright (nothing ambiguous is thrown away, it is passed on with the suspicion noted); the
+#: ranker still scores a borderline case so a slip-through is visible instead of silently gone.
+_DEAL_BREAKER_INSTRUCTIONS = {
+    "prefilter": (
+        "If the posting clearly matches one of these, set relevant=false and score 0 and name the "
+        "deal-breaker in concerns. If it only might match (ambiguous wording), keep it and name "
+        "the suspicion in concerns so the ranker checks it."
+    ),
+    "rank": (
+        "Treat a clear match as score 0-10 regardless of other fit; for a borderline match, cap "
+        "the score at 40 and explain what would need to be true for it to be acceptable."
+    ),
+}
+
+
+def _deal_breakers_block(profile: Profile, stage: str) -> str:
+    """The deal-breaker section, or "" when the profile lists none.
+
+    Empty is the default, and it has to stay byte-for-byte identical to the pre-feature prompt:
+    any change here invalidates every cached verdict.
+    """
+    items = [item.strip() for item in profile.deal_breakers if item.strip()]
+    if not items:
+        return ""
+    bullets = "\n".join(f"- {item}" for item in items)
+    return f"\nDEAL-BREAKERS (automatic reject)\n{bullets}\n{_DEAL_BREAKER_INSTRUCTIONS[stage]}\n"
+
+
 def system_prompt(stage: str, profile: Profile) -> str:
+    stage = "prefilter" if stage == "prefilter" else "rank"
     template = PREFILTER_SYSTEM if stage == "prefilter" else RANK_SYSTEM
     head = template.replace("{role_label}", profile.prompt.role_label.strip())
-    body = _policy_block(profile)
+    body = _policy_block(profile) + _deal_breakers_block(profile, stage)
     if stage == "rank" and profile.cv_text.strip():
         body += "\nFULL CV\n" + profile.cv_text.strip() + "\n"
     return head + body
