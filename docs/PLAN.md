@@ -101,6 +101,9 @@ Trigger: whenever a new CV arrives, offer these (CLAUDE.md → "When the owner h
 - Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.
 - Message Batches API for the prefilter (50% cheaper, async).
 - Headless-browser fallback (Playwright is already a skill of yours) for Cloudflare sites.
+- Auth module for the web UI, for when it is shared with other students (today it is
+  handle-only, see docs/WEB.md). Not urgent; the spec depends on later decisions (who hosts
+  it, one DB per person or shared, whether profiles become per-user).
 - ~~Track applications (applied / rejected / interview) in the same DB.~~ Done: `jobscraper serve`
   is a small FastAPI UI over the stored reports with per-user decisions and facet filters
   (languages, stack, "benefits from Full Stack Open") — see docs/WEB.md.
