@@ -178,7 +178,17 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
    Sonnet screen precision/recall and Opus precision@10/20 against those decisions, and reuse
    the best cases as prompt anchors (lever 2 under "Improving match quality"). Every rule or
    prompt change then carries a before/after number in its commit message.
-5. - [ ] **README as the showcase** — deliberately postponed until the project is stable, so the
+5. - [ ] **Public run statistics** — a committed `stats/runs.jsonl` (one row per report: jobs
+   in the DB, new since last run, per-source counts, rule keep/review/drop, drops per reason
+   category, screened/passed, ranked, models + prompt versions, tokens and API-list-price cost
+   per stage, seconds per stage) written by `jobscraper report`, plus a rendered `stats/README.md`.
+   Counts only, so it is safe in the public repo; the profile name may appear (owner's call,
+   2026-09-10). Build after the drop-audit command lands (same CLI file).
+6. - [ ] **Haiku vs Sonnet for the screen** — shelved (2026-09-10). Sonnet 5 stays; when the
+   product is otherwise finished, run one full screen both ways over the same batch and compare
+   recall on the labelled set and cost. Haiku 4.5 is half the price, not a tenth, and needs its
+   own thinking parameters in `ai/client.py` (no `effort`). Data for the README, not scope.
+7. - [ ] **README as the showcase** — deliberately postponed until the project is stable, so the
    README is not rewritten around features that then change. Until then the README stays a
    working manual (setup, commands, what the AI stages need). The showcase version adds: funnel
    table, the eval numbers from item 4, cost per run, an architecture diagram, and a sample
