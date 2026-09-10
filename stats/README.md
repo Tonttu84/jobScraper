@@ -24,6 +24,7 @@ Written by `jobscraper report`; regenerate from `stats/runs.jsonl` with `jobscra
 
 | date | report | jobs | new | keep | review | drop | prefiltered | passed | ranked | cost | rules | prompt |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 2026-09-10 | #10 | 16,891 | 103 | 4,448 | 753 | 11,690 | 5,937 | 1,666 | 99 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 | 2026-09-10 | #9 | 16,788 | 0 | 4,221 | 1,502 | 11,065 | 5,901 | 1,644 | 97 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 
 ## Rule drops by category
@@ -42,12 +43,12 @@ Primary drop reason of each profile's newest run.
 | default | non_software_title_hint | 560 |
 | default | language_required | 248 |
 | default | location | 144 |
-| felipe | duplicate | 2,690 |
-| felipe | too_old | 1,946 |
-| felipe | posting_language | 1,840 |
+| felipe | duplicate | 2,732 |
+| felipe | location | 2,187 |
+| felipe | posting_language | 1,853 |
 | felipe | not_software_title | 1,754 |
-| felipe | location | 1,346 |
-| felipe | language_required | 821 |
+| felipe | too_old | 1,659 |
+| felipe | language_required | 837 |
 | felipe | non_software_title_hint | 369 |
 | felipe | level_excluded | 221 |
 | felipe | seniority_label | 78 |
