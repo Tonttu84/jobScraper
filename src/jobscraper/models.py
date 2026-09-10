@@ -136,6 +136,39 @@ class ReportSnapshot(BaseModel):
     items: list[ReportItem] = Field(default_factory=list)
 
 
+class ReportMove(BaseModel):
+    """A job ranked in two consecutive reports whose score moved noticeably."""
+
+    job_id: str
+    old_score: int | None = None
+    new_score: int | None = None
+    old_position: int
+    new_position: int
+
+    @property
+    def delta(self) -> int:
+        """New score minus old score (0 when either side has no score)."""
+        if self.old_score is None or self.new_score is None:
+            return 0
+        return self.new_score - self.old_score
+
+
+class ReportDiff(BaseModel):
+    """What changed between two :class:`ReportSnapshot`s — the "what's new" of a scheduled run.
+
+    ``old_id`` is None when there is nothing to diff against: then everything in the newer
+    report counts as new.
+    """
+
+    old_id: int | None = None
+    new_id: int | None = None
+    old_created_at: datetime | None = None
+    new_ranked: list[ReportItem] = Field(default_factory=list, description="Ranked now, not ranked before")
+    gone_ranked: list[ReportItem] = Field(default_factory=list, description="Ranked before, not ranked now")
+    new_prefilter: list[ReportItem] = Field(default_factory=list, description="In prefilter now, in neither section before")
+    moved: list[ReportMove] = Field(default_factory=list, description="Ranked in both, score moved by ≥ MOVED_THRESHOLD")
+
+
 class JobFacets(BaseModel):
     """Deterministic, filterable attributes derived from the posting text and filter signals."""
 

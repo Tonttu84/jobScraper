@@ -396,6 +396,11 @@ class Store:
         ]
         return self._snapshot(row, items)
 
+    def report_before(self, report_id: int) -> ReportSnapshot | None:
+        """The newest report older than ``report_id`` (with items), or None if it was the first."""
+        row = self.conn.execute("SELECT id FROM reports WHERE id < ? ORDER BY id DESC LIMIT 1", (report_id,)).fetchone()
+        return self.report(row["id"]) if row else None
+
     def delete_verdicts(self, job_ids: list[str], stage: str | None = None) -> int:
         """Forget verdicts for ``job_ids`` (one ``stage`` or every stage). Returns rows deleted.
 
