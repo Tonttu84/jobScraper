@@ -155,7 +155,8 @@ def test_card_meta_line_and_tags(page, site):
     expect(web.locator(".meta")).to_contain_text("Reactive Oy")
     expect(web.locator(".meta")).to_contain_text("posted 2026-09-01")
     tags = web.locator(".tag").all_text_contents()
-    assert "web" in tags and "en" in tags and "fully ranked" in tags
+    assert "web" in tags and "en" in tags
+    assert "fully ranked" not in tags  # the pipeline stage is not a job tag
 
 
 def test_detail_opens_on_click_with_rank_summary_and_description(page, site):

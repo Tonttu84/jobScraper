@@ -71,7 +71,14 @@
   }
   .score.hi { background: var(--good); } .score.mid { background: var(--mid); }
   .badge-col { flex: none; width: 44px; }
+  .card-body { flex: 1 1 auto; min-width: 0; }
   .rank { display: block; text-align: center; font-size: 11px; color: var(--muted); margin-top: 3px; }
+  /* Pipeline status is ours, not the posting's: sits apart from the tags, dashed and muted. */
+  .stage {
+    flex: none; align-self: flex-start; margin-left: auto; white-space: nowrap;
+    font-size: 11px; color: var(--muted); border: 1px dashed var(--line); border-radius: 4px;
+    padding: 2px 7px; background: transparent;
+  }
   .card h3 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
   .meta { color: var(--muted); font-size: 13px; }
   .teaser {
@@ -339,14 +346,15 @@ function cardHtml(job) {
 
   return '<div class="card-main">' +
       '<div class="badge-col"><div class="score' + scoreClass(job.score) + '">' + esc(score) + "</div>" + rank + "</div>" +
-      "<div>" +
+      '<div class="card-body">' +
         '<h3><a href="' + esc(job.url) + '" target="_blank" rel="noopener">' + esc(job.title) + "</a></h3>" +
         '<div class="meta">' + line + "</div>" +
         (teaser ? '<div class="teaser">' + esc(teaser) + "</div>" : "") +
         '<div class="row">' + tags +
-          '<span class="tag stage">' + esc(stageLabel(job)) + "</span>" + decision +
+          decision +
         "</div>" +
       "</div>" +
+      '<span class="stage" title="How far the pipeline took this job">' + esc(stageLabel(job)) + "</span>" +
     "</div>" +
     '<div class="actions">' + actions + "</div>" +
     '<div class="detail" hidden></div>';
