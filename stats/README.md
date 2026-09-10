@@ -15,6 +15,7 @@ Written by `jobscraper report`; regenerate from `stats/runs.jsonl` with `jobscra
 
 | date | report | jobs | new | keep | review | drop | prefiltered | passed | ranked | cost | rules | prompt |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 2026-09-10 | #5 | 7,881 | 0 | 1,087 | 200 | 6,594 | 2,298 | 1,194 | 80 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 | 2026-09-10 | #4 | 7,881 | 0 | 1,087 | 200 | 6,594 | 2,298 | 1,194 | 80 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 
 ## felipe

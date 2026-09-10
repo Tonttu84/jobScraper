@@ -219,6 +219,25 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
      Stored as its own stage (`refine`) and combined with the rank score by averaging;
      override only once the owner's decisions show the refine model is measurably better.
      Extend `stability compare` so the refine pass is measured the same way.
+     **Built and measured 2026-09-10** (Fable, top 20, one call, report #5):
+
+     | metric (same 20 jobs) | value |
+     |---|---|
+     | Spearman refine vs Opus re-run A / B | 0.74 / 0.74 |
+     | Spearman refine vs mean(A, B) | 0.78 |
+     | Spearman refine vs stored rank score | 0.62 |
+     | Spearman Opus A vs B (reference: Opus vs itself) | 0.84 |
+     | top-10 overlap refine vs A / B / stored | 0.54 each |
+     | mean score: refine / A / B / stored | 59.5 / 74.1 / 74.3 / 80.6 |
+
+     Reading: Fable's shortlist order agrees with an Opus re-run almost as well as two Opus
+     re-runs agree with each other, so it is a second opinion of similar reliability, not a
+     copy — where it differs it is opinionated (Pathos Dubai 57 vs Opus ~78, Junior C++
+     Engineer 38 vs ~67), and on a much lower scale (mean 60 vs 74). Averaging the two therefore
+     lowers the effective numbers by ~10 points but keeps both orderings' information; whether
+     Fable's opinion is *better* can only be decided against the owner's applied/skipped
+     decisions (item 4). Until then: averaging stays, and the UI colour thresholds (80/50)
+     still work on the effective score.
 3. **Coverage gate to 97%** (adapter error branches).
 4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:
