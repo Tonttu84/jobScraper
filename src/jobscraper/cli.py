@@ -3,6 +3,7 @@
     jobscraper probe [SOURCE ...]   # fetch a few jobs per source, show normalized samples, report failures
     jobscraper scrape [SOURCE ...]  # fetch everything from enabled sources into data/jobs.db
     jobscraper filter               # rule filter over jobs seen in the last N days
+    jobscraper audit-drops          # sample rule-dropped jobs to label by hand (--score grades them)
     jobscraper prefilter            # Sonnet pass over rule survivors (--batch: half price, async)
     jobscraper rank                 # Opus pass over the best prefilter survivors
     jobscraper report               # markdown report + JSONL export, stored in the DB
@@ -31,6 +32,13 @@ from rich.table import Table
 
 from jobscraper import config
 from jobscraper import store as store_mod
+from jobscraper.audit import (
+    read_labels,
+    sample_drops,
+    score_labels,
+    totals_from_rows,
+    write_rows,
+)
 from jobscraper.browser import BrowserFactory
 from jobscraper.config import load_settings
 from jobscraper.facets import compute_all
@@ -202,6 +210,77 @@ def filter_cmd(days: int = 30, verbose: bool = typer.Option(False, "--verbose", 
     for k, v in sorted(reasons.items(), key=lambda kv: -kv[1])[:15]:
         table.add_row(k, str(v))
     console.print(table)
+
+
+def _pct(rate: float | None) -> str:
+    return "—" if rate is None else f"{rate * 100:.1f}%"
+
+
+def _count(value: float | None) -> str:
+    return "—" if value is None else f"{value:,.0f}"
+
+
+def _score_drop_audit(path: Path) -> None:
+    """Print what a hand-labelled sample says about the rules' false negatives."""
+    if not path.is_file():
+        raise typer.BadParameter(f"{path} does not exist")
+    rows = read_labels(path)
+    scored = score_labels(rows, totals_from_rows(rows))
+    table = Table("category", "dropped", "sampled", "labelled", "good", "bad", "unsure",
+                  "FN rate", "est. good lost")
+    for name, c in scored["categories"].items():
+        table.add_row(name, str(c["total"]), str(c["sampled"]), str(c["labelled"]), str(c["good"]),
+                      str(c["bad"]), str(c["unsure"]), _pct(c["rate"]), _count(c["estimated_lost"]))
+    console.print(table)
+    o = scored["overall"]
+    console.print(f"overall: {o['labelled']} labelled of {o['sampled']} sampled "
+                  f"({o['good']} good, {o['bad']} bad, {o['unsure']} unsure, {o['unlabelled']} unlabelled)",
+                  soft_wrap=True)
+    if o["invalid"]:
+        console.print(f"[yellow]{o['invalid']} unrecognised label(s) ignored[/yellow] — write good, bad, "
+                      "unsure, or leave the field empty", soft_wrap=True)
+    # One line to paste into the commit message that acts on this audit.
+    console.print(f"drop audit: {o['labelled']}/{o['sampled']} labelled, FN rate {_pct(o['rate'])} "
+                  f"→ ≈{_count(o['estimated_lost'])} good jobs lost of {o['total']} rule-dropped",
+                  soft_wrap=True)
+
+
+@app.command("audit-drops")
+def audit_drops(
+    per_reason: int = typer.Option(15, "--per-reason", help="How many dropped jobs to sample per drop reason"),
+    seed: int = typer.Option(1, "--seed", help="Random seed; the same seed over the same database draws the same sample"),
+    out: Path | None = typer.Option(None, "--out", help="Where to write the sample (default: data/labels/drop-audit-<date>.jsonl)"),
+    score: Path | None = typer.Option(None, "--score", help="Score a labelled sample file instead of drawing a new one"),
+) -> None:
+    """Stratified sample of rule-dropped jobs to label by hand — how many good ones do the rules lose?
+
+    Draw a sample, write good/bad/unsure into each row's ``label`` field (``note`` is free text),
+    then run the same command with ``--score FILE`` for the false-negative rate per drop reason.
+    """
+    if score is not None:
+        _score_drop_audit(score)
+        return
+    store = Store()
+    rows = sample_drops(store, per_reason=per_reason, seed=seed)
+    if not rows:
+        console.print("no dropped jobs in this database — run `jobscraper filter` first")
+        return
+    path = out or config.paths().data / "labels" / f"drop-audit-{datetime.now(UTC):%Y-%m-%d}.jsonl"
+    if path.exists():
+        raise typer.BadParameter(f"{path} already exists; move it aside or pass --out")
+    write_rows(path, rows)
+
+    totals = totals_from_rows(rows)
+    sampled: dict[str, int] = {}
+    for row in rows:
+        sampled[row["category"]] = sampled.get(row["category"], 0) + 1
+    table = Table("category", "total dropped", "sampled")
+    for name in sorted(totals, key=lambda k: (-totals[k], k)):
+        table.add_row(name, str(totals[name]), str(sampled[name]))
+    console.print(table)
+    console.print(f"{len(rows)} of {sum(totals.values())} dropped jobs sampled (seed {seed}) → {path}", soft_wrap=True)
+    console.print("label each row good / bad / unsure, then: jobscraper audit-drops --score "
+                  f"{path.name}", soft_wrap=True)
 
 
 def _load_state(store: Store, days: int) -> tuple[list[Job], dict]:
