@@ -15,6 +15,7 @@ Written by `jobscraper report`; regenerate from `stats/runs.jsonl` with `jobscra
 
 | date | report | jobs | new | keep | review | drop | prefiltered | passed | ranked | cost | rules | prompt |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 2026-09-10 | #8 | 11,878 | 0 | 1,691 | 436 | 9,751 | 3,177 | 1,630 | 137 | $0.00 | 2026-09-10d | 2026-09-09.1 |
 | 2026-09-10 | #7 | 11,878 | 0 | 1,699 | 440 | 9,739 | 3,177 | 1,630 | 139 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 | 2026-09-10 | #6 | 11,878 | 3,997 | 1,699 | 440 | 9,739 | 2,298 | 1,194 | 78 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 | 2026-09-10 | #5 | 7,881 | 0 | 1,087 | 200 | 6,594 | 2,298 | 1,194 | 80 | $0.00 | 2026-09-10b | 2026-09-09.1 |
@@ -24,6 +25,7 @@ Written by `jobscraper report`; regenerate from `stats/runs.jsonl` with `jobscra
 
 | date | report | jobs | new | keep | review | drop | prefiltered | passed | ranked | cost | rules | prompt |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 2026-09-10 | #11 | 16,891 | 0 | 4,447 | 751 | 11,693 | 5,937 | 1,666 | 99 | $0.00 | 2026-09-10d | 2026-09-09.1 |
 | 2026-09-10 | #10 | 16,891 | 103 | 4,448 | 753 | 11,690 | 5,937 | 1,666 | 99 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 | 2026-09-10 | #9 | 16,788 | 0 | 4,221 | 1,502 | 11,065 | 5,901 | 1,644 | 97 | $0.00 | 2026-09-10b | 2026-09-09.1 |
 
@@ -37,18 +39,20 @@ Primary drop reason of each profile's newest run.
 | default | level_excluded | 1,966 |
 | default | seniority_label | 1,326 |
 | default | duplicate | 1,037 |
-| default | too_old | 988 |
+| default | too_old | 994 |
 | default | years_required | 648 |
 | default | posting_language | 635 |
 | default | non_software_title_hint | 560 |
 | default | language_required | 248 |
 | default | location | 144 |
+| default | deadline_passed | 6 |
 | felipe | duplicate | 2,732 |
 | felipe | location | 2,187 |
 | felipe | posting_language | 1,853 |
 | felipe | not_software_title | 1,754 |
-| felipe | too_old | 1,659 |
+| felipe | too_old | 1,661 |
 | felipe | language_required | 837 |
 | felipe | non_software_title_hint | 369 |
 | felipe | level_excluded | 221 |
 | felipe | seniority_label | 78 |
+| felipe | deadline_passed | 1 |
