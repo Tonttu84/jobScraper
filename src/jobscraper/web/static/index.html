@@ -70,6 +70,8 @@
     background: var(--low);
   }
   .score.hi { background: var(--good); } .score.mid { background: var(--mid); }
+  .badge-col { flex: none; width: 44px; }
+  .rank { display: block; text-align: center; font-size: 11px; color: var(--muted); margin-top: 3px; }
   .card h3 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
   .meta { color: var(--muted); font-size: 13px; }
   .teaser {
@@ -266,6 +268,15 @@ function query(extra) {
   return p.toString();
 }
 
+// How far the pipeline took the job: the list runs past the ranked ones into jobs the AI
+// stages never finished with, and the score alone does not say which is which.
+function stageLabel(job) {
+  if (job.section === "ranked") { return "fully ranked"; }
+  if (job.section === "prefilter") { return "screened, not ranked"; }
+  if (job.section === "review") { return "rules only, needs review"; }
+  return job.section || "—";
+}
+
 function scoreClass(score) {
   if (score === null || score === undefined) { return ""; }
   if (score >= 80) { return " hi"; }
@@ -311,6 +322,8 @@ function cardHtml(job) {
   var decision = job.decision
     ? '<span class="badge">' + esc(job.decision.status) + "</span>" : "";
   var score = (job.score === null || job.score === undefined) ? "–" : job.score;
+  // Position in the report's ranked list; the score alone does not say where the job sits.
+  var rank = (job.section === "ranked" && job.position) ? '<span class="rank">#' + job.position + "</span>" : "";
   var teaser = teaserFor(job);
 
   var buttons = STATUSES;
@@ -325,13 +338,13 @@ function cardHtml(job) {
     esc(job.decision && job.decision.note ? job.decision.note : "") + '">';
 
   return '<div class="card-main">' +
-      '<div class="score' + scoreClass(job.score) + '">' + esc(score) + "</div>" +
+      '<div class="badge-col"><div class="score' + scoreClass(job.score) + '">' + esc(score) + "</div>" + rank + "</div>" +
       "<div>" +
         '<h3><a href="' + esc(job.url) + '" target="_blank" rel="noopener">' + esc(job.title) + "</a></h3>" +
         '<div class="meta">' + line + "</div>" +
         (teaser ? '<div class="teaser">' + esc(teaser) + "</div>" : "") +
         '<div class="row">' + tags +
-          '<span class="tag">' + esc(job.section || "—") + "</span>" + decision +
+          '<span class="tag stage">' + esc(stageLabel(job)) + "</span>" + decision +
         "</div>" +
       "</div>" +
     "</div>" +

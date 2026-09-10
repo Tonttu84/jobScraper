@@ -132,13 +132,30 @@ def test_page_shows_the_report_and_the_jobs_the_viewer_can_read(page, site):
     expect(card(page, jobs["cpp"])).to_have_count(0)
 
 
+def test_ranked_cards_show_their_rank_next_to_the_score(page, site):
+    """The score alone does not say where a job sits in the report; ranked cards carry #N."""
+    _, jobs = site
+    expect(card(page, jobs["web"]).locator(".rank")).to_have_text("#1")
+    # a screen survivor that was never ranked, and a rule-review leftover, get no rank badge
+    expect(card(page, jobs["py"]).locator(".rank")).to_have_count(0)
+    expect(card(page, jobs["rev"]).locator(".rank")).to_have_count(0)
+
+
+def test_cards_say_how_far_the_pipeline_took_the_job(page, site):
+    """Scrolling past the ranked jobs reaches ones the AI stages never finished with."""
+    _, jobs = site
+    expect(card(page, jobs["web"]).locator(".stage")).to_have_text("fully ranked")
+    expect(card(page, jobs["py"]).locator(".stage")).to_have_text("screened, not ranked")
+    expect(card(page, jobs["rev"]).locator(".stage")).to_have_text("rules only, needs review")
+
+
 def test_card_meta_line_and_tags(page, site):
     _, jobs = site
     web = card(page, jobs["web"])
     expect(web.locator(".meta")).to_contain_text("Reactive Oy")
     expect(web.locator(".meta")).to_contain_text("posted 2026-09-01")
     tags = web.locator(".tag").all_text_contents()
-    assert "web" in tags and "en" in tags and "ranked" in tags
+    assert "web" in tags and "en" in tags and "fully ranked" in tags
 
 
 def test_detail_opens_on_click_with_rank_summary_and_description(page, site):
