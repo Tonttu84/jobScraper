@@ -278,8 +278,8 @@ function query(extra) {
 // How far the pipeline took the job: the list runs past the ranked ones into jobs the AI
 // stages never finished with, and the score alone does not say which is which.
 function stageLabel(job) {
-  if (job.section === "ranked") { return "screened and ranked"; }
-  if (job.section === "prefilter") { return "screened, not ranked"; }
+  if (job.section === "ranked") { return "prefiltered and ranked"; }
+  if (job.section === "prefilter") { return "prefiltered, not ranked"; }
   if (job.section === "review") { return "rules only, needs review"; }
   return job.section || "—";
 }
@@ -481,7 +481,7 @@ function reload() {
   timer = setTimeout(function () { timer = null; load(false); }, 250);
 }
 
-function checkboxes(container, values, checked) {
+function checkboxes(container, values, checked, labels) {
   container.innerHTML = "";
   values.forEach(function (value) {
     var label = document.createElement("label");
@@ -491,7 +491,7 @@ function checkboxes(container, values, checked) {
     box.checked = checked.indexOf(value) >= 0;
     box.addEventListener("change", reload);
     label.appendChild(box);
-    label.appendChild(document.createTextNode(" " + value));
+    label.appendChild(document.createTextNode(" " + ((labels && labels[value]) || value)));
     container.appendChild(label);
   });
 }
@@ -596,8 +596,10 @@ function buildFilters(meta) {
     chips.appendChild(chip);
   });
 
+  // Same three stops as the stage pill on each card: rules → prefilter (Sonnet) → rank (Opus).
   var sections = ["ranked", "prefilter", "review"];
-  checkboxes($("f-sections"), sections, sections);
+  checkboxes($("f-sections"), sections, sections,
+             {ranked: "ranked", prefilter: "prefiltered only", review: "rules review only"});
   countryOptions($("f-country"), meta.countries);
   options($("f-remote"), keys(meta.remote));
 

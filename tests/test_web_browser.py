@@ -144,9 +144,14 @@ def test_ranked_cards_show_their_rank_next_to_the_score(page, site):
 def test_cards_say_how_far_the_pipeline_took_the_job(page, site):
     """Scrolling past the ranked jobs reaches ones the AI stages never finished with."""
     _, jobs = site
-    expect(card(page, jobs["web"]).locator(".stage")).to_have_text("screened and ranked")
-    expect(card(page, jobs["py"]).locator(".stage")).to_have_text("screened, not ranked")
+    expect(card(page, jobs["web"]).locator(".stage")).to_have_text("prefiltered and ranked")
+    expect(card(page, jobs["py"]).locator(".stage")).to_have_text("prefiltered, not ranked")
     expect(card(page, jobs["rev"]).locator(".stage")).to_have_text("rules only, needs review")
+
+
+def test_section_filter_uses_the_same_stage_words_as_the_cards(page):
+    labels = page.locator("#f-sections label").all_text_contents()
+    assert [x.strip() for x in labels] == ["ranked", "prefiltered only", "rules review only"]
 
 
 def test_card_meta_line_and_tags(page, site):
@@ -156,7 +161,7 @@ def test_card_meta_line_and_tags(page, site):
     expect(web.locator(".meta")).to_contain_text("posted 2026-09-01")
     tags = web.locator(".tag").all_text_contents()
     assert "web" in tags and "en" in tags
-    assert "screened and ranked" not in tags  # the pipeline stage is not a job tag
+    assert "prefiltered and ranked" not in tags  # the pipeline stage is not a job tag
 
 
 def test_detail_opens_on_click_with_rank_summary_and_description(page, site):
