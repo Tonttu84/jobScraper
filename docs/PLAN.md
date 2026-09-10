@@ -117,6 +117,12 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   redirect, which wrote UTF-16 and mangled the rest): 663 of 2 578 description fetches skipped
   (26%), 421 of them on JPMorgan alone. Log scrapes with `--log-file` or a plain `>` from bash,
   not `*>` from PowerShell.
+  - [ ] **Re-time with parallel boards** (added 2026-09-10 evening): `ats_boards` now fetches
+    boards through a thread pool (`workers: 4` in `config/sources.yaml`, `1` = the old
+    sequential path) and the polite client throttles per host under a per-host lock, so the
+    wall time should approach the slowest board (JPMorgan / Hitachi). Time the next full run
+    and record it here; also watch `probe --limit`, which may pause briefly at exit while
+    in-flight boards finish.
 - [ ] **Decide on the big-tech boards** (`ats: google|amazon|tesla|tiktok|apple`). The dataset
   ranks Google at 204 tech postings in our countries, TikTok 110, Amazon 64, Tesla 53 — worth
   having, but they list 10 000+ jobs each and mostly cannot fetch a description per posting, so
