@@ -1,7 +1,8 @@
 """End-to-end tests for the Typer CLI, with the network faked and the data dir in tmp_path.
 
-The AI commands (``prefilter``/``rank``) are deliberately not exercised here — they would call
-the Anthropic API. Everything up to ``report`` runs for real against a temporary SQLite file.
+The AI commands (``prefilter``/``rank``) are deliberately not exercised for real here — they would
+call the Anthropic API; only the flag plumbing is checked, against a stubbed ``AIStage``.
+Everything up to ``report`` runs for real against a temporary SQLite file.
 """
 
 from __future__ import annotations
@@ -272,3 +273,55 @@ def test_db_option_overrides_database_for_a_command(data_dir, fake_http):
     assert result.exit_code == 0, result.output
     assert (data_dir / "custom.db").exists()
     assert not (data_dir / "jobs.db").exists()
+
+
+# --------------------------------------------------------------- prefilter --batch
+@pytest.fixture
+def spy_ai(monkeypatch):
+    """Record which AIStage entry point the CLI picks, without ever touching the API."""
+    from jobscraper.ai import client as ai_client
+
+    calls: dict[str, dict] = {}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    def init(self, stage, profile, store, model=None) -> None:
+        self.stage = stage
+
+    def record(name):
+        def entry(self, jobs, filters, **kw):
+            calls[f"{name}:{self.stage}"] = kw
+            calls.setdefault(name, kw)
+            return {}
+
+        return entry
+
+    monkeypatch.setattr(ai_client.AIStage, "__init__", init)
+    monkeypatch.setattr(ai_client.AIStage, "run", record("run"))
+    monkeypatch.setattr(ai_client.AIStage, "run_batch", record("run_batch"))
+    return calls
+
+
+def test_prefilter_uses_the_live_path_by_default(data_dir, fake_http, spy_ai):
+    runner.invoke(cli_mod.app, ["scrape", "arbeitnow", "--limit", "2"])
+    runner.invoke(cli_mod.app, ["filter"])
+    result = runner.invoke(cli_mod.app, ["prefilter"])
+    assert result.exit_code == 0, result.output
+    assert "run" in spy_ai and "run_batch" not in spy_ai
+
+
+def test_prefilter_batch_flag_uses_the_batches_api(data_dir, fake_http, spy_ai):
+    runner.invoke(cli_mod.app, ["scrape", "arbeitnow", "--limit", "2"])
+    runner.invoke(cli_mod.app, ["filter"])
+    result = runner.invoke(cli_mod.app, ["prefilter", "--batch", "--no-wait"])
+    assert result.exit_code == 0, result.output
+    assert "run" not in spy_ai
+    assert spy_ai["run_batch"]["wait"] is False
+    assert spy_ai["run_batch"]["poll_seconds"] == 30
+
+
+def test_run_passes_batch_through_to_prefilter(data_dir, fake_http, spy_ai):
+    result = runner.invoke(cli_mod.app, ["run", "arbeitnow", "--batch"])
+    assert result.exit_code == 0, result.output
+    assert spy_ai["run_batch:prefilter"]["wait"] is True
+    assert "run:rank" in spy_ai  # ranking still goes through the live path
+    assert "run_batch:rank" not in spy_ai

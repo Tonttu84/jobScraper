@@ -3,7 +3,7 @@
     jobscraper probe [SOURCE ...]   # fetch a few jobs per source, show normalized samples, report failures
     jobscraper scrape [SOURCE ...]  # fetch everything from enabled sources into data/jobs.db
     jobscraper filter               # rule filter over jobs seen in the last N days
-    jobscraper prefilter            # Sonnet pass over rule survivors
+    jobscraper prefilter            # Sonnet pass over rule survivors (--batch: half price, async)
     jobscraper rank                 # Opus pass over the best prefilter survivors
     jobscraper report               # markdown report + JSONL export, stored in the DB
     jobscraper run                  # scrape → filter → prefilter → rank → report
@@ -177,19 +177,34 @@ def _load_state(store: Store, days: int) -> tuple[list[Job], dict]:
 
 
 @app.command()
-def prefilter(days: int = 30, force: bool = False, model: str | None = None, verbose: bool = typer.Option(False, "--verbose", "-v"), max_jobs: int | None = None) -> None:
+def prefilter(days: int = 30, force: bool = False, model: str | None = None, verbose: bool = typer.Option(False, "--verbose", "-v"), max_jobs: int | None = None,
+              batch: bool | None = typer.Option(None, "--batch/--no-batch",
+                                                help="Score through the Message Batches API: same verdicts at half "
+                                                     "price, but asynchronous (default: profile ai.prefilter_batch)"),
+              wait: bool = typer.Option(True, "--wait/--no-wait",
+                                        help="With --batch: poll until the batch ends. --no-wait submits and exits; "
+                                             "run prefilter again later to collect the results")) -> None:
     """Sonnet pass over rule-filter survivors (keep + review)."""
     _setup_logging(verbose)
     from jobscraper.ai.client import AIStage, estimate_cost
 
     settings = load_settings()
+    ai = settings.profile.ai
     store = Store()
     jobs, filters = _load_state(store, days)
     todo = [j for j in jobs if filters.get(j.id) and filters[j.id].status in ("keep", "review")]
     if max_jobs:
         todo = todo[:max_jobs]
     stage = AIStage("prefilter", settings.profile, store, model=model)
-    verdicts = stage.run(todo, filters, force=force, progress=lambda v: console.print(f"  {v.score:3d} {'✓' if v.relevant else '✗'} {v.summary[:110]}"))
+
+    def show(v) -> None:
+        console.print(f"  {v.score:3d} {'✓' if v.relevant else '✗'} {v.summary[:110]}")
+
+    if (ai.prefilter_batch if batch is None else batch):
+        verdicts = stage.run_batch(todo, filters, force=force, progress=show, wait=wait,
+                                   poll_seconds=ai.batch_poll_seconds)
+    else:
+        verdicts = stage.run(todo, filters, force=force, progress=show)
     kept = sum(1 for v in verdicts.values() if v.relevant and v.score >= settings.profile.ai.prefilter_min_score)
     console.print(f"prefilter: {len(verdicts)} scored, {kept} pass (score ≥ {settings.profile.ai.prefilter_min_score}); cost ≈ {estimate_cost(verdicts.values())}")
 
@@ -363,7 +378,10 @@ def profile_init(name: str = typer.Argument(..., help="Name of the new profile")
 @app.command()
 def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (default: all enabled)"),
         days: int = 30, skip_ai: bool = False, verbose: bool = typer.Option(False, "--verbose", "-v"),
-        fresh: bool = typer.Option(False, help="Start from an empty database instead of copying the previous run forward")) -> None:
+        fresh: bool = typer.Option(False, help="Start from an empty database instead of copying the previous run forward"),
+        batch: bool | None = typer.Option(None, "--batch/--no-batch",
+                                          help="Run the prefilter through the Message Batches API (half price, "
+                                               "asynchronous; default: profile ai.prefilter_batch)")) -> None:
     """Full pipeline in a new per-run database: scrape → filter → prefilter → rank → report."""
     path = new_run_db(fresh=fresh)
     store_mod.DB_OVERRIDE = path
@@ -371,7 +389,7 @@ def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (
     scrape(names, verbose=verbose)
     filter_cmd(days=days, verbose=verbose)
     if not skip_ai:
-        prefilter(days=days, verbose=verbose)
+        prefilter(days=days, verbose=verbose, batch=batch, wait=True)
         rank(days=days, verbose=verbose)
     report(days=days)
 

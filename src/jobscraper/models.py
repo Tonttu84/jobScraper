@@ -97,7 +97,10 @@ class AIVerdict(BaseModel):
     concerns: list[str] = Field(default_factory=list)
     why_apply: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    usage: dict[str, int] = Field(default_factory=dict)
+    usage: dict[str, int | bool] = Field(
+        default_factory=dict,
+        description='Token counters, plus "batch": True when the verdict came from a Message Batch (half price)',
+    )
 
 
 DecisionStatus = Literal["interested", "applied", "skipped", "interview", "rejected", "offer"]

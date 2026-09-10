@@ -119,3 +119,210 @@ def test_prompts_limit_seniority_to_entry_level(settings):
     assert "mid-level" in sys_pre and "3+ years" in sys_pre
     assert "borderline but possible" not in sys_pre
     assert PROMPT_VERSION not in ("2026-09-07.1", "2026-09-07.2")
+
+
+# ------------------------------------------------------------- Message Batches API
+SCREENING_JSON = ('{"relevant": true, "score": 72, "language_ok": true, "seniority_ok": true, '
+                  '"location_ok": true, "summary": "Junior Go role in Helsinki", "concerns": ["asks for 3 years"]}')
+
+
+def _usage() -> SimpleNamespace:
+    return SimpleNamespace(input_tokens=1200, output_tokens=150, cache_read_input_tokens=900,
+                           cache_creation_input_tokens=0)
+
+
+def _message(text: str | None, stop_reason: str = "end_turn") -> SimpleNamespace:
+    content = [] if text is None else [SimpleNamespace(type="text", text=text)]
+    return SimpleNamespace(content=content, stop_reason=stop_reason, usage=_usage())
+
+
+def _ok(custom_id: str, text: str | None = SCREENING_JSON, stop_reason: str = "end_turn") -> SimpleNamespace:
+    return SimpleNamespace(custom_id=custom_id,
+                           result=SimpleNamespace(type="succeeded", message=_message(text, stop_reason)))
+
+
+def _bad(custom_id: str, kind: str = "errored", error: str | None = "overloaded") -> SimpleNamespace:
+    result = SimpleNamespace(type=kind) if error is None else SimpleNamespace(type=kind, error=error)
+    return SimpleNamespace(custom_id=custom_id, result=result)
+
+
+def _counts(**kw) -> SimpleNamespace:
+    base = {"processing": 0, "succeeded": 0, "errored": 0, "canceled": 0, "expired": 0}
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+class FakeBatches:
+    """Stand-in for ``client.messages.batches``: records submissions, serves canned results."""
+
+    def __init__(self) -> None:
+        self.submitted: list[list] = []
+        self.results_by_id: dict[str, list] = {}
+        self.statuses: list[str] = []
+        self.retrieved: list[str] = []
+
+    def create(self, *, requests):
+        requests = list(requests)
+        self.submitted.append(requests)
+        batch_id = f"msgbatch_{len(self.submitted)}"
+        self.results_by_id.setdefault(batch_id, [_ok(r["custom_id"]) for r in requests])
+        return SimpleNamespace(id=batch_id, processing_status="in_progress",
+                               request_counts=_counts(processing=len(requests)))
+
+    def retrieve(self, batch_id):
+        self.retrieved.append(batch_id)
+        status = self.statuses.pop(0) if self.statuses else "ended"
+        n = len(self.results_by_id.get(batch_id, []))
+        counts = _counts(processing=n) if status != "ended" else _counts(succeeded=n)
+        return SimpleNamespace(id=batch_id, processing_status=status, request_counts=counts)
+
+    def results(self, batch_id):
+        return iter(self.results_by_id.get(batch_id, []))
+
+
+@pytest.fixture
+def batches(stage, monkeypatch):
+    fake = FakeBatches()
+    monkeypatch.setattr(stage.client.messages, "batches", fake)
+    monkeypatch.setattr("jobscraper.ai.client.time.sleep", lambda _s: None)
+    return fake
+
+
+def test_run_batch_request_shape(stage, batches):
+    jobs = [_job(source_id="1"), _job(source_id="2")]
+    stage.run_batch(jobs, {})
+    assert len(batches.submitted) == 1
+    reqs = batches.submitted[0]
+    assert [r["custom_id"] for r in reqs] == [j.id for j in jobs]
+    params = reqs[0]["params"]
+    assert params["model"] == stage.model and params["max_tokens"] == 4000
+    assert params["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert params["thinking"] == {"type": "adaptive"}
+    assert params["messages"][0]["content"] == job_prompt(jobs[0], None, stage.max_chars)
+    cfg = params["output_config"]
+    assert cfg["effort"] == "low"
+    assert cfg["format"]["type"] == "json_schema"
+    assert set(cfg["format"]["schema"]["properties"]) >= {"relevant", "score", "summary"}
+
+
+def test_run_batch_stores_verdicts_marked_as_batch(stage, batches):
+    job = _job(source_id="1")
+    out = stage.run_batch([job], {})
+    v = out[job.id]
+    assert v.score == 72 and v.relevant and v.model == stage.model and v.prompt_version == PROMPT_VERSION
+    assert v.usage["batch"] is True and v.usage["cache_read"] == 900
+    assert stage.store.verdicts("prefilter", PROMPT_VERSION)[job.id].score == 72
+
+
+def test_run_batch_refusal_keeps_job_for_manual_review(stage, batches):
+    job = _job(source_id="1")
+    batches.results_by_id["msgbatch_1"] = [_ok(job.id, text=None, stop_reason="refusal")]
+    v = stage.run_batch([job], {})[job.id]
+    assert v.score == 50 and v.relevant and "No verdict" in v.summary and v.usage["batch"] is True
+
+
+def test_run_batch_unparseable_answer_keeps_job_for_manual_review(stage, batches):
+    job = _job(source_id="1")
+    batches.results_by_id["msgbatch_1"] = [_ok(job.id, text='{"score": "not a number"}')]
+    v = stage.run_batch([job], {})[job.id]
+    assert v.score == 50 and "No verdict" in v.summary
+
+
+def test_run_batch_errored_entry_leaves_no_verdict(stage, batches, caplog):
+    job = _job(source_id="1")
+    batches.results_by_id["msgbatch_1"] = [_bad(job.id)]
+    with caplog.at_level("WARNING"):
+        out = stage.run_batch([job], {})
+    assert job.id not in out and "overloaded" in caplog.text
+
+
+def test_run_batch_expired_entry_without_error_is_logged(stage, batches, caplog):
+    job = _job(source_id="1")
+    batches.results_by_id["msgbatch_1"] = [_bad(job.id, kind="expired", error=None)]
+    with caplog.at_level("WARNING"):
+        out = stage.run_batch([job], {})
+    assert job.id not in out and "expired" in caplog.text
+
+
+def test_run_batch_chunks_requests(stage, batches):
+    stage.batch_chunk = 2
+    jobs = [_job(source_id=str(i)) for i in range(5)]
+    stage.run_batch(jobs, {})
+    assert [len(c) for c in batches.submitted] == [2, 2, 1]
+
+
+def test_run_batch_polls_until_ended(stage, batches, monkeypatch):
+    slept: list[int] = []
+    monkeypatch.setattr("jobscraper.ai.client.time.sleep", slept.append)
+    batches.statuses = ["in_progress", "in_progress", "ended"]
+    stage.run_batch([_job(source_id="1")], {}, poll_seconds=7)
+    assert slept == [7, 7]
+
+
+def test_run_batch_without_wait_only_submits(stage, batches):
+    job = _job(source_id="1")
+    out = stage.run_batch([job], {}, wait=False)
+    assert out == {}
+    assert len(batches.submitted) == 1
+    assert stage.store.pending_batches("prefilter")[0]["job_ids"] == [job.id]
+
+
+def test_run_batch_resumes_a_pending_batch(stage, batches):
+    job = _job(source_id="1")
+    stage.run_batch([job], {}, wait=False)
+    assert not stage.store.verdicts("prefilter", PROMPT_VERSION)
+    out = stage.run_batch([job], {})
+    assert len(batches.submitted) == 1  # not resubmitted
+    assert out[job.id].score == 72
+    assert stage.store.pending_batches("prefilter") == []
+
+
+def test_run_batch_waits_for_a_batch_still_in_flight(stage, batches):
+    job, other = _job(source_id="1"), _job(source_id="2")
+    stage.run_batch([job], {}, wait=False)
+    batches.statuses = ["in_progress", "in_progress", "ended"]
+    out = stage.run_batch([job, other], {})
+    assert len(batches.submitted) == 2  # the pending job is not resubmitted, the new one is
+    assert [r["custom_id"] for r in batches.submitted[1]] == [other.id]
+    assert out[job.id].score == 72 and out[other.id].score == 72
+
+
+def test_run_batch_ignores_a_pending_batch_from_another_model(stage, batches):
+    job = _job(source_id="1")
+    stage.store.save_batch("msgbatch_other", "prefilter", "claude-haiku-4-5", PROMPT_VERSION, [job.id])
+    stage.run_batch([job], {})
+    assert batches.retrieved == ["msgbatch_1"]  # the foreign batch was not touched
+    assert [b["id"] for b in stage.store.pending_batches("prefilter")] == ["msgbatch_other"]
+
+
+def test_run_batch_is_incremental(stage, batches):
+    job = _job(source_id="1")
+    stage.run_batch([job], {})
+    stage.run_batch([job], {})
+    assert len(batches.submitted) == 1
+    stage.run_batch([job], {}, force=True)
+    assert len(batches.submitted) == 2
+
+
+def test_run_batch_reports_progress(stage, batches):
+    seen = []
+    stage.run_batch([_job(source_id="1")], {}, progress=seen.append)
+    assert [v.score for v in seen] == [72]
+
+
+def test_run_batch_with_nothing_to_do(stage, batches):
+    assert stage.run_batch([], {}) == {}
+    assert batches.submitted == []
+
+
+def test_estimate_cost_halves_batch_usage():
+    from jobscraper.models import AIVerdict
+
+    base = {"job_id": "a", "stage": "prefilter", "model": "claude-sonnet-5", "prompt_version": "v",
+            "relevant": True, "score": 1, "language_ok": True, "seniority_ok": True, "location_ok": True,
+            "summary": "s"}
+    usage = {"input": 1_000_000, "output": 0, "cache_read": 0, "cache_write": 0}
+    live = AIVerdict(**base, usage=usage)
+    batched = AIVerdict(**base, usage={**usage, "batch": True})
+    assert estimate_cost([live])["total"] == pytest.approx(2.0)
+    assert estimate_cost([batched])["total"] == pytest.approx(1.0)

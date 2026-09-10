@@ -62,6 +62,17 @@ CREATE TABLE IF NOT EXISTS ai_verdicts (
     PRIMARY KEY (job_id, stage, model, prompt_version)
 );
 
+CREATE TABLE IF NOT EXISTS ai_batches (
+    id TEXT PRIMARY KEY,
+    stage TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    job_ids TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_batches_status ON ai_batches(stage, status);
+
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at TEXT NOT NULL,
@@ -299,6 +310,30 @@ class Store:
             v = AIVerdict.model_validate_json(row["data"])
             out[v.job_id] = v  # latest wins
         return out
+
+    # --------------------------------------------------------- AI batch jobs
+    def save_batch(self, batch_id: str, stage: str, model: str, prompt_version: str,
+                   job_ids: list[str], status: str = "submitted") -> None:
+        """Remember a Message Batch we submitted, so a later run can pick its results up."""
+        with self.tx() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO ai_batches (id, stage, model, prompt_version, created_at, status, job_ids)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (batch_id, stage, model, prompt_version, _now(), status, dumps(job_ids)),
+            )
+
+    def pending_batches(self, stage: str | None = None, status: str = "submitted") -> list[dict]:
+        """Batch rows still in ``status`` (oldest first), with ``job_ids`` decoded."""
+        sql, args = "SELECT * FROM ai_batches WHERE status=?", [status]
+        if stage:
+            sql += " AND stage=?"
+            args.append(stage)
+        rows = self.conn.execute(sql + " ORDER BY created_at, id", args)
+        return [{**dict(r), "job_ids": json.loads(r["job_ids"])} for r in rows]
+
+    def finish_batch(self, batch_id: str, status: str = "done") -> None:
+        with self.tx() as c:
+            c.execute("UPDATE ai_batches SET status=? WHERE id=?", (status, batch_id))
 
     # ----------------------------------------------------------------- facets
     def save_facets(self, facets: list[JobFacets]) -> None:

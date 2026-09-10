@@ -99,7 +99,9 @@ Trigger: whenever a new CV arrives, offer these (CLAUDE.md → "When the owner h
 
 ## Later ideas
 - Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.
-- Message Batches API for the prefilter (50% cheaper, async).
+- ~~Message Batches API for the prefilter (50% cheaper, async).~~ Done: `jobscraper prefilter --batch`
+  (or `ai.prefilter_batch: true`) submits the pending jobs as one Message Batch and polls until it
+  ends; submitted batch ids are stored, so an interrupted wait is resumed instead of paid twice.
 - Headless-browser fallback (Playwright is already a skill of yours) for Cloudflare sites.
 - Auth module for the web UI, for when it is shared with other students (today it is
   handle-only, see docs/WEB.md). Not urgent; the spec depends on later decisions (who hosts

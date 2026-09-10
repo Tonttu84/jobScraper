@@ -45,11 +45,13 @@ test fixtures.
 uv run jobscraper run                   # new data/runs/<timestamp>.db, then scrape → filter → prefilter → rank → report
 uv run jobscraper run --skip-ai         # no API calls: scrape + rules + report only
 uv run jobscraper run --fresh           # start the run from an empty database instead of copying the last one forward
+uv run jobscraper run --batch           # same pipeline with the prefilter sent through the Message Batches API
 uv run jobscraper runs                  # list per-run databases (* = the one commands use by default)
 uv run jobscraper --db data/runs/20260909-101500.db report   # any command against a specific database
 uv run jobscraper scrape linkedin indeed
 uv run jobscraper filter --days 14
 uv run jobscraper prefilter --max-jobs 50     # try the Sonnet pass on a sample first
+uv run jobscraper prefilter --batch           # same verdicts at half price via the Message Batches API (async; --no-wait submits and exits, re-run to collect)
 uv run jobscraper rank --top 30
 uv run jobscraper report
 uv run jobscraper stats

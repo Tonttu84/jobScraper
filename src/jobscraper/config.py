@@ -169,6 +169,12 @@ class AIPolicy(BaseModel):
     prefilter_min_score: int = 30
     concurrency: int = 4
     max_description_chars: int = 6000
+    #: Send the prefilter through the Message Batches API (same verdicts, half price, async).
+    prefilter_batch: bool = False
+    #: Requests per submitted batch (the API allows up to 100k).
+    batch_chunk: int = 5000
+    #: Seconds between polls while waiting for a batch to end.
+    batch_poll_seconds: int = 30
 
 
 #: The web UI presets a profile can pick between (see :class:`WebPolicy`).

@@ -443,3 +443,19 @@ def test_store_survives_being_used_from_another_thread(store):
     thread.start()
     thread.join(5)
     assert seen == [1]
+
+
+def test_ai_batches_round_trip(store):
+    store.save_batch("msgbatch_1", "prefilter", "claude-sonnet-5", "v1", ["a", "b"])
+    store.save_batch("msgbatch_2", "rank", "claude-opus-5", "v1", ["c"])
+
+    pending = store.pending_batches("prefilter")
+    assert [b["id"] for b in pending] == ["msgbatch_1"]
+    assert pending[0]["job_ids"] == ["a", "b"]
+    assert pending[0]["model"] == "claude-sonnet-5" and pending[0]["prompt_version"] == "v1"
+    assert pending[0]["status"] == "submitted" and pending[0]["created_at"]
+    assert len(store.pending_batches()) == 2
+
+    store.finish_batch("msgbatch_1", "done")
+    assert store.pending_batches("prefilter") == []
+    assert [b["id"] for b in store.pending_batches("prefilter", status="done")] == ["msgbatch_1"]
