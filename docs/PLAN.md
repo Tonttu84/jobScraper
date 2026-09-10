@@ -206,8 +206,13 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
    - [ ] **Refine stage** (agreed 2026-09-10, next coding task): a second pass over the top N
      (20–40) in ONE call — all shortlisted postings plus the profile in a single request,
      asked for an ordering and a score per job — so the shortlist is ranked against itself
-     instead of in 15-job chunks. Model configurable (`ai.refine_model`: Opus 5 by default,
-     Fable when the owner wants; through a subagent it is free, via the API a few dollars).
+     instead of in 15-job chunks. Model configurable (`ai.refine_model`); **default
+     `claude-fable-5-1`** (owner's call 2026-09-10: start with the better model, optimize cost
+     later). Through a subagent (`model: "fable"`) it is free on the subscription; via the API a
+     few dollars per run. API notes for Fable: thinking is always on (omit the `thinking`
+     parameter, steer with `output_config.effort`), no assistant prefill, structured output
+     via `messages.parse` works as for Opus, and a `refusal` stop reason must be handled
+     (keep the job with score 50 for manual review, as the other stages do).
      Stored as its own stage (`refine`) and combined with the rank score by averaging;
      override only once the owner's decisions show the refine model is measurably better.
      Extend `stability compare` so the refine pass is measured the same way.
