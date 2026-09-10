@@ -115,6 +115,26 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   having, but they list 10 000+ jobs each and mostly cannot fetch a description per posting, so
   enable one at a time and watch the first run. They are commented out in `config/sources.yaml`.
 
+- [ ] **Felipe: finish the incremental screening with the batch API** (2026-09-10). His run DB
+  `data/profiles/felipe/runs/20260909-144443.db` now holds 16,788 jobs (7,635 new from the 81
+  boards + jobly, scraped 2026-09-10). 1,040 of the new rule survivors are screened and
+  imported; **795 are still unscreened** (exported as `chunk-09..16` under
+  `data/profiles/felipe/exports/ai/prefilter/`). Cheapest route, once `ANTHROPIC_API_KEY` is
+  set: `jobscraper --profile felipe prefilter --batch` (only unscreened jobs are sent; results
+  within 24 h, half price), then `python scripts/ai_batches.py --profile felipe export rank
+  --top 90` → Opus subagents or `jobscraper --profile felipe rank` → `import rank` →
+  `jobscraper --profile felipe report` → publish into `data/profiles/felipe/serve/` (the
+  running server picks the newest copy). Alternative without a key: Sonnet subagents on the
+  remaining chunks (the prompt used on 2026-09-10 is in the session notes; ~4 min per 100 jobs).
+- [ ] **Rule-filter gap seen while screening**: many boards (Eightfold/Oracle/Workday) leave
+  `country` unknown for locations like "Hyderabad, TS, IN" or "2 Locations", so on-site jobs
+  in the US/India/China reach the Sonnet screen and are rejected there at cost. Teach
+  `guess_country` the trailing ISO-2 token and US state abbreviations, and drop unknown-country
+  on-site jobs whose location text names a non-target city.
+- [ ] **GMV (Cornerstone) descriptions are a page-loader stylesheet**, and imec's are empty:
+  the Cornerstone detail fetch returns the SPA shell. Either fix in `ats_boards` (Cornerstone
+  detail endpoint) or set `lazy_descriptions: false` for those boards and accept title-only.
+
 ## Improving match quality (agreed levers, not yet built)
 The CV is a thin signal. Three additions, in order of expected payoff:
 
