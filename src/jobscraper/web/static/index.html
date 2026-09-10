@@ -92,7 +92,7 @@
   .detail h4 { margin: 10px 0 3px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
   .detail .desc { white-space: pre-wrap; max-height: 380px; overflow: auto; background: #fbfbfc; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
   .muted { color: var(--muted); }
-  .hint { color: #b91c1c; font-size: 13px; }
+  .hint, .card-hint { color: #b91c1c; font-size: 13px; }
   #more { display: block; width: 100%; padding: 8px; border: 1px solid var(--line); background: #fff; border-radius: 8px; cursor: pointer; }
   #count { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
 </style>
@@ -165,9 +165,27 @@ function stored(key, fallback) {
 }
 function handle() { return $("user").value.trim(); }
 
-function needHandle() {
+// The header hint is far from the button that was clicked, so the card says it too. One hint
+// per card at most: a fresh one replaces whatever that card was already showing.
+function clearCardHints(root) {
+  var hints = (root || document).querySelectorAll(".card-hint");
+  for (var i = 0; i < hints.length; i++) { hints[i].parentNode.removeChild(hints[i]); }
+}
+
+function cardHint(card, text) {
+  clearCardHints(card);
+  var actions = card ? card.querySelector(".actions") : null;
+  if (!actions) { return; }
+  var span = document.createElement("span");
+  span.className = "card-hint";
+  span.textContent = text;
+  actions.appendChild(span);
+}
+
+function needHandle(card) {
   if (handle()) { $("hint").textContent = ""; return true; }
   $("hint").textContent = "pick a handle first";
+  if (card) { cardHint(card, "pick a handle first (top of the page)"); }
   $("user").focus();
   return false;
 }
@@ -307,7 +325,7 @@ function detailHtml(job) {
 }
 
 function saveDecision(card, status, note) {
-  if (!needHandle()) { return; }
+  if (!needHandle(card)) { return; }
   var id = card.dataset.id;
   var url = "/api/jobs/" + encodeURIComponent(id) + "/decision";
   var request;
@@ -322,6 +340,7 @@ function saveDecision(card, status, note) {
   }
   return request.then(function (resp) {
     if (!resp.ok && resp.status !== 404) { throw new Error("decision failed: " + resp.status); }
+    clearCardHints(card);
     return refreshCard(card, id);
   }).catch(function (err) { $("hint").textContent = String(err.message || err); });
 }
@@ -477,7 +496,14 @@ function wire() {
   $("user").addEventListener("change", function () {
     store("jobscraper.user", handle());
     $("hint").textContent = "";
+    clearCardHints();
     reload();
+  });
+  // The complaint is answered the moment a handle appears — no need to wait for the change event.
+  $("user").addEventListener("input", function () {
+    if (!handle()) { return; }
+    $("hint").textContent = "";
+    clearCardHints();
   });
   $("f-webdev").checked = stored("jobscraper.fso", "1") === "1";
   $("f-webdev").addEventListener("change", function () {

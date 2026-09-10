@@ -340,6 +340,8 @@ def test_decision_needs_a_handle_then_round_trips_through_the_ui(page, site):
     web = card(page, jobs["web"])
     web.locator('button.act[data-status="applied"]').click()
     expect(page.locator("#hint")).to_have_text("pick a handle first")
+    # the same complaint next to the click, where the eye already is
+    expect(web.locator(".actions .card-hint")).to_have_text("pick a handle first (top of the page)")
     expect(web.locator("button.act.on")).to_have_count(0)
 
     page.locator("#user").fill("tonttu")
@@ -369,6 +371,56 @@ def test_decision_needs_a_handle_then_round_trips_through_the_ui(page, site):
     card(page, jobs["web"]).locator('button.act[data-status=""]').click()
     expect(card(page, jobs["web"]).locator("button.act.on")).to_have_count(0)
     expect(card(page, jobs["web"]).locator(".badge")).to_have_count(0)
+
+
+def test_inline_hint_is_per_card_never_doubled_and_goes_away_while_typing(page, site):
+    _, jobs = site
+    web = card(page, jobs["web"])
+    py = card(page, jobs["py"])
+    web.locator('button.act[data-status="applied"]').click()
+    expect(web.locator(".card-hint")).to_have_count(1)
+    expect(page.locator("#user")).to_be_focused()
+    # only the card that was clicked complains
+    expect(py.locator(".card-hint")).to_have_count(0)
+
+    # clicking again on the same card replaces the hint instead of stacking a second one
+    web.locator('button.act[data-status="skipped"]').click()
+    expect(web.locator(".card-hint")).to_have_count(1)
+    # a note left without a handle complains on its own card too
+    py.locator("input.note").fill("maybe later")
+    py.locator("input.note").press("Tab")
+    expect(py.locator(".card-hint")).to_have_count(1)
+    expect(page.locator(".card-hint")).to_have_count(2)
+
+    # the handle arriving clears every inline hint while it is still being typed
+    page.locator("#user").fill("tonttu")
+    expect(page.locator(".card-hint")).to_have_count(0)
+    expect(page.locator("#hint")).to_have_text("")
+
+
+def test_a_handle_means_no_inline_hint_and_the_decision_saves(page, site):
+    base_url, jobs = site
+    page.locator("#user").fill("tonttu")
+    page.locator("#user").press("Enter")
+    web = card(page, jobs["web"])
+    web.locator('button.act[data-status="applied"]').click()
+    expect(web.locator("button.act.on")).to_have_attribute("data-status", "applied")
+    expect(page.locator(".card-hint")).to_have_count(0)
+    expect(page.locator("#hint")).to_have_text("")
+    stored = page.request.get(f"{base_url}/api/jobs/{jobs['web'].id}?user=tonttu").json()
+    assert stored["decision"]["status"] == "applied"
+
+
+def test_a_saved_decision_clears_a_hint_left_on_that_card(page, site):
+    _, jobs = site
+    web = card(page, jobs["web"])
+    web.locator('button.act[data-status="applied"]').click()
+    expect(web.locator(".card-hint")).to_have_count(1)
+    # a handle that arrives without an input event (restored from storage, pasted by the browser)
+    page.evaluate("() => { document.getElementById('user').value = 'tonttu'; }")
+    web.locator('button.act[data-status="applied"]').click()
+    expect(web.locator("button.act.on")).to_have_attribute("data-status", "applied")
+    expect(web.locator(".card-hint")).to_have_count(0)
 
 
 def test_decision_filter_shows_only_the_users_marked_jobs(page, site):
