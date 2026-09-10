@@ -275,9 +275,12 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
   *current enrolment* at a recognised university with an enrolment certificate. Hive Helsinki
   does not satisfy that. The prompts only say degree requirements are not a blocker, so the
   rankers capped these at 20–48 or rejected them ad hoc; in the 2026-09-10 rank round about a
-  third of the 61 new candidates were such postings. Options: a rule signal
-  ("enrolment required") + an explicit prompt line to reject, or a profile flag
-  `enrolled_student: true|false` fed to both prompts.
+  third of the 61 new candidates were such postings. **Decided 2026-09-10: keep them in.**
+  Finnish employers accept Hive for student positions and Germany/Romania are assumed doable.
+  Added as an `extra_rules` line in the profile (both prompts, no prompt-version bump, so
+  nothing already scored is invalidated). The ~15 enrolment-gated jobs scored 20–48 on
+  2026-09-10 keep those scores until re-scored: delete their rank verdicts and re-export when
+  budget allows (one Opus chunk).
 - **Evergreen pipeline adverts.** Cisco postings that open with "this posting is to advertise
   potential job opportunities … this exact role may not be open today" are not live vacancies.
   Cheap to detect as a rule signal and show as a concern / lower the score.
