@@ -5,6 +5,8 @@
     python scripts/ai_batches.py import prefilter|rank
     python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60] [--sample 20]
     python scripts/ai_batches.py boost
+    python scripts/ai_batches.py stability export [--top 30] [--chunk 15] [--seed 1] [--max-chars N]
+    python scripts/ai_batches.py stability compare
 
 Every action takes ``--profile NAME`` (or ``$JOBSCRAPER_PROFILE``), the same switch the CLI has:
 it moves the config, the database and the exports into that candidate's own directories.
@@ -35,6 +37,16 @@ passes re-judge them with the description in hand — a title-only row was scree
 alone, so a description can move it up as well as down. Every hydrated job is logged to
 ``data/exports/ai/hydration.jsonl`` with the position and scores it had before, and ``boost``
 reads that log back to show what the descriptions changed and how deep ``--top`` needed to be.
+
+``stability`` measures how much the ranking scores move for reasons that have nothing to do with
+the job: the ranker sees a chunk at a time, so a score depends on which other postings shared the
+chunk and in which order. ``stability export`` re-exports the best ``--top`` *already ranked* jobs
+as two independent runs (``stability/run-a`` and ``stability/run-b``) shuffled with different
+seeds, so chunk membership and order differ between them; it never writes to the database and
+never fetches descriptions. Two Opus subagents answer them exactly like ``export rank``, and
+``stability compare`` reports per-job and summary drift (median/p90 |A-B|, Spearman, top-10
+overlap, relevant flips, and the same against the score already stored) to stdout and to
+``stability/summary.md``.
 """
 
 from __future__ import annotations
@@ -42,7 +54,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -234,6 +248,28 @@ def export(stage: str, chunk: int, max_chars: int, top: int, max_fetch: int = 0,
     print(f"{stage}: {len(todo)} jobs{sampled} → {n} chunks of ≤{chunk} in {out}")
 
 
+def read_verdict_lines(path: Path, schema) -> Iterator[tuple[str | None, object, str | None]]:
+    """Yield ``(job_id, parsed, error)`` for every verdict line of a subagent's ``.jsonl`` answer.
+
+    Tolerant on purpose, because a subagent sometimes wraps its answer in a JSON array or leaves a
+    truncated last line behind: bare brackets and trailing commas are dropped, and a line that will
+    not parse or validate comes back as an ``error`` string instead of raising. ``error`` is None
+    exactly on the lines that produced a verdict.
+    """
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip().rstrip(",")
+        if not line or line in ("[", "]"):
+            continue
+        try:
+            rec = json.loads(line)
+            job_id = str(rec.pop("job_id"))
+            parsed = schema(**{k: v for k, v in rec.items() if k in schema.model_fields})
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            yield None, None, f"bad line ({exc}): {line[:100]}"
+            continue
+        yield job_id, parsed, None
+
+
 def import_verdicts(stage: str) -> None:
     schema = Screening if stage == "prefilter" else Ranking
     out = _out_dir(stage)
@@ -245,17 +281,10 @@ def import_verdicts(stage: str) -> None:
     seen: set[str] = set()
     bad = 0
     for f in sorted((out / "verdicts").glob("chunk-*.jsonl")):
-        for line in f.read_text(encoding="utf-8").splitlines():
-            line = line.strip().rstrip(",")
-            if not line or line in ("[", "]"):
-                continue
-            try:
-                rec = json.loads(line)
-                job_id = str(rec.pop("job_id"))
-                parsed = schema(**{k: v for k, v in rec.items() if k in schema.model_fields})
-            except Exception as exc:  # noqa: BLE001 - report and continue
+        for job_id, parsed, error in read_verdict_lines(f, schema):
+            if error:
                 bad += 1
-                print(f"  {f.name}: bad line ({exc}): {line[:100]}")
+                print(f"  {f.name}: {error}")
                 continue
             if job_id not in expected:
                 bad += 1
@@ -276,11 +305,201 @@ def import_verdicts(stage: str) -> None:
     print(f"{stage}: imported {len(seen)} verdicts, {bad} bad lines, {len(missing)} missing" + (f" {by_chunk}" if by_chunk else ""))
 
 
+# --------------------------------------------------------------------------- stability
+# The ranker grades a chunk at a time, so a job's score depends on the company it kept in that
+# chunk. Asking for the same jobs twice, shuffled differently, puts a number on that noise.
+
+STABILITY_RUNS = ("run-a", "run-b")
+
+
+def _stability_dir() -> Path:
+    d = paths().data / "exports" / "ai" / "stability"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def stability_export(top: int, chunk: int, max_chars: int, seed: int) -> None:
+    """Re-export the best ``top`` already-ranked jobs as two differently shuffled runs.
+
+    Read-only on the database, and no LinkedIn hydration: every job goes back to the ranker with
+    exactly the description it had when it earned the score we are comparing against. Only the
+    order changes, so whatever the second answer differs by is noise, not new information.
+    """
+    settings = load_settings()
+    store = Store()
+    jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
+    filters = store.filter_results()
+    scored = sorted((v for v in store.verdicts("rank", PROMPT_VERSION).values() if v.job_id in jobs),
+                    key=lambda v: (-v.score, v.job_id))[:top]
+    todo = [jobs[v.job_id] for v in scored]
+    root = _stability_dir()
+    n = 0  # nothing to compare is a normal state before the first `import rank`
+    for offset, name in enumerate(STABILITY_RUNS):
+        out = root / name
+        (out / "verdicts").mkdir(parents=True, exist_ok=True)
+        for old in out.glob("chunk-*.json"):
+            old.unlink()
+        (out / "system.txt").write_text(system_prompt("rank", settings.profile), encoding="utf-8")
+        order = list(todo)
+        random.Random(seed + offset).shuffle(order)
+        for n, start in enumerate(range(0, len(order), chunk), start=1):
+            batch = [{"job_id": j.id, "prompt": job_prompt(j, filters.get(j.id), max_chars)}
+                     for j in order[start : start + chunk]]
+            (out / f"chunk-{n:02d}.json").write_text(json.dumps(batch, ensure_ascii=False, indent=0), encoding="utf-8")
+    print(f"stability: {len(todo)} jobs → {n} chunks of ≤{chunk} in each of "
+          f"{' and '.join(STABILITY_RUNS)} under {root} (seeds {seed}, {seed + 1})")
+
+
+def _percentile(values: list[float], q: float) -> float:
+    """Linear-interpolated percentile (``q`` between 0 and 1) of a non-empty list."""
+    xs = sorted(values)
+    pos = q * (len(xs) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo)
+
+
+def _average_ranks(values: list[float]) -> list[float]:
+    """1-based ranks of ``values``, tied values sharing the average of the places they occupy."""
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        shared = (i + j) / 2 + 1
+        for k in range(i, j + 1):
+            ranks[order[k]] = shared
+        i = j + 1
+    return ranks
+
+
+def _spearman(xs: list[float], ys: list[float]) -> float | None:
+    """Spearman's rho: the Pearson correlation of the average ranks. None where it is undefined."""
+    if len(xs) < 2:
+        return None
+    rx, ry = _average_ranks(xs), _average_ranks(ys)
+    mx, my = sum(rx) / len(rx), sum(ry) / len(ry)
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    dx = sum((a - mx) ** 2 for a in rx)
+    dy = sum((b - my) ** 2 for b in ry)
+    if dx == 0 or dy == 0:  # one run gave every job the same score: no ordering to correlate
+        return None
+    return num / (dx * dy) ** 0.5
+
+
+def _fmt(value: float | None, digits: int = 4) -> str:
+    return "n/a" if value is None else f"{value:.{digits}f}"
+
+
+def _drift_line(label: str, xs: list[float], ys: list[float]) -> str:
+    """One summary line of how far ``xs`` sits from ``ys``, the two aligned by position."""
+    if not xs:
+        return f"- {label}: no overlap"
+    diffs = [x - y for x, y in zip(xs, ys)]
+    absd = [abs(d) for d in diffs]
+    return (f"- {label}: n={len(xs)}, median |d| {_percentile(absd, 0.5):.2f}, "
+            f"p90 |d| {_percentile(absd, 0.9):.2f}, mean signed {sum(diffs) / len(diffs):+.2f}, "
+            f"Spearman {_fmt(_spearman(xs, ys))}")
+
+
+def _top_set(scores: dict[str, int], n: int) -> set[str]:
+    """The ``n`` best-scoring job ids; the job id breaks ties so the set is the same every run."""
+    return {jid for jid, _ in sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:n]}
+
+
+def _jaccard(x: set[str], y: set[str]) -> float:
+    return len(x & y) / len(x | y) if x or y else 0.0
+
+
+def _read_run(run: Path) -> tuple[dict[str, Ranking], int]:
+    """Every ranking a stability run answered (first line per job wins) and its bad-line count."""
+    out: dict[str, Ranking] = {}
+    bad = 0
+    for f in sorted((run / "verdicts").glob("chunk-*.jsonl")):
+        for job_id, parsed, error in read_verdict_lines(f, Ranking):
+            if error:
+                bad += 1
+                print(f"  {run.name}/{f.name}: {error}")
+                continue
+            out.setdefault(job_id, parsed)
+    return out, bad
+
+
+def _exported_ids(run: Path) -> set[str]:
+    return {rec["job_id"] for f in sorted(run.glob("chunk-*.json"))
+            for rec in json.loads(f.read_text(encoding="utf-8"))}
+
+
+def stability_compare(top_n: int = 10) -> None:
+    """Turn the two answer sets into a drift report, on stdout and in ``stability/summary.md``."""
+    root = _stability_dir()
+    a, bad_a = _read_run(root / "run-a")
+    b, bad_b = _read_run(root / "run-b")
+    store = Store()
+    titles = {j.id: j.title for j in store.jobs()}
+    original = {jid: v.score for jid, v in store.verdicts("rank", PROMPT_VERSION).items()}
+    both = sorted(set(a) & set(b), key=lambda jid: (-original.get(jid, -1), jid))
+
+    md = ["# Ranking stability", "",
+          "The same jobs, scored twice by the ranker in a different order and chunking. Whatever",
+          "the two answers differ by is chunk noise, not information about the job.", ""]
+    if bad_a or bad_b:
+        md += [f"Unparsable verdict lines: run-a {bad_a}, run-b {bad_b}.", ""]
+    md += ["| job | title | orig | A | B | \\|A-B\\| | flip |",
+           "| --- | --- | ---: | ---: | ---: | ---: | --- |"]
+    for jid in both:
+        va, vb = a[jid], b[jid]
+        orig = original.get(jid)
+        md.append(f"| {jid[:12]} | {titles.get(jid, '?')[:40]} | {'-' if orig is None else orig} | "
+                  f"{va.score} | {vb.score} | {abs(va.score - vb.score)} | "
+                  f"{'relevant flip' if va.relevant != vb.relevant else ''} |")
+    md += ["", "## Summary", ""]
+    if not both:
+        md += ["No jobs are present in both runs; nothing to compare.", ""]
+    else:
+        sa = [float(a[jid].score) for jid in both]
+        sb = [float(b[jid].score) for jid in both]
+        diffs = [x - y for x, y in zip(sa, sb)]
+        absd = [abs(d) for d in diffs]
+        with_orig = [jid for jid in both if jid in original]
+        md += [
+            f"- jobs in both runs: {len(both)}",
+            f"- median |A-B|: {_percentile(absd, 0.5):.2f}",
+            f"- 90th percentile |A-B|: {_percentile(absd, 0.9):.2f}",
+            f"- mean signed (A-B): {sum(diffs) / len(diffs):.2f}",
+            f"- Spearman rank correlation A vs B: {_fmt(_spearman(sa, sb))}",
+            f"- top-{top_n} overlap (Jaccard): "
+            f"{_jaccard(_top_set({jid: a[jid].score for jid in both}, top_n), _top_set({jid: b[jid].score for jid in both}, top_n)):.3f}",
+            f"- relevant flips: {sum(1 for jid in both if a[jid].relevant != b[jid].relevant)}",
+            "",
+            "Drift against the score already stored for each job:",
+            "",
+            _drift_line("A vs original", [float(a[jid].score) for jid in with_orig],
+                        [float(original[jid]) for jid in with_orig]),
+            _drift_line("B vs original", [float(b[jid].score) for jid in with_orig],
+                        [float(original[jid]) for jid in with_orig]),
+            "",
+        ]
+    expected = _exported_ids(root / "run-a") or (set(a) | set(b))
+    md += ["## Missing", ""]
+    for name, answered in zip(STABILITY_RUNS, (a, b)):
+        gone = sorted(expected - set(answered))
+        md.append(f"- missing from {name}: {len(gone)}"
+                  + (f" ({', '.join(jid[:12] for jid in gone)})" if gone else ""))
+    text = "\n".join(md).rstrip() + "\n"
+    print(text)
+    (root / "summary.md").write_text(text, encoding="utf-8")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=["export", "import", "hydrate", "boost"])
-    ap.add_argument("stage", nargs="?", choices=["prefilter", "rank", "linkedin"], default=None,
-                    help="stage for export/import, 'linkedin' for hydrate; ignored by boost")
+    ap.add_argument("action", choices=["export", "import", "hydrate", "boost", "stability"])
+    ap.add_argument("stage", nargs="?", choices=["prefilter", "rank", "linkedin", "export", "compare"],
+                    default=None,
+                    help="stage for export/import, 'linkedin' for hydrate, 'export'/'compare' for"
+                         " stability; ignored by boost")
     ap.add_argument("--chunk", type=int, default=None)
     ap.add_argument("--max-chars", type=int, default=None)
     ap.add_argument("--all", action="store_true",
@@ -288,6 +507,8 @@ def main() -> None:
     ap.add_argument("--top", type=int, default=None, help="export rank: 60; hydrate linkedin: 480")
     ap.add_argument("--max-fetch", type=int, default=None,
                     help="how many missing LinkedIn descriptions to fetch (0 disables); rank: 60, hydrate: 480")
+    ap.add_argument("--seed", type=int, default=1,
+                    help="stability export only: run-a shuffles with this seed, run-b with seed+1")
     ap.add_argument("--sample", type=int, default=1, metavar="N",
                     help="export only: keep every N-th candidate (positions 0, N, 2N, ... after --top); 1 = all")
     ap.add_argument("--profile", default=os.environ.get("JOBSCRAPER_PROFILE") or None, metavar="NAME",
@@ -299,6 +520,14 @@ def main() -> None:
     config.use_profile(a.profile)
     if a.action == "boost":
         boost()
+        return
+    if a.action == "stability":
+        if a.stage == "export":
+            stability_export(a.top or 30, a.chunk or 15, a.max_chars or 6000, a.seed)
+        elif a.stage == "compare":
+            stability_compare()
+        else:
+            ap.error("stability needs a sub-action: export or compare")
         return
     if a.action == "hydrate":
         if a.stage not in (None, "linkedin"):

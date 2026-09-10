@@ -727,3 +727,243 @@ def test_export_rank_sample_bounds_the_description_fetches(data_dir, monkeypatch
 
     assert fetched == [jobs[0].url, jobs[2].url]
     assert "2 jobs" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------------ stability
+# The ranker scores a chunk at a time, so the same job can come back with a different number
+# depending on which other jobs shared its chunk and in which order. `stability export` re-exports
+# already-ranked jobs as two independently shuffled runs; `stability compare` turns the two answer
+# sets into a drift number.
+
+
+def _stability(data_dir: Path) -> Path:
+    return data_dir / "exports" / "ai" / "stability"
+
+
+def _write_verdicts(run: Path, name: str, lines: list[dict]) -> None:
+    (run / "verdicts").mkdir(parents=True, exist_ok=True)
+    (run / "verdicts" / name).write_text(
+        "\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8"
+    )
+
+
+def _ranking_line(job: Job, score: int, relevant: bool = True) -> dict:
+    return {"job_id": job.id, "relevant": relevant, "score": score, "language_ok": True,
+            "seniority_ok": True, "location_ok": True, "summary": f"scored {score}",
+            "concerns": [], "why_apply": []}
+
+
+def test_stability_export_writes_two_runs_with_the_same_jobs_in_a_different_order(data_dir, monkeypatch, capsys):
+    jobs = [_job(n, f"Junior Developer {n:02d}", LONG_DESCRIPTION) for n in range(12)]
+    _seed(jobs, ["keep"] * 12)
+    _rank_scores(jobs, list(range(99, 87, -1)))
+    before_jobs, before_verdicts = _stored_jobs(), _stored_verdicts("rank")
+
+    _run(monkeypatch, "stability", "export", "--top", "12", "--chunk", "5")
+
+    a, b = _stability(data_dir) / "run-a", _stability(data_dir) / "run-b"
+    for run in (a, b):
+        assert "career advisor" in (run / "system.txt").read_text(encoding="utf-8")
+        assert sorted(p.name for p in run.glob("chunk-*.json")) == [
+            "chunk-01.json", "chunk-02.json", "chunk-03.json"]  # 12 jobs, 5 per chunk
+    order_a = [e["job_id"] for e in _chunk_entries(a)]
+    order_b = [e["job_id"] for e in _chunk_entries(b)]
+    assert set(order_a) == set(order_b) == {j.id for j in jobs}  # same job set
+    assert order_a != order_b  # different order, so different chunk membership
+    assert order_a != [j.id for j in jobs]  # and neither run is the stored order
+    for e in _chunk_entries(a):
+        assert set(e) == {"job_id", "prompt"}
+        assert "TAIL-OF-THE-DESCRIPTION" in e["prompt"]  # the rank stage's 6000-char budget
+
+    assert _stored_jobs().keys() == before_jobs.keys()  # the database is not touched
+    assert {k: v.score for k, v in _stored_verdicts("rank").items()} == {
+        k: v.score for k, v in before_verdicts.items()}
+    assert "12 jobs" in capsys.readouterr().out
+
+
+def test_stability_export_is_reproducible_for_a_seed_and_moves_with_it(data_dir, monkeypatch, capsys):
+    jobs = [_job(n, f"Junior Developer {n:02d}") for n in range(12)]
+    _seed(jobs, ["keep"] * 12)
+    _rank_scores(jobs, list(range(99, 87, -1)))
+
+    _run(monkeypatch, "stability", "export", "--top", "12", "--chunk", "5")
+    first = [e["job_id"] for e in _chunk_entries(_stability(data_dir) / "run-a")]
+    _run(monkeypatch, "stability", "export", "--top", "12", "--chunk", "5")
+    again = [e["job_id"] for e in _chunk_entries(_stability(data_dir) / "run-a")]
+    _run(monkeypatch, "stability", "export", "--top", "12", "--chunk", "5", "--seed", "7")
+    other = [e["job_id"] for e in _chunk_entries(_stability(data_dir) / "run-a")]
+
+    assert first == again  # same seed, same shuffle
+    assert first != other
+    capsys.readouterr()
+
+
+def test_stability_export_takes_the_best_ranked_jobs_and_wipes_old_chunks(data_dir, monkeypatch, capsys):
+    jobs = [_job(n, f"Junior Developer {n:02d}") for n in range(4)]
+    unranked = _job(9, "Never Ranked")
+    _seed([*jobs, unranked], ["keep"] * 5)
+    _rank_scores(jobs, [90, 80, 70, 60])
+
+    _run(monkeypatch, "stability", "export", "--top", "4", "--chunk", "1")
+    assert len(list((_stability(data_dir) / "run-a").glob("chunk-*.json"))) == 4
+
+    _run(monkeypatch, "stability", "export", "--top", "2", "--chunk", "5")
+
+    a = _stability(data_dir) / "run-a"
+    assert [p.name for p in sorted(a.glob("chunk-*.json"))] == ["chunk-01.json"]  # old chunks gone
+    assert {e["job_id"] for e in _chunk_entries(a)} == {jobs[0].id, jobs[1].id}
+    assert unranked.id not in {e["job_id"] for e in _chunk_entries(a)}
+    assert "2 jobs" in capsys.readouterr().out
+
+
+def test_stability_export_never_fetches_linkedin_descriptions(data_dir, monkeypatch, capsys):
+    li = _bare("linkedin", 201, "https://www.linkedin.com/jobs/view/201")
+    _seed([li], ["keep"])
+    _rank_scores([li], [90])
+
+    def explode(http, url):  # pragma: no cover - must never be called
+        raise AssertionError(f"fetched {url} in the stability stage")
+
+    monkeypatch.setattr(ai_batches, "fetch_description", explode)
+
+    _run(monkeypatch, "stability", "export")
+
+    assert "1 jobs" in capsys.readouterr().out
+
+
+def test_stability_needs_export_or_compare(data_dir, monkeypatch):
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "stability", "rank")
+
+
+@pytest.fixture
+def five_scored(data_dir, monkeypatch):
+    """Five ranked jobs plus a hand-made pair of verdict runs with a known Spearman rho.
+
+    A: 90 80 70 60 50, B: 88 75 75 65 40 (a tie in B), so the average-rank correlation is
+    9.5 / sqrt(10 * 9.5) = 0.9747 and the |A-B| list is 2 5 5 5 10.
+    """
+    jobs = [_job(n, f"Junior Developer {n:02d}") for n in range(5)]
+    _seed(jobs, ["keep"] * 5)
+    _rank_scores(jobs, [85, 84, 83, 82, 81])
+    _run(monkeypatch, "stability", "export", "--top", "5")
+    root = _stability(data_dir)
+    _write_verdicts(root / "run-a", "chunk-01.jsonl",
+                    [_ranking_line(j, s) for j, s in zip(jobs, [90, 80, 70, 60, 50])])
+    _write_verdicts(root / "run-b", "chunk-01.jsonl",
+                    [_ranking_line(j, s, relevant=(j is not jobs[4]))
+                     for j, s in zip(jobs, [88, 75, 75, 65, 40])])
+    return jobs
+
+
+def test_stability_compare_reports_the_hand_computed_statistics(five_scored, data_dir, monkeypatch, capsys):
+    capsys.readouterr()
+
+    _run(monkeypatch, "stability", "compare")
+
+    out = capsys.readouterr().out
+    assert "jobs in both runs: 5" in out
+    assert "median |A-B|: 5.00" in out
+    assert "90th percentile |A-B|: 8.00" in out
+    assert "mean signed (A-B): 1.40" in out
+    assert "Spearman rank correlation A vs B: 0.9747" in out
+    assert "top-10 overlap (Jaccard): 1.000" in out
+    assert "relevant flips: 1" in out
+    assert "A vs original" in out and "B vs original" in out
+    for job in five_scored:  # the per-job table
+        assert job.title[:40] in out
+    assert "flip" in out
+
+
+def test_stability_compare_writes_the_same_report_as_markdown(five_scored, data_dir, monkeypatch, capsys):
+    _run(monkeypatch, "stability", "compare")
+    printed = capsys.readouterr().out
+
+    text = (_stability(data_dir) / "summary.md").read_text(encoding="utf-8")
+    assert text.startswith("# Ranking stability")
+    assert "median |A-B|: 5.00" in text
+    assert text.strip() in printed  # the printed report and the file say the same thing
+
+
+def test_stability_compare_lists_jobs_missing_from_a_run(data_dir, monkeypatch, capsys):
+    jobs = [_job(n, f"Junior Developer {n:02d}") for n in range(3)]
+    _seed(jobs, ["keep"] * 3)
+    _rank_scores(jobs, [90, 80, 70])
+    _run(monkeypatch, "stability", "export", "--top", "3")
+    root = _stability(data_dir)
+    _write_verdicts(root / "run-a", "chunk-01.jsonl", [_ranking_line(j, 70) for j in jobs])
+    _write_verdicts(root / "run-b", "chunk-01.jsonl", [_ranking_line(j, 70) for j in jobs[:2]])
+    capsys.readouterr()
+
+    _run(monkeypatch, "stability", "compare")
+
+    out = capsys.readouterr().out
+    assert "jobs in both runs: 2" in out
+    assert "missing from run-b: 1" in out
+    assert jobs[2].id[:12] in out
+
+
+def test_stability_compare_tolerates_array_wrappers_and_broken_lines(data_dir, monkeypatch, capsys):
+    jobs = [_job(n, f"Junior Developer {n:02d}") for n in range(2)]
+    _seed(jobs, ["keep"] * 2)
+    _rank_scores(jobs, [90, 80])
+    _run(monkeypatch, "stability", "export", "--top", "2")
+    root = _stability(data_dir)
+    good = "\n".join(json.dumps(_ranking_line(j, 70)) + "," for j in jobs)
+    (root / "run-a" / "verdicts").mkdir(parents=True, exist_ok=True)
+    (root / "run-a" / "verdicts" / "chunk-01.jsonl").write_text(
+        "[\n" + good + '\n{"job_id": "x", "score":\n]\n', encoding="utf-8")
+    _write_verdicts(root / "run-b", "chunk-01.jsonl", [_ranking_line(j, 72) for j in jobs])
+    capsys.readouterr()
+
+    _run(monkeypatch, "stability", "compare")
+
+    out = capsys.readouterr().out
+    assert "jobs in both runs: 2" in out  # the array brackets and the truncated line are skipped
+    assert "bad line" in out
+
+
+def test_stability_compare_without_any_verdicts(data_dir, monkeypatch, capsys):
+    _run(monkeypatch, "stability", "compare")
+
+    out = capsys.readouterr().out
+    assert "no jobs" in out.lower()
+    assert (_stability(data_dir) / "summary.md").exists()
+
+
+def test_stability_compare_top_ten_overlap_is_a_jaccard(data_dir, monkeypatch, capsys):
+    jobs = [_job(n, f"Junior Developer {n:02d}") for n in range(12)]
+    _seed(jobs, ["keep"] * 12)
+    _rank_scores(jobs, list(range(99, 87, -1)))
+    _run(monkeypatch, "stability", "export", "--top", "12")
+    root = _stability(data_dir)
+    a_scores = [100, 99, 98, 97, 96, 95, 94, 93, 92, 91, 90, 89]
+    b_scores = [100, 99, 98, 97, 96, 95, 94, 93, 92, 10, 91, 89]  # job 9 drops out, job 10 moves in
+    _write_verdicts(root / "run-a", "chunk-01.jsonl",
+                    [_ranking_line(j, s) for j, s in zip(jobs, a_scores)])
+    _write_verdicts(root / "run-b", "chunk-01.jsonl",
+                    [_ranking_line(j, s) for j, s in zip(jobs, b_scores)])
+    capsys.readouterr()
+
+    _run(monkeypatch, "stability", "compare")
+
+    out = capsys.readouterr().out
+    assert "top-10 overlap (Jaccard): 0.818" in out  # 9 shared of 11 in the union
+    assert "relevant flips: 0" in out
+
+
+def test_stability_follows_the_profile(profile_dirs, monkeypatch, capsys):
+    job = _job(1, "Junior Go Developer")
+    _seed_in_profile("x", [job], ["keep"])
+    config.use_profile("x")
+    try:
+        _rank_scores([job], [90])
+    finally:
+        config.use_profile(None)
+
+    _run(monkeypatch, "stability", "export", "--profile", "x")
+
+    out = profile_dirs / "data" / "profiles" / "x" / "exports" / "ai" / "stability"
+    assert [e["job_id"] for e in _chunk_entries(out / "run-a")] == [job.id]
+    assert not (profile_dirs / "data" / "exports").exists()
+    assert "1 jobs" in capsys.readouterr().out
