@@ -169,6 +169,14 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
 1. **Drop audit** — `jobscraper audit-drops` samples rule-dropped jobs per drop reason for hand
    labelling and `--score` turns the labels into a per-reason false-negative rate (how many good
    jobs the rules kill). Labels live in `data/labels/` (private repo).
+   - [ ] **Label the first sample** (owner): `data/labels/drop-audit-2026-09-10.jsonl` holds
+     150 rows, 15 per drop category out of 6 590 drops (seed 1). Set `label` to `good` /
+     `bad` / `unsure` per row (a `note` is optional), then
+     `jobscraper audit-drops --score drop-audit-2026-09-10.jsonl` prints the per-category
+     false-negative rate and the estimated number of good jobs lost per run. Paste the
+     one-line summary into the commit that records it. Note: `location` is the primary reason
+     for only 91 drops because title reasons come first; the location rule itself fires far
+     more often as a secondary reason.
 2. **Ranking stability** — `scripts/ai_batches.py stability export|compare` scores the same top-N
    jobs twice in different chunkings and reports score drift, rank correlation and top-10 overlap.
    Decides whether the explicit scoring-weights lever is worth building.
