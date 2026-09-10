@@ -1,0 +1,51 @@
+# Scheduled pipeline run on a SELF-HOSTED runner.
+#
+# DISABLED until a self-hosted runner is registered for this repository and the repository
+# variable SCHEDULED_RUNS is set to 'true' (Settings → Secrets and variables → Actions →
+# Variables). Without the variable every run exits immediately, so the workflow is safe to
+# merge as it is.
+#
+# It must not run on GitHub-hosted runners: several job boards block cloud IP ranges (which is
+# exactly why the adapters are fixture-tested here), and the Anthropic API key should stay on
+# the owner's machine rather than in a cloud runner's environment.
+name: scheduled-run
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *'   # 05:00 UTC, daily
+
+jobs:
+  run:
+    if: vars.SCHEDULED_RUNS == 'true'
+    runs-on: self-hosted
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      JOBSCRAPER_PROFILE: ${{ vars.JOBSCRAPER_PROFILE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run the pipeline and diff it against the previous report
+        run: ./scripts/scheduled_run.sh
+
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results
+          path: results/
+          if-no-files-found: warn
+
+      - name: Show the newest diff in the job summary
+        if: always()
+        run: |
+          newest=$(ls -1t results/diff-*.md results/*/diff-*.md 2>/dev/null | head -n 1 || true)
+          if [ -n "$newest" ]; then
+            echo "## What's new ($newest)" >> "$GITHUB_STEP_SUMMARY"
+            cat "$newest" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No diff file was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
