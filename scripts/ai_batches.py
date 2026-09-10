@@ -4,7 +4,7 @@
     python scripts/ai_batches.py export prefilter [--chunk 100] [--max-chars 1500] [--all] [--sample 20]
     python scripts/ai_batches.py import prefilter|rank|refine
     python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60] [--sample 20]
-    python scripts/ai_batches.py export refine [--top 20] [--max-chars N]
+    python scripts/ai_batches.py export refine [--top 20] [--max-chars N] [--force]
     python scripts/ai_batches.py boost
     python scripts/ai_batches.py stability export [--top 30] [--chunk 15] [--seed 1] [--max-chars N]
     python scripts/ai_batches.py stability compare
@@ -268,12 +268,23 @@ def _shortlist(store: Store, filters: dict, top: int) -> list[Job]:
     return [jobs[v.job_id] for v in ranked]
 
 
-def export_refine(top: int, max_chars: int) -> None:
-    """Write the whole shortlist as ONE prompt: the refine pass is a single request, not chunks."""
+def export_refine(top: int, max_chars: int, force: bool = False) -> None:
+    """Write the whole shortlist as ONE prompt: the refine pass is a single request, not chunks.
+
+    The pass compares the shortlist against itself, so it is only worth repeating when the
+    shortlist changed: if every shortlisted job already carries a refine verdict under the
+    current prompt version, nothing new is being compared and the export is skipped
+    (``--force`` re-runs it anyway, e.g. to measure drift).
+    """
     settings = load_settings()
     store = Store()
     filters = store.filter_results()
     todo = _shortlist(store, filters, top)
+    refined = store.verdicts("refine", PROMPT_VERSION)
+    if todo and not force and all(j.id in refined for j in todo):
+        print(f"refine: all {len(todo)} shortlisted jobs already carry a refine verdict and the shortlist "
+              "has not changed; nothing new to compare (--force re-runs it)")
+        return
     out = _out_dir("refine")
     (out / "system.txt").write_text(system_prompt("refine", settings.profile), encoding="utf-8")
     batch = {"prompt": refine_user_prompt(todo, filters, max_chars), "job_ids": [j.id for j in todo]}
@@ -567,6 +578,8 @@ def main() -> None:
     ap.add_argument("--max-chars", type=int, default=None)
     ap.add_argument("--all", action="store_true",
                     help="export prefilter only: export every survivor, not just the unscreened ones")
+    ap.add_argument("--force", action="store_true",
+                    help="export refine: re-run even when the shortlist is unchanged since the last refine pass")
     ap.add_argument("--top", type=int, default=None,
                     help="export rank: 60; export refine: 20; hydrate linkedin: 480")
     ap.add_argument("--max-fetch", type=int, default=None,
@@ -603,7 +616,7 @@ def main() -> None:
     if a.stage == "refine":
         # One request over the whole shortlist: no chunking, no sampling, no hydration.
         if a.action == "export":
-            export_refine(a.top or 20, a.max_chars or 6000)
+            export_refine(a.top or 20, a.max_chars or 6000, force=a.force)
         else:
             import_refine()
         return

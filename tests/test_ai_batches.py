@@ -766,6 +766,41 @@ def test_export_refine_writes_one_prompt_for_the_whole_shortlist(shortlist, data
     assert "2 jobs in one prompt" in capsys.readouterr().out
 
 
+def _refine_scores(jobs: list[Job], scores: list[int]) -> None:
+    store = store_mod.Store()
+    try:
+        for job, score in zip(jobs, scores):
+            store.save_verdict(AIVerdict(job_id=job.id, stage="refine", model="claude-fable-5-1 (subagent)",
+                                         prompt_version=PROMPT_VERSION, relevant=True, score=score,
+                                         language_ok=True, seniority_ok=True, location_ok=True,
+                                         summary=f"refined {score}"))
+    finally:
+        store.close()
+
+
+def test_export_refine_skips_a_shortlist_that_was_already_refined(shortlist, data_dir, monkeypatch, capsys):
+    """The pass compares the shortlist against itself: unchanged membership means nothing new to compare."""
+    _refine_scores(shortlist[:2], [85, 75])
+    _run(monkeypatch, "export", "refine", "--top", "2")
+    assert not (_refine_dir(data_dir) / "batch.json").exists()
+    assert "already carry a refine verdict" in capsys.readouterr().out
+
+
+def test_export_refine_runs_again_when_the_shortlist_changed(shortlist, data_dir, monkeypatch, capsys):
+    _refine_scores(shortlist[:1], [85])  # the second-best job is new to the shortlist
+    _run(monkeypatch, "export", "refine", "--top", "2")
+    batch = json.loads((_refine_dir(data_dir) / "batch.json").read_text(encoding="utf-8"))
+    assert batch["job_ids"] == [shortlist[0].id, shortlist[1].id]
+    assert "2 jobs in one prompt" in capsys.readouterr().out
+
+
+def test_export_refine_force_rewrites_an_unchanged_shortlist(shortlist, data_dir, monkeypatch, capsys):
+    _refine_scores(shortlist[:2], [85, 75])
+    _run(monkeypatch, "export", "refine", "--top", "2", "--force")
+    assert (_refine_dir(data_dir) / "batch.json").exists()
+    assert "2 jobs in one prompt" in capsys.readouterr().out
+
+
 def test_import_refine_stores_the_answer_like_the_api_path(shortlist, data_dir, monkeypatch, capsys):
     _run(monkeypatch, "export", "refine")
     capsys.readouterr()
