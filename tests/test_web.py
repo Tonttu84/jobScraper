@@ -134,7 +134,9 @@ def _seed(db_path, *, save_report: bool = True, save_facets: bool = True) -> dic
             status="review",
             location_tier=2,
             reasons=["asks for 5 years of experience"],
-            signals={"posting_language": "en", "languages_required": []},
+            # the one seeded posting whose text stated a closing date
+            signals={"posting_language": "en", "languages_required": [],
+                     "deadline": "2026-09-13", "closes_in_days": 3},
         ),
     }
     prefilter = {
@@ -325,6 +327,8 @@ def test_jobs_default_ordering_and_shape(seeded):
     assert first["facets"]["web_dev"] is True
     assert first["facets"]["posting_language"] == "en"
     assert first["decision"] is None
+    assert first["deadline"] is None  # this posting stated no closing date
+    assert first["closes_in_days"] is None
     assert "description" not in first
 
     # the review leftover has no AI score at all
@@ -334,6 +338,9 @@ def test_jobs_default_ordering_and_shape(seeded):
     assert last["prefilter"] is None
     assert last["rank"] is None
     assert last["filter"]["reasons"] == ["asks for 5 years of experience"]
+    # the closing date is lifted out of the signal dict so the card can show it without digging
+    assert last["deadline"] == "2026-09-13"
+    assert last["closes_in_days"] == 3
 
 
 def test_list_items_carry_the_verdict_summaries_the_teaser_needs(seeded):

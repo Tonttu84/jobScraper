@@ -163,6 +163,17 @@ def system_prompt(stage: str, profile: Profile) -> str:
     return head + body
 
 
+def _deadline_note(signals: dict) -> str:
+    """The closing date spelled out after the raw signal dict, where a reader will not miss it."""
+    deadline = signals.get("deadline")
+    if not deadline:
+        return ""
+    days = signals.get("closes_in_days")
+    if days is None:  # the deadline is behind us; the rule filter says so in its reasons
+        return f"; deadline: {deadline}"
+    return f"; deadline: {deadline} (" + ("today" if days == 0 else f"in {days} days") + ")"
+
+
 def job_prompt(job: Job, fr: FilterResult | None, max_chars: int) -> str:
     desc = (job.description or "")[:max_chars]
     if job.description and len(job.description) > max_chars:
@@ -179,7 +190,7 @@ def job_prompt(job: Job, fr: FilterResult | None, max_chars: int) -> str:
     ]
     if fr:
         meta.append(f"Rule-filter status: {fr.status}; notes: {'; '.join(fr.reasons) or '-'}")
-        meta.append(f"Detected signals: {fr.signals}")
+        meta.append(f"Detected signals: {fr.signals}{_deadline_note(fr.signals)}")
     return "JOB POSTING\n" + "\n".join(meta) + "\n\nDESCRIPTION\n" + (desc or "(no description available; judge from the title)")
 
 

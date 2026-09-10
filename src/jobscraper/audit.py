@@ -35,6 +35,7 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("language_required", re.compile(r"^requires ")),
     ("location", re.compile(r"^on-site in .*outside target countries$")),
     ("too_old", re.compile(r"^posting is .*days old")),
+    ("deadline_passed", re.compile(r"^application deadline passed on ")),
     ("duplicate", re.compile(r"^duplicate of ")),
 )
 

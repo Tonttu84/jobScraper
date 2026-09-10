@@ -135,6 +135,40 @@ def test_write_report_shows_the_work_rights_note_of_a_ranked_job(tmp_path, state
     assert "**Work rights:** Georgia: visa-free for one year." in text
 
 
+def _with_deadline(state, days: int | None, tmp_path):
+    """The report text with the ranked job carrying (or missing) a ``closes_in_days`` signal."""
+    jobs, filters, prefilter, ranked = state
+    signals = {} if days is None else {"deadline": "2026-09-13", "closes_in_days": days}
+    filters[jobs[0].id] = FilterResult(job_id=jobs[0].id, status="keep", location_tier=1,
+                                       signals=signals)
+    return write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_write_report_says_when_a_ranked_job_closes(tmp_path, state):
+    text = _with_deadline(state, 3, tmp_path)
+    assert "· closes in 3 days*" in text
+    assert "- **Closes in 3 days**" in text
+
+
+def test_write_report_says_closes_today_on_the_last_day(tmp_path, state):
+    text = _with_deadline(state, 0, tmp_path)
+    assert "· closes today*" in text
+    assert "- **Closes today**" in text
+
+
+def test_write_report_leaves_a_distant_deadline_in_the_meta_line_only(tmp_path, state):
+    """Three weeks out is worth knowing, not worth a bullet above the Opus summary."""
+    text = _with_deadline(state, 21, tmp_path)
+    assert "· closes in 21 days*" in text
+    assert "Closes in 21 days**" not in text
+
+
+def test_write_report_says_nothing_about_a_job_with_no_known_deadline(tmp_path, state):
+    assert "closes" not in _with_deadline(state, None, tmp_path)
+
+
 def test_write_report_ignores_verdicts_whose_job_is_gone(tmp_path, state):
     """A verdict can outlive its job row (a re-scrape that dropped the posting)."""
     jobs, filters, prefilter, ranked = state

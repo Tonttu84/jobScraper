@@ -58,6 +58,8 @@
     padding: 0 8px; font-size: 11px; color: var(--muted); background: #fbfbfc;
   }
   .tag.req { border-color: #fca5a5; color: #b91c1c; background: #fef2f2; }
+  /* A closing date within the week: a deadline the reader has to act on, not a property of the job. */
+  .tag.urgent { border-color: #fdba74; color: #c2410c; background: #fff7ed; }
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
     padding: 12px 14px; margin-bottom: 10px;
@@ -322,6 +324,16 @@ function teaserFor(job) {
   return verdict ? teaserText(verdict.summary) : "";
 }
 
+// Days left before the application deadline the rule filter read out of the posting text.
+// The same wording as the markdown report, so the two never disagree.
+var CLOSING_SOON_DAYS = 7;
+
+function closesText(job) {
+  var days = job.closes_in_days;
+  if (days === null || days === undefined) { return ""; }
+  return days === 0 ? "closes today" : "closes in " + days + " days";
+}
+
 function cardHtml(job) {
   var facets = job.facets || {};
   var tags = "";
@@ -336,7 +348,12 @@ function cardHtml(job) {
     var cls = spoken.indexOf(required[j]) < 0 ? "tag req" : "tag";
     tags += '<span class="' + cls + '">' + esc(required[j]) + " required</span>";
   }
-  var line = [job.company, job.location_raw, job.remote, job.source, "posted " + dateText(job.posted_at)]
+  var closes = closesText(job);
+  if (closes && job.closes_in_days <= CLOSING_SOON_DAYS) {
+    tags += '<span class="tag urgent">' + esc(closes) + "</span>";
+  }
+  var line = [job.company, job.location_raw, job.remote, job.source,
+              "posted " + dateText(job.posted_at), closes]
     .filter(function (part) { return part; }).map(esc).join(" · ");
   var decision = job.decision
     ? '<span class="badge">' + esc(job.decision.status) + "</span>" : "";

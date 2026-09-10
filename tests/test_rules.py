@@ -7,10 +7,12 @@ softer must become ``review`` so the AI stage still sees it.
 from __future__ import annotations
 
 import itertools
+from datetime import date
 
 import pytest
 
 from jobscraper.config import Profile, SeniorityPolicy
+from jobscraper.filters.deadline import find_deadline
 from jobscraper.filters.rules import classify_remote_region, dedupe, evaluate
 from jobscraper.models import Job
 
@@ -518,3 +520,151 @@ def test_a_job_with_neither_a_country_nor_a_remote_flag_is_reviewed(settings):
     res = evaluate(job, settings.profile)
     assert res.status == "review"
     assert "location unknown" in res.reasons
+
+
+# ------------------------------------------------------------------ application deadlines
+
+TODAY = date(2026, 9, 10)
+
+
+@pytest.mark.parametrize("text", [
+    # English
+    "Apply by 13 September 2026 to be considered.",
+    "Application deadline: 13 September 2026.",
+    "The deadline is 13 September 2026.",
+    "Closing date 13 September 2026.",
+    "Applications close on 13 September 2026.",
+    "The vacancy closes on 13 September 2026.",
+    "The last day to apply is 13 September 2026.",
+    # Finnish
+    "Hakuaika päättyy 13.9.2026 klo 23.59.",
+    "Viimeinen hakupäivä 13.9.2026.",
+    "Hae viimeistään 13.9.2026.",
+    "Hakemukset viimeistään 13.9.2026.",
+    # German
+    "Bewerbungsfrist: 13. September 2026.",
+    "Bitte bewerben Sie sich bis 13. September 2026.",
+    "Bewerbungsschluss 13.09.2026.",
+    "Bitte bewerben Sie sich bis zum 13. September 2026.",
+    # Portuguese
+    "Candidaturas até 13 de setembro de 2026.",
+    "Prazo de candidatura: 13 de setembro de 2026.",
+    # Swedish
+    "Sista ansökningsdag 13 september 2026.",
+    "Ansök senast 13 september 2026.",
+])
+def test_every_deadline_cue_language_is_read(text: str) -> None:
+    assert find_deadline(text, TODAY) == date(2026, 9, 13)
+
+
+@pytest.mark.parametrize("stamp", [
+    "13 September 2026", "September 13, 2026", "13.9.2026", "13.09.2026",
+    "13/09/2026", "2026-09-13", "13 Sep 2026", "13 Sept 2026",
+    "13 syyskuuta 2026", "13 syyskuu 2026", "13. September 2026",
+    "13 de setembro de 2026", "13 september 2026",
+])
+def test_every_deadline_date_format_is_parsed(stamp: str) -> None:
+    assert find_deadline(f"Application deadline: {stamp}.", TODAY) == date(2026, 9, 13)
+
+
+def test_a_deadline_without_a_year_takes_the_current_one() -> None:
+    assert find_deadline("Apply by 13 September.", TODAY) == date(2026, 9, 13)
+
+
+def test_a_deadline_without_a_year_just_behind_us_stays_in_this_year() -> None:
+    """Nine days past is a closed vacancy, not next year's round: the drop rule should see it."""
+    assert find_deadline("Apply by 1 September.", TODAY) == date(2026, 9, 1)
+
+
+def test_a_deadline_without_a_year_long_past_rolls_over_to_next_year() -> None:
+    assert find_deadline("Apply by 5 January.", TODAY) == date(2027, 1, 5)
+
+
+@pytest.mark.parametrize("text", [
+    "Application deadline: 13 September 2035.",  # too far ahead to be this posting's
+    "Application deadline: 13 September 2020.",  # more than a year behind us
+])
+def test_an_absurd_deadline_is_ignored(text: str) -> None:
+    assert find_deadline(text, TODAY) is None
+
+
+def test_an_impossible_date_is_ignored() -> None:
+    assert find_deadline("Application deadline: 31 February 2027.", TODAY) is None
+    assert find_deadline("Application deadline: 31 February.", TODAY) is None
+
+
+def test_a_leap_day_that_next_year_does_not_have_is_ignored() -> None:
+    """29 February, long past, and rolling it over one year would invent a day that never comes."""
+    assert find_deadline("Apply by 29 February.", date(2028, 12, 1)) is None
+
+
+@pytest.mark.parametrize("text", [
+    "We work in a fast-paced, deadline-driven environment.",
+    "You will own the deadline for the release train.",
+    "Deadlines matter here.",
+    "",
+])
+def test_a_deadline_word_without_a_date_matches_nothing(text: str) -> None:
+    assert find_deadline(text, TODAY) is None
+
+
+def test_a_date_without_a_cue_is_not_a_deadline() -> None:
+    assert find_deadline("The team offsite is on 13 September 2026.", TODAY) is None
+
+
+def test_a_date_too_far_after_the_cue_is_not_read() -> None:
+    filler = "x" * 120
+    assert find_deadline(f"Application deadline{filler}13 September 2026", TODAY) is None
+
+
+def test_the_first_readable_deadline_wins() -> None:
+    text = "Deadline for the demo is Friday. Apply by 13 September 2026, no exceptions."
+    assert find_deadline(text, TODAY) == date(2026, 9, 13)
+
+
+def test_a_month_and_year_without_a_day_is_not_a_date() -> None:
+    assert find_deadline("Application deadline: September 2026.", TODAY) is None
+
+
+def test_a_passed_deadline_is_dropped(settings):
+    job = make_job(location_raw="Helsinki, Finland", country="FI",
+                   description=ENGLISH_DESC + " Application deadline: 1 September 2026.")
+    res = evaluate(job, settings.profile, today=TODAY)
+    assert res.status == "drop"
+    assert "application deadline passed on 2026-09-01" in res.reasons
+    assert res.signals["deadline"] == "2026-09-01"
+    assert "closes_in_days" not in res.signals
+
+
+def test_an_open_deadline_is_kept_and_counted(settings):
+    job = make_job(location_raw="Helsinki, Finland", country="FI",
+                   description=ENGLISH_DESC + " Application deadline: 13 September 2026.")
+    res = evaluate(job, settings.profile, today=TODAY)
+    assert res.status == "keep"
+    assert res.signals["deadline"] == "2026-09-13"
+    assert res.signals["closes_in_days"] == 3
+
+
+def test_a_deadline_today_closes_in_zero_days(settings):
+    job = make_job(location_raw="Helsinki, Finland", country="FI",
+                   description=ENGLISH_DESC + " Application deadline: 10 September 2026.")
+    res = evaluate(job, settings.profile, today=TODAY)
+    assert res.status == "keep"
+    assert res.signals["closes_in_days"] == 0
+
+
+def test_a_posting_without_a_deadline_carries_no_deadline_signal(settings):
+    job = make_job(location_raw="Helsinki, Finland", country="FI")
+    res = evaluate(job, settings.profile, today=TODAY)
+    assert "deadline" not in res.signals
+    assert "closes_in_days" not in res.signals
+
+
+def test_evaluate_defaults_to_the_real_today(settings):
+    """Without an explicit date the rule uses the clock, so the CLI needs no extra argument."""
+    ahead = date.today().replace(year=date.today().year + 1)
+    job = make_job(location_raw="Helsinki, Finland", country="FI",
+                   description=ENGLISH_DESC + f" Application deadline: {ahead.isoformat()}.")
+    res = evaluate(job, settings.profile)
+    assert res.signals["deadline"] == ahead.isoformat()
+    assert res.signals["closes_in_days"] > 0

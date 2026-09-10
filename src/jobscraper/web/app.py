@@ -35,7 +35,7 @@ from jobscraper.models import (
     ReportSection,
     ReportSnapshot,
 )
-from jobscraper.report import build_snapshot, effective_score
+from jobscraper.report import build_snapshot, closes_in, effective_score
 from jobscraper.store import Store
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -144,6 +144,9 @@ class JobView(BaseModel):
     section: ReportSection | None = None
     position: int | None = None
     filter: FilterView | None = None
+    #: Lifted out of ``filter.signals`` so a card can show the closing date without digging.
+    deadline: str | None = None
+    closes_in_days: int | None = None
     prefilter: VerdictView | None = None
     rank: VerdictView | None = None
     refine: VerdictView | None = None
@@ -332,6 +335,8 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
         "position": position,
         "filter": FilterView(status=fr.status, location_tier=fr.location_tier,
                              reasons=list(fr.reasons), signals=dict(fr.signals)) if fr else None,
+        "deadline": fr.signals.get("deadline") if fr else None,
+        "closes_in_days": closes_in(fr),
         "prefilter": _verdict_view(pre),
         "rank": _verdict_view(rank),
         "refine": _verdict_view(refine),

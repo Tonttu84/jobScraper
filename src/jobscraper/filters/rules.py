@@ -9,14 +9,18 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from jobscraper.config import Profile
+from jobscraper.filters.deadline import find_deadline
 from jobscraper.filters.language import detect_language, find_language_requirements
 from jobscraper.models import FilterResult, Job
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-09-10b"
+RULES_VERSION = "2026-09-10c"
+
+#: A deadline this near is worth putting in front of the reader (report bullet, UI tag).
+CLOSING_SOON_DAYS = 7
 
 _YEARS_RE = re.compile(
     r"(?:(?:at least|minimum|min\.?|minimum of|over|more than|vähintään|yli|mindestens|mind\.|über|"
@@ -95,12 +99,13 @@ def _location_tier(job: Job, profile: Profile) -> int | None:
     return _country_tier(job.country, profile)
 
 
-def evaluate(job: Job, profile: Profile) -> FilterResult:
+def evaluate(job: Job, profile: Profile, today: date | None = None) -> FilterResult:
     reasons: list[str] = []
     review: list[str] = []
     signals: dict = {}
     title = job.title or ""
     text = job.text
+    today = today or datetime.now(UTC).date()
 
     # ---------------------------------------------------------------- role
     role = profile.role
@@ -205,6 +210,18 @@ def evaluate(job: Job, profile: Profile) -> FilterResult:
         signals["age_days"] = age_days
         if age_days > profile.max_age_days:
             reasons.append(f"posting is {age_days} days old (max {profile.max_age_days})")
+
+    # -------------------------------------------------------------- deadline
+    # A closing date the posting states itself is harder evidence than its age: past it, the
+    # vacancy is shut whatever the board still shows. Ahead of it, the days left are a signal
+    # for the AI stages and something the reader can act on.
+    deadline = find_deadline(text, today)
+    if deadline is not None:
+        signals["deadline"] = deadline.isoformat()
+        if deadline < today:
+            reasons.append(f"application deadline passed on {deadline.isoformat()}")
+        else:
+            signals["closes_in_days"] = (deadline - today).days
 
     status = "drop" if reasons else ("review" if review else "keep")
     return FilterResult(job_id=job.id, status=status, reasons=reasons + review, signals=signals, location_tier=tier)

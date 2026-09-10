@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jobscraper.config import paths
+from jobscraper.filters.rules import CLOSING_SOON_DAYS
 from jobscraper.models import (
     AIVerdict,
     FilterResult,
@@ -58,13 +59,29 @@ def rank_order(refine: dict[str, AIVerdict]):
     return key
 
 
+def closes_in(fr: FilterResult | None) -> int | None:
+    """Days until the application deadline the rule filter read out of the posting, if any."""
+    days = fr.signals.get("closes_in_days") if fr else None
+    return days if isinstance(days, int) else None
+
+
+def closes_text(days: int) -> str:
+    """How the closing date reads in prose, on the last day and before it."""
+    return "closes today" if days == 0 else f"closes in {days} days"
+
+
 def ranked_block(job: Job, score: int | None, verdict: AIVerdict | None = None,
                  fr: FilterResult | None = None, refine: AIVerdict | None = None) -> list[str]:
     """The markdown block for one ranked job — shared by the report and the diff."""
     loc = f"{job.location_raw or '?'} · {job.remote}" + (f" · {_tier_label(fr.location_tier)}" if fr else "")
     both = f" (rank {verdict.score} · refine {refine.score})" if verdict is not None and refine is not None else ""
+    days = closes_in(fr)
+    closing = f" · {closes_text(days)}" if days is not None else ""
     lines = [f"### {score}{both} · [{job.title}]({job.url}) — {job.company or '?'}",
-             f"*{loc} · {job.source} · posted {job.posted_at.date() if job.posted_at else '?'}*  "]
+             f"*{loc} · {job.source} · posted {job.posted_at.date() if job.posted_at else '?'}{closing}*  "]
+    # A deadline this close outranks everything the AI has to say about the job.
+    if days is not None and days <= CLOSING_SOON_DAYS:
+        lines.append(f"- **{closes_text(days).capitalize()}**")
     if verdict is not None:
         lines.append(verdict.summary)
         if refine is not None:

@@ -186,6 +186,17 @@ def test_card_meta_line_and_tags(page, site):
     assert "prefiltered and ranked" not in tags  # the pipeline stage is not a job tag
 
 
+def test_a_closing_posting_says_so_in_the_meta_line_and_wears_an_urgent_tag(page, site):
+    """The seeded review leftover closes in three days; the ranked one states no deadline."""
+    _, jobs = site
+    rev = card(page, jobs["rev"])
+    expect(rev.locator(".meta")).to_contain_text("closes in 3 days")
+    expect(rev.locator(".tag.urgent")).to_have_text("closes in 3 days")
+    web = card(page, jobs["web"])
+    expect(web.locator(".meta")).not_to_contain_text("closes")
+    expect(web.locator(".tag.urgent")).to_have_count(0)
+
+
 def test_detail_opens_on_click_with_rank_summary_and_description(page, site):
     _, jobs = site
     web = card(page, jobs["web"])

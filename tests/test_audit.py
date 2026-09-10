@@ -49,6 +49,7 @@ EXAMPLES = [
     ("requires de: 'fließend Deutsch'", "language_required"),
     ("on-site in GB, outside target countries", "location"),
     ("posting is 45 days old (max 30)", "too_old"),
+    ("application deadline passed on 2026-09-01", "deadline_passed"),
     ("duplicate of 16af2ba071e7fe11", "duplicate"),
 ]
 

@@ -47,6 +47,22 @@ def test_prompts_mention_policy(settings):
     assert "truncated" in job_prompt(_job(description="x" * 500), None, 100)
 
 
+@pytest.mark.parametrize(("signals", "expected"), [
+    ({"deadline": "2026-09-13", "closes_in_days": 3}, "deadline: 2026-09-13 (in 3 days)"),
+    ({"deadline": "2026-09-10", "closes_in_days": 0}, "deadline: 2026-09-10 (today)"),
+    ({"deadline": "2026-09-01"}, "deadline: 2026-09-01"),
+])
+def test_the_prompt_spells_out_a_deadline_next_to_the_raw_signals(signals, expected):
+    """The signal dict alone buries the closing date; the AI stages should not have to dig."""
+    fr = FilterResult(job_id="x", status="keep", signals=signals)
+    assert expected in job_prompt(_job(), fr, 400)
+
+
+def test_a_posting_without_a_deadline_adds_nothing_to_the_signal_line():
+    fr = FilterResult(job_id="x", status="keep", signals={"years_required": 3})
+    assert "deadline" not in job_prompt(_job(), fr, 400)
+
+
 def test_judge_maps_structured_output(stage, monkeypatch):
     calls = {}
 

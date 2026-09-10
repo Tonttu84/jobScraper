@@ -114,7 +114,7 @@ def test_collect_builds_one_flat_anonymous_row(state, settings):
     assert row["profile"] == "default"
     assert row["jobs_total"] == 4
     assert row["by_source"] == {"arbeitnow": 2, "jobly": 2}
-    assert row["rules"] == {"keep": 1, "review": 1, "drop": 2}
+    assert row["rules"] == {"keep": 1, "review": 1, "drop": 2, "deadline_passed": 0}
     assert row["drops_by_category"] == {"not_software_title": 1, "too_old": 1}
     assert row["prefilter"] == {"prefiltered": 2, "passed": 1}
     assert row["ranked"] == 1
@@ -125,6 +125,20 @@ def test_collect_builds_one_flat_anonymous_row(state, settings):
     assert row["cost_usd"] == 1.25
     assert row["scrape"] == {"sources": 2, "fetched": 12, "new": 0, "errors": 1}
     datetime.fromisoformat(row["recorded_at"])  # parses
+
+
+def test_collect_counts_the_postings_dropped_for_a_passed_deadline(state, settings):
+    """A closed vacancy is its own kind of loss: worth a counter next to keep/review/drop."""
+    job = make_job("jobly", "5", title="Junior Developer")
+    state.upsert_jobs([job])
+    state.save_filter_results(
+        [FilterResult(job_id=job.id, status="drop",
+                      reasons=["application deadline passed on 2026-09-01"])],
+        "rules-test",
+    )
+    row = runstats.collect(state, snapshot_for(state), settings, profile=None, usage_path=None)
+    assert row["rules"]["deadline_passed"] == 1
+    assert row["drops_by_category"]["deadline_passed"] == 1
 
 
 def test_collect_never_writes_posting_text(state, settings):

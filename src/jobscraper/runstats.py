@@ -95,7 +95,10 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
         "jobs_total": counts.get("jobs", 0),
         "new_jobs": store.new_jobs_since(previous.created_at if previous else None),
         "by_source": dict(sorted(store.stats()["jobs_per_source"].items())),
-        "rules": {name: counts.get(name, 0) for name in ("keep", "review", "drop")},
+        # ``deadline_passed`` rides along with the statuses: it is the one drop reason that says
+        # the vacancy is shut rather than that the profile said no, so it reads as a funnel step.
+        "rules": {**{name: counts.get(name, 0) for name in ("keep", "review", "drop")},
+                  "deadline_passed": drops.get("deadline_passed", 0)},
         "drops_by_category": dict(sorted(drops.items())),
         "prefilter": {"prefiltered": len(prefiltered), "passed": passed},
         "ranked": counts.get("ranked", 0),
