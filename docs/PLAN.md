@@ -263,6 +263,21 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
    table, the eval numbers from item 4, cost per run, an architecture diagram, and a sample
    report generated from an anonymised profile.
 
+## Rule and prompt candidates raised by the ranking agents (2026-09-10, owner to decide)
+- **University-enrolment gate.** German/Romanian "Werkstudent" and mandatory-internship
+  postings (Bosch, SAP, Stryker, Deutsche Börse, Hitachi, Allianz, Cisco intern) require
+  *current enrolment* at a recognised university with an enrolment certificate. Hive Helsinki
+  does not satisfy that. The prompts only say degree requirements are not a blocker, so the
+  rankers capped these at 20–48 or rejected them ad hoc; in the 2026-09-10 rank round about a
+  third of the 61 new candidates were such postings. Options: a rule signal
+  ("enrolment required") + an explicit prompt line to reject, or a profile flag
+  `enrolled_student: true|false` fed to both prompts.
+- **Evergreen pipeline adverts.** Cisco postings that open with "this posting is to advertise
+  potential job opportunities … this exact role may not be open today" are not live vacancies.
+  Cheap to detect as a rule signal and show as a concern / lower the score.
+- **Application deadlines in the text** (e.g. Deloitte Nordic trainee, closes 13 Sep 2026): a
+  date extractor could surface "closes in N days" in the report and web UI.
+
 ## Improving match quality (agreed levers, not yet built)
 The CV is a thin signal. Three additions, in order of expected payoff:
 
