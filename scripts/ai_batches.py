@@ -1,6 +1,6 @@
 """Run the AI stages without the API: export prompt batches for subagents, import their verdicts.
 
-    python scripts/ai_batches.py hydrate linkedin [--top 120] [--max-fetch 120]
+    python scripts/ai_batches.py hydrate linkedin [--top 480] [--max-fetch 480]
     python scripts/ai_batches.py export prefilter [--chunk 100] [--max-chars 1500] [--all] [--sample 20]
     python scripts/ai_batches.py import prefilter|rank
     python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60] [--sample 20]
@@ -285,9 +285,9 @@ def main() -> None:
     ap.add_argument("--max-chars", type=int, default=None)
     ap.add_argument("--all", action="store_true",
                     help="export prefilter only: export every survivor, not just the unscreened ones")
-    ap.add_argument("--top", type=int, default=None, help="export rank: 60; hydrate linkedin: 120")
+    ap.add_argument("--top", type=int, default=None, help="export rank: 60; hydrate linkedin: 480")
     ap.add_argument("--max-fetch", type=int, default=None,
-                    help="how many missing LinkedIn descriptions to fetch (0 disables); rank: 60, hydrate: 120")
+                    help="how many missing LinkedIn descriptions to fetch (0 disables); rank: 60, hydrate: 480")
     ap.add_argument("--sample", type=int, default=1, metavar="N",
                     help="export only: keep every N-th candidate (positions 0, N, 2N, ... after --top); 1 = all")
     ap.add_argument("--profile", default=os.environ.get("JOBSCRAPER_PROFILE") or None, metavar="NAME",
@@ -303,7 +303,7 @@ def main() -> None:
     if a.action == "hydrate":
         if a.stage not in (None, "linkedin"):
             ap.error("hydrate only knows the 'linkedin' stage")
-        hydrate_top_linkedin(a.top or 120, 120 if a.max_fetch is None else a.max_fetch)
+        hydrate_top_linkedin(a.top or 480, 480 if a.max_fetch is None else a.max_fetch)
         return
     if a.stage not in ("prefilter", "rank"):
         ap.error(f"{a.action} needs a stage: prefilter or rank")

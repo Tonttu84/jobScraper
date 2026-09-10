@@ -464,6 +464,27 @@ def test_hydrate_linkedin_honours_max_fetch_and_the_rule_filter(data_dir, monkey
     assert "hydrated 2/2 linkedin descriptions; 2 verdicts cleared" in capsys.readouterr().out
 
 
+def test_hydrate_linkedin_defaults_to_the_top_480_window(data_dir, monkeypatch):
+    """Two measured runs found useful hits down to position 462, so the window covers 480."""
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(ai_batches, "hydrate_top_linkedin",
+                        lambda top, max_fetch: calls.append((top, max_fetch)))
+
+    _run(monkeypatch, "hydrate", "linkedin")
+
+    assert calls == [(480, 480)]
+
+
+def test_hydrate_linkedin_explicit_top_and_max_fetch_win_over_the_defaults(data_dir, monkeypatch):
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(ai_batches, "hydrate_top_linkedin",
+                        lambda top, max_fetch: calls.append((top, max_fetch)))
+
+    _run(monkeypatch, "hydrate", "linkedin", "--top", "240", "--max-fetch", "100")
+
+    assert calls == [(240, 100)]
+
+
 def test_export_prefilter_only_exports_jobs_without_a_verdict_unless_all(data_dir, monkeypatch, capsys):
     """Refill semantics: after hydration only the cleared rows go back to the Sonnet pass."""
     jobs = [_job(1, "Junior Go Developer"), _job(2, "Graduate Backend Engineer"),
