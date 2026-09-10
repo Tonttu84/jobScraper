@@ -281,9 +281,11 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
   nothing already scored is invalidated). The ~15 enrolment-gated jobs scored 20–48 on
   2026-09-10 keep those scores until re-scored: delete their rank verdicts and re-export when
   budget allows (one Opus chunk).
-- **Evergreen pipeline adverts.** Cisco postings that open with "this posting is to advertise
-  potential job opportunities … this exact role may not be open today" are not live vacancies.
-  Cheap to detect as a rule signal and show as a concern / lower the score.
+- **Evergreen pipeline adverts** — done 2026-09-10 (`filters/evergreen.py`, rules `2026-09-10d`,
+  facets `2026-09-10.1`): 17 cue phrases (EN/DE/FI/PT/SV, title first) set `signals["evergreen"]`;
+  never a drop. Shown as a concern in the report, a grey tag and a "hide evergreen adverts"
+  box in the web UI, passed to the ranking prompt so rank and refine discount it the same way,
+  counted in the public stats.
 - **Application deadlines in the text** — done 2026-09-10 (`filters/deadline.py`, rules
   `2026-09-10c`): a date within 80 characters of a cue phrase (EN/FI/DE/PT/SV) becomes
   `signals["deadline"]`; a passed deadline is a rule drop (`deadline_passed` in the audit and
