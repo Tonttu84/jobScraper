@@ -109,11 +109,14 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   `externalPath` slug (`/job/Shanghai-Shanghai-China/…`). Source-level `default_countries:`
   exists but is unset on purpose. Felipe's `config/profiles/felipe/sources.yaml` has not
   been given a list yet (his tiers differ).
-- [ ] **Time one full `ats_boards` run** and decide whether it still fits the schedule. Probing
-  the 63 new boards one at a time took ~4 minutes of listing in total, but JPMorgan alone is
-  78 s / 7 379 postings and Hitachi 20 s / 4 246, and the descriptions of the title survivors
-  are fetched on top of that in a real run. If it is too slow, split the source in two
-  (`ats_boards` + `ats_boards_enterprise`) or add the `countries:` filter above first.
+- [x] **Time one full `ats_boards` run** — measured 2026-09-10 on the owner's machine with the
+  country filter on: **1 627 s (27 min)** for all 81 boards, 4 012 jobs, 3 997 new to the
+  default database. It fits a daily schedule but is the slowest source by far; if it grows,
+  split it into `ats_boards` + `ats_boards_enterprise`. The country filter's saving, counted on
+  the 29 boards whose log lines survived (the run was logged with `-v` through a PowerShell
+  redirect, which wrote UTF-16 and mangled the rest): 663 of 2 578 description fetches skipped
+  (26%), 421 of them on JPMorgan alone. Log scrapes with `--log-file` or a plain `>` from bash,
+  not `*>` from PowerShell.
 - [ ] **Decide on the big-tech boards** (`ats: google|amazon|tesla|tiktok|apple`). The dataset
   ranks Google at 204 tech postings in our countries, TikTok 110, Amazon 64, Tesla 53 — worth
   having, but they list 10 000+ jobs each and mostly cannot fetch a description per posting, so
