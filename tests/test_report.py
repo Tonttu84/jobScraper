@@ -7,8 +7,16 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jobscraper.models import AIVerdict, FilterResult, Job
-from jobscraper.report import build_snapshot, export_jsonl, write_report
+from jobscraper.models import AIVerdict, FilterResult, Job, ReportItem, ReportSnapshot
+from jobscraper.report import (
+    build_snapshot,
+    diff_reports,
+    export_jsonl,
+    previous_report,
+    render_diff,
+    render_new_section,
+    write_report,
+)
 
 
 def make_job(source_id: str, title: str, **kw) -> Job:
@@ -280,3 +288,198 @@ def test_build_snapshot_hides_jobs_the_rule_filter_now_drops(state):
     snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1")
     assert [(i.job_id, i.section) for i in snap.items] == [(review_job.id, "review")]
     assert snap.counts["prefiltered"] == 0 and snap.counts["ranked"] == 0
+
+
+# ------------------------------------------------------- diff between reports
+
+
+def make_snapshot(report_id: int | None = None, *, ranked=(), prefilter=(), review=(),
+                  created_at: datetime | None = None) -> ReportSnapshot:
+    """A snapshot with hand-made items: ``ranked``/``prefilter`` are (job_id, score) pairs."""
+    items: list[ReportItem] = []
+    for pos, (job_id, score) in enumerate(ranked, 1):
+        items.append(ReportItem(job_id=job_id, section="ranked", position=pos, score=score))
+    for pos, (job_id, score) in enumerate(prefilter, 1):
+        items.append(ReportItem(job_id=job_id, section="prefilter", position=pos, score=score))
+    for pos, job_id in enumerate(review, 1):
+        items.append(ReportItem(job_id=job_id, section="review", position=pos, score=None))
+    return ReportSnapshot(id=report_id, days=7, prompt_version="v1", counts={}, items=items,
+                          created_at=created_at or datetime(2026, 9, 10, 6, 0, tzinfo=UTC))
+
+
+def test_diff_reports_splits_new_gone_and_moved():
+    old = make_snapshot(1, ranked=[("a", 90), ("b", 80)], prefilter=[("c", 60)])
+    new = make_snapshot(2, ranked=[("a", 95), ("c", 70)], prefilter=[("d", 50)])
+
+    diff = diff_reports(new, old)
+
+    assert (diff.old_id, diff.new_id) == (1, 2)
+    assert diff.old_created_at == old.created_at
+    assert [i.job_id for i in diff.new_ranked] == ["c"]          # c moved prefilter -> ranked
+    assert [i.job_id for i in diff.gone_ranked] == ["b"]
+    assert [i.job_id for i in diff.new_prefilter] == ["d"]
+    assert [(m.job_id, m.old_score, m.new_score) for m in diff.moved] == []  # 90 -> 95 is < 10
+
+
+def test_diff_reports_keeps_new_ranked_in_position_order():
+    old = make_snapshot(3, ranked=[("keep", 70)])
+    new = make_snapshot(4, ranked=[("x", 99), ("keep", 70), ("y", 65), ("z", 60)])
+
+    diff = diff_reports(new, old)
+    assert [i.job_id for i in diff.new_ranked] == ["x", "y", "z"]
+    assert [i.position for i in diff.new_ranked] == [1, 3, 4]
+
+
+def test_diff_reports_moved_only_lists_swings_of_ten_or_more():
+    old = make_snapshot(1, ranked=[("big", 50), ("small", 50), ("down", 90)])
+    new = make_snapshot(2, ranked=[("down", 60), ("big", 61), ("small", 59)])
+
+    diff = diff_reports(new, old)
+    moved = {m.job_id: m for m in diff.moved}
+    assert set(moved) == {"big", "down"}       # small moved by 9 only
+    assert (moved["big"].old_score, moved["big"].new_score) == (50, 61)
+    assert (moved["big"].old_position, moved["big"].new_position) == (1, 2)
+    assert moved["big"].delta == 11
+    assert moved["down"].delta == -30
+
+
+def test_diff_reports_new_prefilter_ignores_jobs_that_were_ranked_before():
+    old = make_snapshot(1, ranked=[("a", 90)], prefilter=[("b", 60)])
+    new = make_snapshot(2, ranked=[], prefilter=[("a", 55), ("b", 60), ("c", 40)])
+
+    diff = diff_reports(new, old)
+    assert [i.job_id for i in diff.new_prefilter] == ["c"]   # a was ranked, b was in prefilter
+    assert [i.job_id for i in diff.gone_ranked] == ["a"]
+
+
+def test_diff_reports_against_nothing_is_all_new():
+    new = make_snapshot(1, ranked=[("a", 90)], prefilter=[("b", 60)], review=["c"])
+
+    diff = diff_reports(new, None)
+    assert diff.old_id is None
+    assert diff.old_created_at is None
+    assert diff.new_id == 1
+    assert [i.job_id for i in diff.new_ranked] == ["a"]
+    assert [i.job_id for i in diff.new_prefilter] == ["b"]
+    assert diff.gone_ranked == [] and diff.moved == []
+
+
+def test_previous_report_returns_the_snapshot_before_with_items(tmp_path):
+    from jobscraper.store import Store
+
+    store = Store(tmp_path / "jobs.db")
+    try:
+        first = store.save_report(make_snapshot(ranked=[("a", 90)]))
+        second = store.save_report(make_snapshot(ranked=[("b", 80)]))
+        third = store.save_report(make_snapshot(ranked=[("c", 70)]))
+
+        prev = previous_report(store, third)
+        assert prev is not None and prev.id == second.id
+        assert [i.job_id for i in prev.items] == ["b"]
+        assert previous_report(store, first) is None
+    finally:
+        store.close()
+
+
+# ----------------------------------------------------------------- render_diff
+
+
+@pytest.fixture
+def diff_state():
+    """Two jobs newly ranked / newly prefiltered, one that dropped out of the ranking."""
+    fresh = make_job("fresh-1", "Junior Go Developer")
+    pre = make_job("pre-9", "Graduate Cloud Engineer", location_raw="Tallinn, Estonia", country="EE")
+    gone = make_job("gone-1", "Junior Rust Developer")
+    jobs_by_id = {j.id: j for j in (fresh, pre, gone)}
+    ranked_verdicts = {
+        fresh.id: make_verdict(fresh.id, "rank", 88, why_apply=["Go and Kubernetes"],
+                               concerns=["no salary range"]),
+        gone.id: make_verdict(gone.id, "rank", 72),
+    }
+    prefilter_verdicts = {pre.id: make_verdict(pre.id, "prefilter", 61)}
+    old = make_snapshot(7, ranked=[(gone.id, 72)], created_at=datetime(2026, 9, 9, 6, 30, tzinfo=UTC))
+    new = make_snapshot(8, ranked=[(fresh.id, 88)], prefilter=[(pre.id, 61)])
+    return jobs_by_id, ranked_verdicts, prefilter_verdicts, old, new
+
+
+def test_render_diff_header_blocks_table_and_dropped_list(diff_state):
+    jobs_by_id, ranked_verdicts, prefilter_verdicts, old, new = diff_state
+    fresh = next(j for j in jobs_by_id.values() if j.source_id == "fresh-1")
+    pre = next(j for j in jobs_by_id.values() if j.source_id == "pre-9")
+    gone = next(j for j in jobs_by_id.values() if j.source_id == "gone-1")
+
+    text = render_diff(diff_reports(new, old), jobs_by_id, ranked_verdicts, prefilter_verdicts)
+
+    assert ("1 new ranked · 1 new in prefilter · 1 dropped out of ranked since report #7 "
+            "(created 2026-09-09 06:30 UTC)") in text
+    # the new ranked job gets the full write_report-style block
+    assert f"### 88 · [{fresh.title}]({fresh.url}) — Example Oy" in text
+    assert "*Helsinki, Finland · hybrid · teamtailor · posted 2026-09-01*" in text
+    assert f"Summary for {fresh.id}." in text
+    assert "**Why apply:** Go and Kubernetes" in text
+    # the new prefilter survivor gets a compact table row
+    assert "| score | title | company | location | source |" in text
+    assert f"| 61 | [{pre.title}]({pre.url}) | Example Oy | Tallinn, Estonia / hybrid | teamtailor |" in text
+    # and the job that fell out of the ranking is a bullet with its old score
+    assert f"- [{gone.title}]({gone.url}) — Example Oy (was 72)" in text
+
+
+def test_render_diff_without_a_previous_report(diff_state):
+    jobs_by_id, ranked_verdicts, prefilter_verdicts, _old, new = diff_state
+    text = render_diff(diff_reports(new, None), jobs_by_id, ranked_verdicts, prefilter_verdicts)
+    assert "First report in this database — nothing to diff against." in text
+    assert "1 new ranked · 1 new in prefilter · 0 dropped out of ranked" in text
+    assert "since report #" not in text
+
+
+def test_render_diff_lists_score_moves(diff_state):
+    jobs_by_id, ranked_verdicts, prefilter_verdicts, _old, _new = diff_state
+    gone = next(j for j in jobs_by_id.values() if j.source_id == "gone-1")
+    old = make_snapshot(1, ranked=[(gone.id, 40)])
+    new = make_snapshot(2, ranked=[(gone.id, 72)])
+
+    text = render_diff(diff_reports(new, old), jobs_by_id, ranked_verdicts, prefilter_verdicts)
+    assert f"- [{gone.title}]({gone.url}) — Example Oy: 40 → 72 (+32)" in text
+
+
+def test_render_diff_with_nothing_new_says_so(diff_state):
+    jobs_by_id, ranked_verdicts, prefilter_verdicts, _old, _new = diff_state
+    job_id = next(iter(jobs_by_id))
+    text = render_diff(diff_reports(make_snapshot(2, ranked=[(job_id, 88)]),
+                                    make_snapshot(1, ranked=[(job_id, 88)])),
+                       jobs_by_id, ranked_verdicts, prefilter_verdicts)
+    assert "0 new ranked · 0 new in prefilter · 0 dropped out of ranked" in text
+    assert "Nothing new since the previous report." in text
+
+
+def test_render_diff_skips_items_whose_job_is_unknown(diff_state):
+    jobs_by_id, ranked_verdicts, prefilter_verdicts, old, _new = diff_state
+    new = make_snapshot(8, ranked=[("ghost", 99)], prefilter=[("ghost2", 50)])
+    text = render_diff(diff_reports(new, old), jobs_by_id, ranked_verdicts, prefilter_verdicts)
+    assert "ghost" not in text
+    assert "1 new ranked · 1 new in prefilter" in text  # counts still describe the diff
+
+
+def test_render_new_section_heading_counts_and_unknown_jobs(diff_state):
+    """The short section `jobscraper report` prepends: heading, counts, new-ranked blocks only."""
+    jobs_by_id, ranked_verdicts, _prefilter_verdicts, old, new = diff_state
+    fresh = next(j for j in jobs_by_id.values() if j.source_id == "fresh-1")
+
+    section = render_new_section(diff_reports(new, old), jobs_by_id, ranked_verdicts)
+    assert section.startswith("## New since report #7")
+    assert "1 new ranked · 1 new in prefilter · 1 dropped out of ranked since report #7" in section
+    assert f"### 88 · [{fresh.title}]({fresh.url}) — Example Oy" in section
+    assert "| score |" not in section        # the prefilter table stays in the diff file
+    assert "(was 72)" not in section         # so does the dropped-out list
+
+    first = render_new_section(diff_reports(new, None), {}, ranked_verdicts)
+    assert first.startswith("## New in this report")
+    assert "###" not in first                # nothing to render: the job is not in jobs_by_id
+
+
+def test_render_diff_falls_back_to_the_item_score_without_a_verdict(diff_state):
+    jobs_by_id, _ranked_verdicts, prefilter_verdicts, old, new = diff_state
+    fresh = next(j for j in jobs_by_id.values() if j.source_id == "fresh-1")
+    text = render_diff(diff_reports(new, old), jobs_by_id, {}, prefilter_verdicts)
+    assert f"### 88 · [{fresh.title}]({fresh.url}) — Example Oy" in text
+    assert "**Why apply:**" not in text

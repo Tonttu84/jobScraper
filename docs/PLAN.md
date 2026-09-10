@@ -99,7 +99,11 @@ borderline match that slips through is capped instead of graded as a great fit. 
 Trigger: whenever a new CV arrives, offer these (CLAUDE.md → "When the owner hands over a new CV").
 
 ## Later ideas
-- Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.
+- ~~Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.~~
+  Done: `jobscraper report` diffs itself against the previous snapshot in the same database and
+  writes `results/diff-*.md`, `jobscraper diff` shows any two snapshots, and
+  `scripts/scheduled_run.sh` + `.github/workflows/scheduled-run.yml` are the two schedules —
+  see docs/SCHEDULING.md.
 - ~~Message Batches API for the prefilter (50% cheaper, async).~~ Done: `jobscraper prefilter --batch`
   (or `ai.prefilter_batch: true`) submits the pending jobs as one Message Batch and polls until it
   ends; submitted batch ids are stored, so an interrupted wait is resumed instead of paid twice.

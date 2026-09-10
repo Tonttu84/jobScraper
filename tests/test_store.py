@@ -405,6 +405,27 @@ def test_report_on_an_empty_database_is_none(store):
     assert store.reports() == []
 
 
+def test_report_before_returns_the_previous_report_with_items(store):
+    first = store.save_report(make_snapshot(prompt_version="first"))
+    second = store.save_report(make_snapshot(prompt_version="second", items=[
+        ReportItem(job_id="b", section="ranked", position=1, score=80),
+    ]))
+    third = store.save_report(make_snapshot(prompt_version="third"))
+
+    before = store.report_before(third.id)
+    assert before is not None
+    assert before.id == second.id
+    assert before.prompt_version == "second"
+    assert [i.job_id for i in before.items] == ["b"]
+
+    assert store.report_before(first.id) is None      # nothing older than the first
+    assert store.report_before(9999).id == third.id   # ids need not exist
+
+
+def test_report_before_on_an_empty_database_is_none(store):
+    assert store.report_before(1) is None
+
+
 def test_deleting_a_report_cascades_to_its_items(store):
     saved = store.save_report(make_snapshot())
     assert store.conn.execute("SELECT COUNT(*) FROM report_items").fetchone()[0] == 3

@@ -6,6 +6,7 @@
     jobscraper prefilter            # Sonnet pass over rule survivors (--batch: half price, async)
     jobscraper rank                 # Opus pass over the best prefilter survivors
     jobscraper report               # markdown report + JSONL export, stored in the DB
+    jobscraper diff                 # what changed since the previous report (see docs/SCHEDULING.md)
     jobscraper run                  # scrape → filter → prefilter → rank → report
     jobscraper facets               # recompute the deterministic facets (backfill an old DB)
     jobscraper serve                # web UI over data/jobs.db
@@ -21,6 +22,7 @@ from __future__ import annotations
 import logging
 import shutil
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -235,7 +237,16 @@ def report(days: int = 30, out: Path | None = None) -> None:
     """Write the markdown report and a JSONL export, and store the report in the database."""
     from jobscraper.ai.client import estimate_cost
     from jobscraper.ai.prompts import PROMPT_VERSION
-    from jobscraper.report import build_snapshot, export_jsonl, write_report
+    from jobscraper.report import (
+        build_snapshot,
+        diff_reports,
+        export_jsonl,
+        prepend_section,
+        previous_report,
+        render_diff,
+        render_new_section,
+        write_report,
+    )
 
     store = Store()
     jobs, filters = _load_state(store, days)
@@ -259,6 +270,41 @@ def report(days: int = 30, out: Path | None = None) -> None:
     console.print(f"report: {path}\nexport: {jsonl}")
     console.print(f"report #{snap.id}: {sections['ranked']} ranked, {sections['prefilter']} prefilter, "
                   f"{sections['review']} review → {path}")
+
+    # What changed since the previous snapshot: a file of its own, plus a short section on top of
+    # the report. Printed last so it is the tail of a cron mail.
+    diff = diff_reports(snap, previous_report(store, snap))
+    diff_path = path.parent / f"diff-{datetime.now(UTC):%Y-%m-%d}.md"
+    diff_path.write_text(render_diff(diff, by_id, ranked, pre), encoding="utf-8")
+    prepend_section(path, render_new_section(diff, by_id, ranked))
+    since = "first report in this database" if diff.old_id is None else f"new since report #{diff.old_id}"
+    console.print(f"{since}: {len(diff.new_ranked)} ranked, {len(diff.new_prefilter)} prefilter ({diff_path})",
+                  soft_wrap=True)
+
+
+@app.command("diff")
+def diff_cmd(report_id: int | None = typer.Option(None, "--report", help="Report to inspect (default: the newest)"),
+             against: int | None = typer.Option(None, "--against", help="Report to compare against (default: the one before it)"),
+             out: Path | None = typer.Option(None, "--out", help="Also write the markdown to this file")) -> None:
+    """What changed between two stored report snapshots — the "what's new" of a scheduled run."""
+    from jobscraper.report import diff_reports, previous_report, render_diff
+
+    store = Store()
+    new = store.report(report_id)
+    if new is None:
+        console.print("no report to diff — run `jobscraper report` first")
+        return
+    old = store.report(against) if against is not None else previous_report(store, new)
+    diff = diff_reports(new, old)
+    ids = list(dict.fromkeys(i.job_id for i in [*new.items, *(old.items if old else [])]))
+    jobs_by_id = {j.id: j for j in store.jobs(ids=ids)}
+    text = render_diff(diff, jobs_by_id, store.verdicts("rank", new.prompt_version),
+                       store.verdicts("prefilter", new.prompt_version))
+    typer.echo(text)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        console.print(f"diff written to {out}", soft_wrap=True)
 
 
 @app.command("facets")

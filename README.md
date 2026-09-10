@@ -54,6 +54,7 @@ uv run jobscraper prefilter --max-jobs 50     # try the Sonnet pass on a sample 
 uv run jobscraper prefilter --batch           # same verdicts at half price via the Message Batches API (async; --no-wait submits and exits, re-run to collect)
 uv run jobscraper rank --top 30
 uv run jobscraper report
+uv run jobscraper diff                  # what changed since the previous report — see docs/SCHEDULING.md
 uv run jobscraper stats
 uv run jobscraper facets                # backfill the filter facets of an existing DB, no AI re-runs
 uv run jobscraper publish --name week37 # copy the current DB to data/serve/week37.db
@@ -97,7 +98,9 @@ copy with a newer one and keep everyone's marks. To expose a different snapshot,
 copy) another file there; to roll back, delete the newer copy. `serve --dir <path>` serves
 another directory, `serve --db-file <db>` serves one writable database the old way.
 
-Other outputs: `results/report-YYYY-MM-DD.md` (ranked list), `data/exports/filtered.jsonl`
+Other outputs: `results/report-YYYY-MM-DD.md` (ranked list, with a short "new since report #N"
+section on top), `results/diff-YYYY-MM-DD.md` (the whole diff against the previous report),
+`data/exports/filtered.jsonl`
 (rule survivors with verdicts, for review in Claude Code or a spreadsheet). Each `report` run is
 also stored *in* the database — the run and its counts in `reports`, its ordered sections in
 `report_items` — which is what `serve` reads. AI verdicts are cached per job, model and prompt

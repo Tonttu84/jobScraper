@@ -325,3 +325,132 @@ def test_run_passes_batch_through_to_prefilter(data_dir, fake_http, spy_ai):
     assert spy_ai["run_batch:prefilter"]["wait"] is True
     assert "run:rank" in spy_ai  # ranking still goes through the live path
     assert "run_batch:rank" not in spy_ai
+
+
+# ------------------------------------------------- "what's new" between reports
+
+
+def _seed_verdict(store, job, stage: str, score: int, **kw) -> None:
+    """Store an AI verdict by hand so `report` renders a ranked/prefilter section without the API."""
+    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.models import AIVerdict
+
+    store.save_verdict(AIVerdict(
+        job_id=job.id, stage=stage,
+        model="claude-opus-5" if stage == "rank" else "claude-sonnet-5",
+        prompt_version=PROMPT_VERSION, relevant=True, score=score,
+        language_ok=True, seniority_ok=True, location_ok=True,
+        summary=f"The {stage} stage likes this one.", **kw))
+
+
+def _job(store, prefix: str):
+    return next(j for j in store.jobs() if j.title.startswith(prefix))
+
+
+def _scrape_and_filter(data_dir):
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
+    assert runner.invoke(cli_mod.app, ["filter"]).exit_code == 0
+
+
+def test_report_writes_a_diff_file_and_prepends_the_new_section(data_dir, fake_http):
+    _scrape_and_filter(data_dir)
+    store = store_mod.Store()
+    try:
+        _seed_verdict(store, _job(store, "DevOps"), "rank", 88, why_apply=["Kubernetes work"])
+    finally:
+        store.close()
+
+    first = runner.invoke(cli_mod.app, ["report"])
+    assert first.exit_code == 0, first.output
+    assert "first report in this database: 1 ranked, 0 prefilter" in first.output
+
+    diffs = list((data_dir / "results").glob("diff-*.md"))
+    assert len(diffs) == 1
+    diff_text = diffs[0].read_text(encoding="utf-8")
+    assert "First report in this database — nothing to diff against." in diff_text
+    assert "### 88 · [DevOps Engineer (m/w/d)]" in diff_text
+
+    report_md = next((data_dir / "results").glob("report-*.md")).read_text(encoding="utf-8")
+    assert "## New in this report" in report_md
+    assert report_md.index("## New in this report") < report_md.index("## Ranked (Opus)")
+    assert "1 new ranked · 0 new in prefilter · 0 dropped out of ranked" in report_md
+
+    # a second report over the same state: nothing new, but a prefilter survivor appears
+    store = store_mod.Store()
+    try:
+        _seed_verdict(store, _job(store, "Core Developer"), "prefilter", 61)
+    finally:
+        store.close()
+
+    second = runner.invoke(cli_mod.app, ["report"])
+    assert second.exit_code == 0, second.output
+    assert "new since report #1: 0 ranked, 1 prefilter" in second.output
+    assert second.output.rstrip().splitlines()[-1].startswith("new since report #1")
+
+    diff_text = next((data_dir / "results").glob("diff-*.md")).read_text(encoding="utf-8")
+    assert "0 new ranked · 1 new in prefilter · 0 dropped out of ranked since report #1" in diff_text
+    assert "| 61 | [Core Developer - Platform]" in diff_text
+
+    report_md = next((data_dir / "results").glob("report-*.md")).read_text(encoding="utf-8")
+    assert "## New since report #1" in report_md
+    assert "### 88 · [DevOps Engineer (m/w/d)]" in report_md  # still in the ranked section
+    assert report_md.count("### 88 · [DevOps Engineer (m/w/d)]") == 1  # not repeated at the top
+
+
+def test_diff_command_compares_the_two_latest_reports(data_dir, fake_http, tmp_path):
+    _scrape_and_filter(data_dir)
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0     # report #1: nothing ranked
+
+    store = store_mod.Store()
+    try:
+        _seed_verdict(store, _job(store, "DevOps"), "rank", 88, why_apply=["Kubernetes work"])
+    finally:
+        store.close()
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0     # report #2: one ranked
+
+    result = runner.invoke(cli_mod.app, ["diff"])
+    assert result.exit_code == 0, result.output
+    assert "1 new ranked · 0 new in prefilter · 0 dropped out of ranked since report #1" in result.output
+    assert "DevOps Engineer (m/w/d)" in result.output
+    assert "Kubernetes work" in result.output
+
+    out = tmp_path / "elsewhere" / "whats-new.md"
+    written = runner.invoke(cli_mod.app, ["diff", "--out", str(out)])
+    assert written.exit_code == 0, written.output
+    text = out.read_text(encoding="utf-8")
+    assert "1 new ranked · 0 new in prefilter · 0 dropped out of ranked since report #1" in text
+    assert "### 88 · [DevOps Engineer (m/w/d)]" in text
+
+
+def test_diff_command_takes_explicit_report_ids(data_dir, fake_http):
+    _scrape_and_filter(data_dir)
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0     # #1
+    store = store_mod.Store()
+    try:
+        _seed_verdict(store, _job(store, "DevOps"), "rank", 88)
+    finally:
+        store.close()
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0     # #2
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0     # #3, same as #2
+
+    same = runner.invoke(cli_mod.app, ["diff", "--report", "3", "--against", "2"])
+    assert same.exit_code == 0, same.output
+    assert "0 new ranked · 0 new in prefilter · 0 dropped out of ranked since report #2" in same.output
+
+    across = runner.invoke(cli_mod.app, ["diff", "--report", "3", "--against", "1"])
+    assert across.exit_code == 0, across.output
+    assert "1 new ranked · 0 new in prefilter · 0 dropped out of ranked since report #1" in across.output
+
+
+def test_diff_command_without_any_reports_says_so(data_dir, fake_http):
+    result = runner.invoke(cli_mod.app, ["diff"])
+    assert result.exit_code == 0, result.output
+    assert "no report" in result.output.lower()
+
+
+def test_diff_command_rejects_an_unknown_report_id(data_dir, fake_http):
+    _scrape_and_filter(data_dir)
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0
+    result = runner.invoke(cli_mod.app, ["diff", "--report", "999"])
+    assert result.exit_code == 0, result.output
+    assert "no report" in result.output.lower()
