@@ -110,6 +110,7 @@ class VerdictView(BaseModel):
     score: int
     relevant: bool
     summary: str
+    model: str = Field("", description="Model id that produced it; the UI labels component scores by it")
     concerns: list[str] = Field(default_factory=list)
     why_apply: list[str] = Field(default_factory=list)
     position: int | None = Field(None, description="Place in the shortlist, refine stage only")
@@ -323,7 +324,7 @@ def load_view(store: Store, report_id: int | None = None, user: str | None = Non
 def _verdict_view(v: AIVerdict | None) -> VerdictView | None:
     if v is None:
         return None
-    return VerdictView(score=v.score, relevant=v.relevant, summary=v.summary,
+    return VerdictView(score=v.score, relevant=v.relevant, summary=v.summary, model=v.model,
                        concerns=list(v.concerns), why_apply=list(v.why_apply), position=v.position)
 
 
@@ -331,7 +332,7 @@ def _refine_view(v: AIVerdict | None, offset: float) -> RefineView | None:
     """The refine verdict as the UI needs it: its own score, and the one the average used."""
     if v is None:
         return None
-    return RefineView(score=v.score, relevant=v.relevant, summary=v.summary,
+    return RefineView(score=v.score, relevant=v.relevant, summary=v.summary, model=v.model,
                       concerns=list(v.concerns), why_apply=list(v.why_apply), position=v.position,
                       calibrated=calibrated_refine(v.score, offset), offset=offset)
 
@@ -472,6 +473,14 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
 
         serve_dir = Path(os.environ.get("JOBSCRAPER_SERVE_DIR") or paths().data / "serve")
     app = FastAPI(title="jobscraper", description="Ranked jobs with per-user decisions.")
+
+    @app.middleware("http")
+    async def _no_store_api(request: Request, call_next):  # type: ignore[no-untyped-def]
+        # API answers change with every report and decision; never let a browser reuse one.
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
     app.state.db_path = db_path
     app.state.serve_dir = Path(serve_dir) if serve_dir is not None else None
     app.state.languages = [code.lower() for code in (languages or [])]
@@ -585,6 +594,7 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
-        return FileResponse(INDEX_HTML, media_type="text/html")
+        # A deploy must reach browsers that already have the page open: make them revalidate.
+        return FileResponse(INDEX_HTML, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
     return app

@@ -290,7 +290,7 @@ function query(extra) {
 // How far the pipeline took the job: the list runs past the ranked ones into jobs the AI
 // stages never finished with, and the score alone does not say which is which.
 function stageLabel(job) {
-  if (job.section === "ranked") { return "prefiltered and ranked"; }
+  if (job.section === "ranked") { return job.refine ? "prefiltered, ranked and refined" : "prefiltered and ranked"; }
   if (job.section === "prefilter") { return "prefiltered, not ranked"; }
   if (job.section === "review") { return "rules only, needs review"; }
   return job.section || "—";
@@ -321,19 +321,27 @@ function teaserText(text) {
 // looks unexplained, so a refined card spells the components out under its rank. The refine
 // stage marks the whole shortlist lower than the rank stage marks one posting, so the number
 // shown here is its score read on the rank scale — the one the mean was taken of.
+// "Opus" / "Fable" from a model id such as "claude-fable-5-1 (subagent)"; the stage name as a fallback.
+function modelLabel(verdict, fallback) {
+  var m = /(opus|fable|sonnet|haiku|mythos)/i.exec((verdict && verdict.model) || "");
+  return m ? m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase() : fallback;
+}
+
+// The two component scores behind the box, both on the rank scale (the refine one calibrated).
 function scoreParts(job) {
   if (!job.refine) { return ""; }
   var bits = [];
-  if (job.rank) { bits.push("rank " + job.rank.score); }
-  bits.push("refine " + job.refine.calibrated);
+  if (job.rank) { bits.push(modelLabel(job.rank, "rank") + " " + job.rank.score); }
+  bits.push(modelLabel(job.refine, "refine") + " " + job.refine.calibrated);
   return bits.join(" · ");
 }
 
 // The calibration in words, for the detail: what the refine pass said, and how far it moved.
-function calibrationLine(refine) {
+function calibrationLine(job) {
+  var refine = job.refine;
   var shift = (refine.offset >= 0 ? "+" : "") + refine.offset.toFixed(1);
-  return '<div class="muted calibration">refine score ' + refine.score +
-    " on the refine scale, " + shift + " calibration to the rank scale</div>";
+  return '<div class="muted calibration">' + esc(modelLabel(refine, "refine")) + " score " + refine.score +
+    " on its own scale, " + shift + " calibration to the " + esc(modelLabel(job.rank, "rank")) + " scale</div>";
 }
 
 function teaserFor(job) {
@@ -416,7 +424,7 @@ function detailHtml(job) {
     var place = job.refine.position
       ? ' <span class="muted">position ' + job.refine.position + " of the shortlist</span>" : "";
     parts.push("<h4>Against the rest of the shortlist</h4><div>" +
-      esc(job.refine.summary) + place + "</div>" + calibrationLine(job.refine));
+      esc(job.refine.summary) + place + "</div>" + calibrationLine(job));
   }
   if (job.rank) {
     parts.push("<h4>Rank</h4><div>" + esc(job.rank.summary) + "</div>");

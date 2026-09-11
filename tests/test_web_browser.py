@@ -259,7 +259,8 @@ def test_a_refined_card_explains_the_score_box_with_both_component_scores(refine
     base_url, jobs = refined_site
     web = card(refined_page, jobs["web"])
     expect(web.locator(".rank")).to_have_text("#1")
-    expect(web.locator(".parts")).to_have_text("rank 91 · refine 85")
+    expect(web.locator(".parts")).to_have_text("Opus 91 · Fable 85")
+    expect(web.locator(".stage")).to_have_text("prefiltered, ranked and refined")
     payload = refined_page.request.get(f"{base_url}/api/jobs/{jobs['web'].id}").json()
     assert payload["score"] == 88  # round((91 + 85) / 2)
     expect(web.locator(".score")).to_have_text(str(payload["score"]))
@@ -272,7 +273,7 @@ def test_a_calibrated_card_shows_the_refine_score_on_the_rank_scale(calibrated_p
     """The box is the mean of two numbers on one scale, so the parts line shows that scale."""
     base_url, jobs = calibrated_site
     web = card(calibrated_page, jobs["web"])
-    expect(web.locator(".parts")).to_have_text("rank 91 · refine 85")
+    expect(web.locator(".parts")).to_have_text("Opus 91 · Fable 85")
     payload = calibrated_page.request.get(f"{base_url}/api/jobs/{jobs['web'].id}").json()
     assert payload["refine"]["score"] == 63 and payload["refine"]["calibrated"] == 85
     expect(web.locator(".score")).to_have_text("88")
@@ -287,7 +288,7 @@ def test_the_detail_names_the_raw_refine_score_and_the_calibration(calibrated_pa
     detail = web.locator(".detail")
     expect(detail).to_be_visible()
     expect(detail).to_contain_text(
-        "refine score 63 on the refine scale, +22.0 calibration to the rank scale")
+        "Fable score 63 on its own scale, +22.0 calibration to the Opus scale")
 
 
 def test_a_card_without_a_refine_verdict_has_no_parts_line(page, site):

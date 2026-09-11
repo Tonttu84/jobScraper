@@ -40,7 +40,7 @@ def make_verdict(job_id: str, stage: str, score: int, **kw) -> AIVerdict:
     base = {
         "job_id": job_id,
         "stage": stage,
-        "model": "claude-opus-5" if stage == "rank" else "claude-sonnet-5",
+        "model": {"rank": "claude-opus-5", "refine": "claude-fable-5-1"}.get(stage, "claude-sonnet-5"),
         "prompt_version": PROMPT_VERSION,
         "relevant": True,
         "score": score,
@@ -322,6 +322,8 @@ def test_jobs_default_ordering_and_shape(seeded):
     assert first["section"] == "ranked"
     assert first["position"] == 1
     assert first["rank"]["score"] == 91
+    assert first["rank"]["model"] == "claude-opus-5"  # the UI labels the component scores by model
+    assert first["prefilter"]["model"] == "claude-sonnet-5"
     assert first["rank"]["why_apply"] == ["React and Node work", "junior friendly"]
     assert first["prefilter"]["score"] == 80
     assert first["filter"]["status"] == "keep"
@@ -379,7 +381,7 @@ def test_a_refine_verdict_averages_the_score_and_is_exposed_on_its_own(tmp_path)
         first = next(i for i in client.get("/api/jobs").json()["items"] if i["id"] == jobs["web"].id)
     assert first["rank"]["score"] == 91
     assert first["refine"] == {"score": 71, "relevant": True, "summary": "Best of the shortlist.",
-                               "concerns": [], "why_apply": [], "position": 1,
+                               "model": "claude-fable-5-1", "concerns": [], "why_apply": [], "position": 1,
                                "calibrated": 71, "offset": 0.0}
     assert first["score"] == 81  # (91 + 71) / 2, one shared job being too few to calibrate
 
@@ -681,3 +683,12 @@ def test_reports_history(seeded):
 def test_reports_history_is_empty_without_a_stored_report(unreported):
     client, _jobs = unreported
     assert client.get("/api/reports").json() == []
+
+
+def test_the_page_is_served_with_no_cache_so_a_deploy_reaches_open_browsers(seeded):
+    client, _ = seeded
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-cache"
+    api = client.get("/api/jobs?limit=1")
+    assert api.headers["cache-control"] == "no-store"
