@@ -3,7 +3,8 @@
     python scripts/ai_batches.py hydrate linkedin [--top 480] [--max-fetch 480]
     python scripts/ai_batches.py export prefilter [--chunk 100] [--max-chars 1500] [--all] [--sample 20]
     python scripts/ai_batches.py import prefilter|rank|refine
-    python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60] [--sample 20]
+    python scripts/ai_batches.py export rank [--window 15] [--top N] [--reset-round] [--chunk 15]
+                                            [--max-fetch 60] [--sample 20]
     python scripts/ai_batches.py export refine [--top N] [--max-chars N] [--force]
     python scripts/ai_batches.py boost
     python scripts/ai_batches.py stability export [--top 30] [--chunk 15] [--seed 1] [--max-chars N]
@@ -14,12 +15,25 @@ it moves the config, the database and the exports into that candidate's own dire
 
 Intended sequence for one round:
 ``hydrate linkedin`` → ``export prefilter`` → (Sonnet subagent) → ``import prefilter`` →
-``export rank`` → (Opus subagent) → ``import rank`` → ``export refine`` → (Fable subagent) →
-``import refine`` → ``boost`` → ``jobscraper report``.
+the rank loop → the refine loop → ``boost`` → ``jobscraper report``.
 
-The refine step is a loop, not one step: repeat ``export refine`` → (Fable subagent) →
-``import refine`` until the export says *top N fully refined*. Each round's answers move the
-shortlist (see below), so the round after it asks about whatever moved into the top N.
+Neither AI stage after the screen is a single step any more:
+
+1. **Rank windows until the stop rule says stop.** Repeat ``export rank`` → (Opus subagent) →
+   ``import rank``. Each export is ONE window of the queue and each import records what that
+   window did to the effective top N, so both print a line like
+   ``stop rule: miss run 12/30, 60/90 budget → continue``. Stop when it says
+   ``→ stop (patience)``, ``→ stop (budget)`` or ``→ stop (queue empty)``. There is no fixed
+   "best N by screen score" cut: measured 2026-09-11, the screen score has no relation to the
+   rank score (Spearman -0.06), so the old cut was close to a random sample of the survivors and
+   strong jobs were never looked at.
+2. **Refine until the shortlist is fully refined.** Repeat ``export refine`` → (Fable subagent)
+   → ``import refine`` until the export says *top N fully refined*. Each round's answers move
+   the shortlist (see below), so the round after it asks about whatever moved into the top N.
+3. **If the top N boundary dropped in step 2, go back to step 1** for one more window loop (the
+   refine pass marks the shortlist down, and a lower boundary is exactly the state in which a
+   job the ranker never saw could belong in the top), then repeat step 2. ``--reset-round`` on
+   ``export rank`` clears the stop-rule state when a new scrape starts a genuinely new round.
 
 Export writes ``data/exports/ai/<stage>/system.txt`` (the stage's system prompt) and
 ``chunk-NN.json`` (a JSON list of ``{"job_id", "prompt"}`` built with the pipeline's own
@@ -52,6 +66,15 @@ shortlist, not for the whole list again. The printed line says how many are new 
 anchored; when nothing is new the export is skipped and says *top N fully refined*, which is the
 signal to stop repeating the loop. ``--force`` re-scores the whole shortlist against itself
 (useful for measuring drift, or after a prompt change).
+
+``export rank`` is refill-aware in the same way and windowed on top of it: the queue is every
+screen survivor the rule filter still keeps that has no rank verdict under the current prompt
+version, best screen score first, and one export takes the next ``ai.rank_window`` of it
+(``ai.rank_top_n`` for the first window of a round, which has nothing to stop on yet).
+``--window N`` and ``--top N`` set that width by hand. The round's memory lives in
+``data/exports/ai/rank/state.json`` — the ids each imported window ranked, how many of them
+entered the effective top N, and the last stop verdict — because export and import are separate
+processes. ``--reset-round`` starts that file over.
 
 ``export prefilter`` is refill-aware: it skips jobs that already carry a prefilter verdict under
 the current prompt version, so after a hydration round only the cleared rows go back to Sonnet
@@ -101,7 +124,14 @@ from jobscraper.ai.schemas import Ranking, Refinement, Screening  # noqa: E402
 from jobscraper.config import load_settings, paths  # noqa: E402
 from jobscraper.http import Http  # noqa: E402
 from jobscraper.models import AIVerdict, Job  # noqa: E402
-from jobscraper.report import refine_shortlist  # noqa: E402
+from jobscraper.report import (  # noqa: E402
+    RANK_TOP_WATCH,
+    effective_top,
+    entered_top,
+    miss_run,
+    rank_queue,
+    refine_shortlist,
+)
 from jobscraper.sources import linkedin  # noqa: E402
 from jobscraper.store import Store  # noqa: E402
 
@@ -246,41 +276,170 @@ def hydrate_linkedin(store: Store, todo: list[Job], max_fetch: int) -> None:
     print(f"hydrated {hydrated}/{len(batch)} linkedin descriptions")
 
 
-def export(stage: str, chunk: int, max_chars: int, top: int, max_fetch: int = 0, export_all: bool = False,
-           sample: int = 1) -> None:
-    settings = load_settings()
-    store = Store()
-    jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
-    filters = store.filter_results()
-    if stage == "prefilter":
-        # Refill semantics: rule-filter survivors that don't already carry a prefilter verdict under
-        # the current prompt version, so a hydration round only re-screens the jobs it cleared.
-        already = set() if export_all else set(store.verdicts("prefilter", PROMPT_VERSION))
-        todo = [j for j in jobs.values()
-                if filters.get(j.id) and filters[j.id].status in ("keep", "review") and j.id not in already]
-        todo.sort(key=lambda j: (j.source, j.title.lower()))
-    else:
-        # Refill semantics: the best `top` prefilter survivors that the rule filter still keeps, minus
-        # the ones that already carry a rank verdict under the current prompt version.
-        already = set(store.verdicts("rank", PROMPT_VERSION))
-        ranked = _survivors(store, settings, filters)
-        todo = [jobs[v.job_id] for v in ranked[:top] if v.job_id in jobs and v.job_id not in already]
-    candidates = len(todo)
-    if sample > 1:
-        todo = todo[::sample]  # positions 0, N, 2N, ... of the stage's ordered candidate list
-    if stage == "rank":
-        # After sampling: a job that is not going to be exported is not worth a description fetch.
-        hydrate_linkedin(store, todo, max_fetch)
+def _write_chunks(stage: str, todo: list[Job], filters: dict, chunk: int, max_chars: int,
+                  profile, candidates: int, sample: int, note: str = "") -> None:
+    """Write ``system.txt`` and the ``chunk-NN.json`` batches for one export, and report."""
     out = _out_dir(stage)
     for old in out.glob("chunk-*.json"):
         old.unlink()
-    (out / "system.txt").write_text(system_prompt(stage, settings.profile), encoding="utf-8")
+    (out / "system.txt").write_text(system_prompt(stage, profile), encoding="utf-8")
     n = 0  # nothing to do is a normal state: keep the counter defined for the summary line
     for n, start in enumerate(range(0, len(todo), chunk), start=1):
         batch = [{"job_id": j.id, "prompt": job_prompt(j, filters.get(j.id), max_chars)} for j in todo[start : start + chunk]]
         (out / f"chunk-{n:02d}.json").write_text(json.dumps(batch, ensure_ascii=False, indent=0), encoding="utf-8")
     sampled = f" (1 in {sample} of {candidates} candidates)" if sample > 1 else f" of {candidates} candidates"
-    print(f"{stage}: {len(todo)} jobs{sampled} → {n} chunks of ≤{chunk} in {out}")
+    print(f"{stage}: {len(todo)} jobs{sampled}{note} → {n} chunks of ≤{chunk} in {out}")
+
+
+def export(stage: str, chunk: int, max_chars: int, export_all: bool = False, sample: int = 1) -> None:
+    """The prefilter export: every rule-filter survivor that has not been screened yet."""
+    settings = load_settings()
+    store = Store()
+    jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
+    filters = store.filter_results()
+    # Refill semantics: rule-filter survivors that don't already carry a prefilter verdict under
+    # the current prompt version, so a hydration round only re-screens the jobs it cleared.
+    already = set() if export_all else set(store.verdicts("prefilter", PROMPT_VERSION))
+    todo = [j for j in jobs.values()
+            if filters.get(j.id) and filters[j.id].status in ("keep", "review") and j.id not in already]
+    todo.sort(key=lambda j: (j.source, j.title.lower()))
+    candidates = len(todo)
+    if sample > 1:
+        todo = todo[::sample]  # positions 0, N, 2N, ... of the stage's ordered candidate list
+    _write_chunks(stage, todo, filters, chunk, max_chars, settings.profile, candidates, sample)
+
+
+# ------------------------------------------------------- the rank round's stop rule
+# The screen score does not sort (measured 2026-09-11: Spearman -0.06 against the rank score),
+# so there is no "best N by screen score" worth cutting at. The round reads the queue one window
+# at a time and stops when the effective top stops gaining entrants. Export and import are
+# separate processes, so the round's memory lives in a small JSON file next to the exports.
+
+
+def _rank_state_path() -> Path:
+    return _out_dir("rank") / "state.json"
+
+
+def _read_rank_state() -> dict:
+    """This round's memory: the windows imported so far, and the window awaiting an answer."""
+    path = _rank_state_path()
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _write_rank_state(state: dict) -> None:
+    _rank_state_path().write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _new_rank_state() -> dict:
+    return {"started": datetime.now(UTC).isoformat(), "windows": [], "exported": [], "top_before": []}
+
+
+def _rank_stop(state: dict, queue_left: int, ai) -> tuple[str, int, int]:
+    """``(reason, miss run, newly ranked)`` for the round recorded in ``state``.
+
+    ``reason`` is ``continue`` or the name of the rule that ended the round: the queue running
+    out, ``rank_patience`` rankings in a row that entered nothing, or ``rank_budget`` spent.
+    """
+    windows = [(len(w.get("ranked") or []), w.get("entered") or 0) for w in state.get("windows") or []]
+    newly = sum(ranked for ranked, _entered in windows)
+    misses = miss_run(windows)
+    if not queue_left:
+        return "queue empty", misses, newly
+    if ai.rank_patience and misses >= ai.rank_patience:
+        return "patience", misses, newly
+    if ai.rank_budget and newly >= ai.rank_budget:
+        return "budget", misses, newly
+    return "continue", misses, newly
+
+
+def _print_rank_stop(reason: str, misses: int, newly: int, ai) -> None:
+    """The one line the owner reads to decide whether to run another export/import round."""
+    budget = f"{newly}/{ai.rank_budget} budget" if ai.rank_budget else f"{newly} ranked this round"
+    verdict = "continue" if reason == "continue" else f"stop ({reason})"
+    print(f"stop rule: miss run {misses}/{ai.rank_patience}, {budget} → {verdict}")
+
+
+def _rank_top_ids(store: Store, settings, filters: dict) -> list[str]:
+    """The effective top ``ai.refine_top_n`` as it stands in the database right now."""
+    ids, _edge = effective_top(store.jobs(seen_within_days=30), filters,
+                               store.verdicts("rank", PROMPT_VERSION),
+                               store.verdicts("refine", PROMPT_VERSION),
+                               top=settings.profile.ai.refine_top_n or RANK_TOP_WATCH)
+    return ids
+
+
+def export_rank(chunk: int, max_chars: int, top: int | None, window: int | None, max_fetch: int,
+                sample: int, reset_round: bool) -> None:
+    """Export ONE rank window from the queue, and say where the round's stop rule stands.
+
+    The queue is every screen survivor the rule filter still keeps that has no rank verdict yet,
+    best screen score first. A window is ``ai.rank_window`` jobs — the first one of a round
+    ``ai.rank_top_n``, since nothing has been ranked to stop on — and ``--window``/``--top``
+    override that. ``import rank`` records what the window did to the effective top N, so the
+    next export can tell whether the round is still paying for itself.
+    """
+    settings = load_settings()
+    ai = settings.profile.ai
+    store = Store()
+    filters = store.filter_results()
+    ranked = store.verdicts("rank", PROMPT_VERSION)
+    queue = rank_queue(store.jobs(seen_within_days=30), filters,
+                       store.verdicts("prefilter", PROMPT_VERSION), ranked,
+                       min_score=ai.prefilter_min_score)
+    state = _read_rank_state()
+    if reset_round or not state:
+        state = _new_rank_state()
+    done = len(state.get("windows") or [])
+    reason, misses, newly = _rank_stop(state, len(queue), ai)
+    if reason in ("patience", "budget"):
+        for old in _out_dir("rank").glob("chunk-*.json"):
+            old.unlink()  # the round is over: leave nothing behind that looks like a batch to answer
+        _print_rank_stop(reason, misses, newly, ai)
+        print(f"rank: nothing exported — {newly} jobs ranked in {done} windows this round and the "
+              "stop rule is met; `export rank --reset-round` starts a new round")
+        return
+
+    width = window or top or (ai.rank_window if ranked else ai.rank_top_n)
+    todo = queue[:width]
+    candidates = len(todo)
+    if sample > 1:
+        todo = todo[::sample]  # positions 0, N, 2N, ... of the window
+    # After sampling: a job that is not going to be exported is not worth a description fetch.
+    hydrate_linkedin(store, todo, max_fetch)
+    # A round is many windows now, and the previous window's answers have already been imported:
+    # leaving them behind would have the next import read them again as unknown job ids.
+    for old in (_out_dir("rank") / "verdicts").glob("chunk-*.jsonl"):
+        old.unlink()
+    _write_chunks("rank", todo, filters, chunk, max_chars, settings.profile, candidates, sample,
+                  note=f" (window {done + 1} of this round, {len(queue)} in the queue)")
+    state["exported"] = [j.id for j in todo]
+    state["top_before"] = _rank_top_ids(store, settings, filters)
+    _write_rank_state(state)
+    _print_rank_stop(reason, misses, newly, ai)
+
+
+def _record_rank_window(store: Store, imported: list[str]) -> None:
+    """Add the window just imported to the round's state, with what it did to the top N."""
+    settings = load_settings()
+    state = _read_rank_state() or _new_rank_state()
+    filters = store.filter_results()
+    after = _rank_top_ids(store, settings, filters)
+    state.setdefault("windows", []).append(
+        {"ranked": imported, "entered": entered_top(set(state.get("top_before") or []), after, imported)})
+    state["exported"], state["top_before"] = [], after
+    _write_rank_state(state)
+    queue = rank_queue(store.jobs(seen_within_days=30), filters,
+                       store.verdicts("prefilter", PROMPT_VERSION),
+                       store.verdicts("rank", PROMPT_VERSION),
+                       min_score=settings.profile.ai.prefilter_min_score)
+    reason, misses, newly = _rank_stop(state, len(queue), settings.profile.ai)
+    state["stop_reason"] = reason
+    _write_rank_state(state)
+    _print_rank_stop(reason, misses, newly, settings.profile.ai)
 
 
 def export_refine(top: int | None, max_chars: int, force: bool = False) -> None:
@@ -403,6 +562,9 @@ def import_verdicts(stage: str) -> None:
     for job_id in missing:
         by_chunk[expected[job_id]] = by_chunk.get(expected[job_id], 0) + 1
     print(f"{stage}: imported {len(seen)} verdicts, {bad} bad lines, {len(missing)} missing" + (f" {by_chunk}" if by_chunk else ""))
+    if stage == "rank":
+        # The round's memory: what this window did to the effective top N, and whether to go on.
+        _record_rank_window(store, [job_id for job_id in expected if job_id in seen])
 
 
 # --------------------------------------------------------------------------- stability
@@ -614,7 +776,13 @@ def main() -> None:
                     help="export refine: re-score every shortlisted job instead of anchoring the "
                          "ones that already carry a refine verdict")
     ap.add_argument("--top", type=int, default=None,
-                    help="export rank: 60; export refine: 20; hydrate linkedin: 480")
+                    help="export rank: the next N of the queue as one window (default: the stop "
+                         "rule's window width); export refine: 20; hydrate linkedin: 480")
+    ap.add_argument("--window", type=int, default=None,
+                    help="export rank: jobs in this window, overriding ai.rank_window")
+    ap.add_argument("--reset-round", action="store_true",
+                    help="export rank: forget the current round's stop-rule state and start over "
+                         "(a new scrape, or after changing the rules)")
     ap.add_argument("--max-fetch", type=int, default=None,
                     help="how many missing LinkedIn descriptions to fetch (0 disables); rank: 60, hydrate: 480")
     ap.add_argument("--seed", type=int, default=1,
@@ -656,8 +824,11 @@ def main() -> None:
     if a.action == "export":
         chunk = a.chunk or (100 if a.stage == "prefilter" else 15)
         max_chars = a.max_chars or (1500 if a.stage == "prefilter" else 6000)
-        export(a.stage, chunk, max_chars, a.top or 60, 60 if a.max_fetch is None else a.max_fetch, a.all,
-               a.sample)
+        if a.stage == "rank":
+            export_rank(chunk, max_chars, a.top, a.window,
+                        60 if a.max_fetch is None else a.max_fetch, a.sample, a.reset_round)
+        else:
+            export(a.stage, chunk, max_chars, a.all, a.sample)
     else:
         import_verdicts(a.stage)
 

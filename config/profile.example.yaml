@@ -222,7 +222,17 @@ ai:
   rank_effort: high
   refine_effort: high
   prefilter_min_score: 30   # permissive: only jobs Sonnet scores below this are dropped
-  rank_top_n: 60            # how many prefilter survivors Opus ranks in detail
+  # Opus ranks in windows and stops when the top stops moving, rather than at a fixed cut: the
+  # screen score turned out not to sort at all (measured 2026-09-11 over the ranked jobs:
+  # Spearman -0.06 against the rank score, and two thirds of the Opus-80+ jobs sat within five
+  # screen points of the old cut), so the survivors below it are close to a random sample and
+  # strong jobs were never being looked at. Each window is ranked, the effective top
+  # refine_top_n is rebuilt, and the round stops when the queue runs out, when rank_patience
+  # jobs in a row failed to enter that top, or when rank_budget jobs have been scored.
+  rank_top_n: 60            # depth of the FIRST window, while nothing is ranked yet
+  rank_window: 15           # jobs per window after that
+  rank_patience: 30         # consecutive rankings without a new top-20 entrant before stopping
+  rank_budget: 90           # most jobs one rank round may newly score (0 = unlimited)
   # The ranker scores each job alone inside a chunk, so its score carries chunk noise (measured
   # 2026-09-10: median drift 3 points, p90 8, top-10 overlap 0.54 between two runs). `jobscraper
   # refine` sends the best jobs in one request so they are judged against each other, and the

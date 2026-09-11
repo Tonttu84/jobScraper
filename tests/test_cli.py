@@ -322,11 +322,169 @@ def test_prefilter_batch_flag_uses_the_batches_api(data_dir, fake_http, spy_ai):
 
 
 def test_run_passes_batch_through_to_prefilter(data_dir, fake_http, spy_ai):
+    _queued_jobs(2)  # screen survivors, so the rank stage has a queue to work through
     result = runner.invoke(cli_mod.app, ["run", "arbeitnow", "--batch"])
     assert result.exit_code == 0, result.output
     assert spy_ai["run_batch:prefilter"]["wait"] is True
     assert "run:rank" in spy_ai  # ranking still goes through the live path
     assert "run_batch:rank" not in spy_ai
+
+
+# ----------------------------------------------------------- rank: the stop rule
+# The screen score does not sort (measured 2026-09-11), so `rank` reads the queue in windows and
+# stops when the effective top stops gaining entrants, not at a fixed cut.
+
+
+@pytest.fixture
+def spy_rank(monkeypatch):
+    """A rank stage that stores verdicts without the API; ``scores`` sets them per job title."""
+    from jobscraper.ai import client as ai_client
+    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.models import AIVerdict
+
+    calls: dict = {"windows": [], "scored": [], "scores": {}, "force": []}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    def init(self, stage, profile, store, model=None) -> None:
+        self.stage, self.store = stage, store
+        self.model = model or profile.ai.rank_model
+
+    def run(self, jobs, filters, *, force=False, progress=None):
+        jobs = list(jobs)
+        if self.stage != "rank":  # the screening pass is seeded by hand in these tests
+            return {}
+        calls["windows"].append([j.title for j in jobs])
+        calls["force"].append(force)
+        out = {}
+        for job in jobs:
+            verdict = AIVerdict(job_id=job.id, stage="rank", model=self.model,
+                                prompt_version=PROMPT_VERSION, relevant=True,
+                                score=calls["scores"].get(job.title, 10), language_ok=True,
+                                seniority_ok=True, location_ok=True, summary=f"ranked {job.title}")
+            self.store.save_verdict(verdict)
+            out[job.id] = verdict
+            calls["scored"].append(job.title)
+            if progress:
+                progress(verdict)
+        return out
+
+    monkeypatch.setattr(ai_client.AIStage, "__init__", init)
+    monkeypatch.setattr(ai_client.AIStage, "run", run)
+    return calls
+
+
+def _ai_config(monkeypatch, **values):
+    """Pin the ai policy for one test, whatever the repo's profile.yaml says."""
+    settings = cli_mod.load_settings()
+    for key, value in values.items():
+        setattr(settings.profile.ai, key, value)
+    monkeypatch.setattr(cli_mod, "load_settings", lambda *a, **kw: settings)
+    return settings
+
+
+def _queued_jobs(count: int) -> list:
+    """``count`` rule-kept jobs with descending screen scores, so the queue order is known."""
+    from datetime import UTC, datetime
+
+    from jobscraper.models import Job
+
+    jobs = [Job(source="arbeitnow", source_id=f"q-{i:02d}", title=f"Queued Developer {i:02d}",
+                url=f"https://jobs.example.test/q-{i:02d}", company="Example Oy",
+                description="We build backend services in Python.", country="FI",
+                remote="hybrid", posted_at=datetime.now(UTC))
+            for i in range(count)]
+    store = store_mod.Store()
+    try:
+        store.upsert_jobs(jobs)
+        store.save_filter_results(
+            [FilterResult(job_id=j.id, status="keep", location_tier=1) for j in jobs], "rules-test")
+        for i, job in enumerate(jobs):
+            _seed_verdict(store, job, "prefilter", 99 - i)
+    finally:
+        store.close()
+    return jobs
+
+
+def test_rank_stops_when_the_top_stops_gaining_entrants(data_dir, spy_rank, monkeypatch):
+    """Patience: two windows in a row that changed nothing end the round well short of the queue."""
+    _queued_jobs(10)
+    _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=4, rank_budget=0,
+               refine_top_n=2, prefilter_min_score=30)
+    spy_rank["scores"] = {"Queued Developer 00": 90, "Queued Developer 01": 80}
+
+    result = runner.invoke(cli_mod.app, ["rank"])
+    assert result.exit_code == 0, result.output
+
+    # window 1 fills the top 2; windows 2 and 3 are all 10s, and the run of 4 misses stops it
+    assert spy_rank["scored"] == [f"Queued Developer {i:02d}" for i in range(6)]
+    assert "window 1: 2 ranked, 2 entered the top 2, miss run 0/4" in result.output
+    assert "window 3: 2 ranked, 0 entered the top 2, miss run 4/4" in result.output
+    assert "rank: 6 scored in 3 windows, 2 entered the top 2, 4 left in the queue" in result.output
+    assert "stopped: 4 rankings without a new top-2 entrant" in result.output
+
+
+def test_rank_stops_when_the_round_budget_is_spent(data_dir, spy_rank, monkeypatch):
+    _queued_jobs(10)
+    _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=0, rank_budget=3,
+               refine_top_n=2, prefilter_min_score=30)
+
+    result = runner.invoke(cli_mod.app, ["rank"])
+    assert result.exit_code == 0, result.output
+    assert len(spy_rank["scored"]) == 3  # the second window is narrowed to what is left of it
+    assert "window 2: 1 ranked" in result.output and "3/3 budget" in result.output
+    assert "stopped: the 3-job budget for this round is spent" in result.output
+
+
+def test_rank_reads_the_whole_queue_when_it_is_small(data_dir, spy_rank, monkeypatch):
+    """The point of the rule: a small pool is ranked whole, not cut at a fixed N."""
+    _queued_jobs(3)
+    _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=0, rank_budget=0,
+               refine_top_n=2, prefilter_min_score=30)
+
+    result = runner.invoke(cli_mod.app, ["rank"])
+    assert result.exit_code == 0, result.output
+    assert len(spy_rank["scored"]) == 3
+    assert "0 left in the queue; stopped: the queue is empty" in result.output
+
+    again = runner.invoke(cli_mod.app, ["rank"])
+    assert again.exit_code == 0, again.output
+    assert "nothing to rank" in again.output
+    assert len(spy_rank["scored"]) == 3  # a second round asks about nothing
+
+
+def test_rank_top_ranks_exactly_that_many_and_stops(data_dir, spy_rank, monkeypatch):
+    """--top is the manual escape hatch: the next N of the queue, patience rule not applied."""
+    _queued_jobs(10)
+    _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=1, rank_budget=90,
+               refine_top_n=2, prefilter_min_score=30)
+
+    result = runner.invoke(cli_mod.app, ["rank", "--top", "3"])
+    assert result.exit_code == 0, result.output
+    assert len(spy_rank["scored"]) == 3
+    assert "stopped: --top 3 reached" in result.output
+
+
+def test_rank_force_puts_the_ranked_jobs_back_into_the_queue(data_dir, spy_rank, monkeypatch):
+    _queued_jobs(3)
+    _ai_config(monkeypatch, rank_top_n=3, rank_window=3, rank_patience=0, rank_budget=0,
+               refine_top_n=2, prefilter_min_score=30)
+    assert runner.invoke(cli_mod.app, ["rank"]).exit_code == 0
+
+    result = runner.invoke(cli_mod.app, ["rank", "--force"])
+    assert result.exit_code == 0, result.output
+    assert len(spy_rank["scored"]) == 6  # the same three jobs, scored a second time
+    assert spy_rank["force"] == [False, True]
+
+
+def test_rank_watches_the_top_20_when_the_refine_stage_is_off(data_dir, spy_rank, monkeypatch):
+    """``refine_top_n = 0`` turns the refine pass off; the report still has a head to watch."""
+    _queued_jobs(2)
+    _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=30, rank_budget=0,
+               refine_top_n=0, prefilter_min_score=30)
+
+    result = runner.invoke(cli_mod.app, ["rank"])
+    assert result.exit_code == 0, result.output
+    assert "entered the top 20" in result.output
 
 
 # --------------------------------------------------------------------- refine
@@ -741,11 +899,71 @@ def test_report_orders_by_the_effective_score(data_dir, fake_http, spy_refine):
 
 
 def test_run_calls_refine_after_rank(data_dir, fake_http, spy_ai, spy_refine):
+    _queued_jobs(2)
     result = runner.invoke(cli_mod.app, ["run", "arbeitnow"])
     assert result.exit_code == 0, result.output
     assert "run:rank" in spy_ai
     # the stubbed rank stage stores nothing, so refine has an empty shortlist and says so
     assert "refine: nothing ranked" in result.output
+
+
+def test_run_ranks_again_when_refine_lowers_the_top_boundary(data_dir, fake_http, spy_rank,
+                                                             spy_refine, monkeypatch):
+    """The refine pass marks the shortlist down; a lower boundary means unranked jobs may belong."""
+    _queued_jobs(6)
+    _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=0, rank_budget=2,
+               refine_top_n=2, refine_first_pass=2, refine_max_passes=2, prefilter_min_score=30)
+    spy_rank["scores"] = {"Queued Developer 00": 90, "Queued Developer 01": 88}
+
+    result = runner.invoke(cli_mod.app, ["run", "arbeitnow"])
+    assert result.exit_code == 0, result.output
+
+    # round 1 ranks 00 and 01 (boundary 88); the refine pass scores them 90/80, so the effective
+    # boundary falls to 84 and the second round pays for the next window of the queue
+    assert "run: the top 2 boundary fell 88 → 84 in the refine pass; ranking further (round 2 of 2)" \
+        in result.output
+    assert spy_rank["scored"] == ["Queued Developer 00", "Queued Developer 01",
+                                  "Queued Developer 02", "Queued Developer 03"]
+
+
+def test_run_stops_after_refine_when_the_boundary_held(data_dir, fake_http, spy_rank, spy_refine,
+                                                       monkeypatch):
+    _queued_jobs(6)
+    _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=0, rank_budget=2,
+               refine_top_n=2, refine_first_pass=2, refine_max_passes=3, prefilter_min_score=30)
+    # the refine pass scores its two jobs 90 and 80, which lifts a pair ranked 60/50
+    spy_rank["scores"] = {"Queued Developer 00": 60, "Queued Developer 01": 50}
+
+    result = runner.invoke(cli_mod.app, ["run", "arbeitnow"])
+    assert result.exit_code == 0, result.output
+    assert "run: the top 2 boundary held at 65 through the refine pass" in result.output
+    assert spy_rank["scored"] == ["Queued Developer 00", "Queued Developer 01"]
+
+
+def test_run_stops_when_the_refine_passes_are_spent(data_dir, fake_http, spy_rank, spy_refine,
+                                                    monkeypatch):
+    _queued_jobs(6)
+    _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=0, rank_budget=2,
+               refine_top_n=2, refine_first_pass=2, refine_max_passes=1, prefilter_min_score=30)
+    spy_rank["scores"] = {"Queued Developer 00": 90, "Queued Developer 01": 88}
+
+    result = runner.invoke(cli_mod.app, ["run", "arbeitnow"])
+    assert result.exit_code == 0, result.output
+    assert "ai.refine_max_passes (1) is spent; stopping here" in result.output
+    assert len(spy_rank["scored"]) == 2
+
+
+def test_run_stops_when_a_further_round_finds_nothing_to_rank(data_dir, fake_http, spy_rank,
+                                                              spy_refine, monkeypatch):
+    """The boundary fell, but the queue is empty: there is nothing left to look at."""
+    _queued_jobs(2)
+    _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=0, rank_budget=0,
+               refine_top_n=2, refine_first_pass=2, refine_max_passes=3, prefilter_min_score=30)
+    spy_rank["scores"] = {"Queued Developer 00": 90, "Queued Developer 01": 88}
+
+    result = runner.invoke(cli_mod.app, ["run", "arbeitnow"])
+    assert result.exit_code == 0, result.output
+    assert "run: nothing new was ranked; the shortlist is final" in result.output
 
 
 def test_run_skips_refine_with_skip_ai(data_dir, fake_http, spy_ai, spy_refine):

@@ -127,6 +127,67 @@ def refine_shortlist(jobs: list[Job], filters: dict[str, FilterResult],
     return picked, offset
 
 
+#: What "the top" means to the rank stop rule when the refine stage is switched off
+#: (``ai.refine_top_n = 0``): the report still has a head, whether or not it is refined.
+RANK_TOP_WATCH = 20
+
+
+def rank_queue(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
+               rank: dict[str, AIVerdict], *, min_score: int) -> list[Job]:
+    """The jobs still waiting for a rank verdict, in the order the rank stage should read them.
+
+    Candidates are the rule-kept jobs the screening pass called relevant and scored at least
+    ``min_score`` — the same gate the report's prefilter section uses — minus everything that
+    already carries a rank verdict, so the queue is a refill list.
+
+    The order is the screen score, best first, with the job id breaking ties. That is a weak
+    prior and known to be one: measured over the ranked jobs on 2026-09-11 the screen score has
+    no relation to the rank score (Spearman -0.06), so reading further down this queue keeps
+    finding strong jobs. It is still the only prior there is, and the stop rule — not the
+    ordering — is what decides how deep to go.
+    """
+    by_id = {j.id: j for j in jobs}
+    alive = {job_id for job_id, f in filters.items() if f.status != "drop"}
+    ordered = sorted((v for v in prefilter.values()
+                      if v.relevant and v.score >= min_score and v.job_id in alive
+                      and v.job_id in by_id and v.job_id not in rank),
+                     key=lambda v: (-v.score, v.job_id))
+    return [by_id[v.job_id] for v in ordered]
+
+
+def effective_top(jobs: list[Job], filters: dict[str, FilterResult], rank: dict[str, AIVerdict],
+                  refine: dict[str, AIVerdict], *, top: int) -> tuple[list[str], int | None]:
+    """The ids of the effective top ``top``, and the effective score at its boundary.
+
+    The same list :func:`refine_shortlist` holds refined, asked for at one fixed width: this is
+    the "top 20" the rank stop rule watches and the boundary the ``run`` pipeline compares
+    across a refine loop. ``None`` as the boundary means nothing is ranked yet.
+    """
+    picked, offset = refine_shortlist(jobs, filters, rank, refine, top=top, first_pass=top)
+    if not picked:
+        return [], None
+    last = picked[-1]
+    return [j.id for j in picked], effective_score(rank[last.id], refine.get(last.id), offset)
+
+
+def entered_top(before_ids: set[str], after_ids: list[str], new_ids) -> int:
+    """How many of the jobs just ranked are in the effective top N that were not in it before."""
+    return len(set(new_ids) & (set(after_ids) - set(before_ids)))
+
+
+def miss_run(windows) -> int:
+    """Jobs ranked since the last one that entered the effective top N.
+
+    ``windows`` is ``(ranked, entered)`` per window in order. A window that let somebody in
+    resets the run — that is the signal the top is still moving — and the rest add up. When the
+    run reaches ``ai.rank_patience`` the queue is not paying for itself any more.
+    """
+    run = 0
+    for ranked, entered in windows:
+        run = 0 if entered else run + ranked
+    return run
+
+
 def closes_in(fr: FilterResult | None) -> int | None:
     """Days until the application deadline the rule filter read out of the posting, if any."""
     days = fr.signals.get("closes_in_days") if fr else None

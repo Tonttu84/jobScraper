@@ -5,7 +5,7 @@
     jobscraper filter               # rule filter over jobs seen in the last N days
     jobscraper audit-drops          # sample rule-dropped jobs to label by hand (--score grades them)
     jobscraper prefilter            # Sonnet pass over rule survivors (--batch: half price, async)
-    jobscraper rank                 # Opus pass over the best prefilter survivors
+    jobscraper rank                 # Opus pass in windows, until the top stops gaining entrants
     jobscraper refine               # one request that ranks the shortlist against itself
     jobscraper report               # markdown report + JSONL export, stored in the DB
     jobscraper diff                 # what changed since the previous report (see docs/SCHEDULING.md)
@@ -324,25 +324,105 @@ def prefilter(days: int = 30, force: bool = False, model: str | None = None, ver
     console.print(f"prefilter: {len(verdicts)} scored, {kept} pass (score ≥ {settings.profile.ai.prefilter_min_score}); cost ≈ {estimate_cost(verdicts.values())}")
 
 
+def _budget_text(newly: int, budget: int) -> str:
+    """How far into the round's budget the rank loop is; an unbounded round just counts."""
+    return f"{newly}/{budget} budget" if budget else f"{newly} ranked this round"
+
+
+def _top_boundary(days: int, n: int) -> int | None:
+    """The effective score at the bottom of the effective top ``n``, read from the database.
+
+    ``run`` compares it across the refine loop: the refine pass reads a shortlist against itself
+    and marks most of it down, so a boundary that fell means jobs that were never ranked could
+    now be in the top — and the ranker is worth another window loop.
+    """
+    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.report import effective_top
+
+    store = Store()
+    jobs, filters = _load_state(store, days)
+    _ids, edge = effective_top(jobs, filters, store.verdicts("rank", PROMPT_VERSION),
+                               store.verdicts("refine", PROMPT_VERSION), top=n)
+    return edge
+
+
 @app.command()
-def rank(days: int = 30, top: int | None = None, force: bool = False, model: str | None = None, verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
-    """Opus pass over the best prefilter survivors."""
+def rank(days: int = 30, top: int | None = None, force: bool = False, model: str | None = None, verbose: bool = typer.Option(False, "--verbose", "-v")) -> int:
+    """Opus pass over the prefilter survivors, in windows, until the top stops gaining entrants.
+
+    There is no "best N by screen score" cut any more. Measured on 2026-09-11 over the ranked
+    jobs, the screen score has no relation to the rank score (Spearman -0.06) and two thirds of
+    the Opus-80+ jobs sat within five screen points of the old cut: the cut was close to a random
+    sample of some 1 600 survivors, so strong jobs were simply never being looked at.
+
+    Instead the queue (:func:`jobscraper.report.rank_queue`) is read in windows of
+    ``ai.rank_window`` — the first one ``ai.rank_top_n`` deep, because a fresh round has no
+    evidence to stop on — and after every window the effective top ``ai.refine_top_n`` is
+    rebuilt. The round ends when the queue runs out, when ``ai.rank_patience`` jobs in a row have
+    failed to enter that top, or when ``ai.rank_budget`` jobs have been scored. So a small pool
+    is ranked whole and a huge one stays bounded.
+
+    ``--top N`` is the manual escape hatch: rank exactly the next N of the queue and stop.
+    ``--force`` puts the already-ranked jobs back into the queue and re-scores them.
+    """
     _setup_logging(verbose)
     from jobscraper.ai.client import AIStage, estimate_cost
     from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.report import RANK_TOP_WATCH, effective_top, entered_top, miss_run, rank_queue
 
     settings = load_settings()
+    ai = settings.profile.ai
     store = Store()
     jobs, filters = _load_state(store, days)
     pre = store.verdicts("prefilter", PROMPT_VERSION)
-    min_score = settings.profile.ai.prefilter_min_score
-    candidates = sorted((v for v in pre.values() if v.relevant and v.score >= min_score), key=lambda v: -v.score)
-    n = top or settings.profile.ai.rank_top_n
-    ids = {v.job_id for v in candidates[:n]}
-    todo = [j for j in jobs if j.id in ids]
+    ranked = store.verdicts("rank", PROMPT_VERSION)
+    refined = store.verdicts("refine", PROMPT_VERSION)  # fixed for the whole round
+    queue = rank_queue(jobs, filters, pre, {} if force else ranked, min_score=ai.prefilter_min_score)
+    if not queue:
+        console.print("rank: nothing to rank — every screen survivor already carries a rank "
+                      "verdict (--force re-scores them)", soft_wrap=True)
+        return 0
+
+    n = ai.refine_top_n or RANK_TOP_WATCH
+    budget = top or ai.rank_budget  # --top names the whole round
     stage = AIStage("rank", settings.profile, store, model=model)
-    verdicts = stage.run(todo, filters, force=force, progress=lambda v: console.print(f"  {v.score:3d} {v.summary[:110]}"))
-    console.print(f"rank: {len(verdicts)} scored; cost ≈ {estimate_cost(verdicts.values())}")
+    before, _edge = effective_top(jobs, filters, ranked, refined, top=n)
+    opening = not ranked  # nothing ranked yet: the first window opens at ai.rank_top_n
+    windows: list[tuple[int, int]] = []
+    scored: list = []
+    taken = 0
+    reason = "the queue is empty (every screen survivor has been ranked)"
+    while taken < len(queue):
+        width = ai.rank_top_n if opening and not windows else ai.rank_window
+        width = min(width, budget - len(scored)) if budget else width
+        batch = queue[taken : taken + width]
+        taken += len(batch)
+        got = stage.run(batch, filters, force=force,
+                        progress=lambda v: console.print(f"  {v.score:3d} {v.summary[:110]}"))
+        new_ids = [j.id for j in batch if j.id in got]
+        scored += [got[job_id] for job_id in new_ids]
+        ranked = store.verdicts("rank", PROMPT_VERSION)
+        after, _edge = effective_top(jobs, filters, ranked, refined, top=n)
+        windows.append((len(new_ids), entered_top(set(before), after, new_ids)))
+        before = after
+        misses = miss_run(windows)
+        console.print(f"window {len(windows)}: {len(new_ids)} ranked, {windows[-1][1]} entered the "
+                      f"top {n}, miss run {misses}/{ai.rank_patience}, "
+                      f"{_budget_text(len(scored), budget)}", soft_wrap=True)
+        if budget and len(scored) >= budget:
+            reason = (f"--top {top} reached" if top else
+                      f"the {budget}-job budget for this round is spent (ai.rank_budget)")
+            break
+        if not top and ai.rank_patience and misses >= ai.rank_patience:
+            reason = f"{misses} rankings without a new top-{n} entrant (ai.rank_patience)"
+            break
+
+    entrants = sum(gained for _ranked, gained in windows)
+    console.print(f"rank: {len(scored)} scored in {len(windows)} window"
+                  f"{'s' if len(windows) != 1 else ''}, {entrants} entered the top {n}, "
+                  f"{len(queue) - taken} left in the queue; stopped: {reason}; "
+                  f"cost ≈ {estimate_cost(scored)}", soft_wrap=True)
+    return len(scored)
 
 
 def _record_run_stats(store: Store, snap) -> None:
@@ -354,8 +434,10 @@ def _record_run_stats(store: Store, snap) -> None:
     from jobscraper import runstats
 
     try:
+        exports = config.paths().data / "exports" / "ai"
         row = runstats.collect(store, snap, load_settings(), profile=config.active_profile(),
-                               usage_path=config.paths().data / "exports" / "ai" / "usage.jsonl")
+                               usage_path=exports / "usage.jsonl",
+                               rank_state_path=exports / "rank" / "state.json")
         runs = runstats.record(row, runstats.runs_path())
         console.print(f"run stats: {runs} (+ {runstats.refresh()})", soft_wrap=True)
     except Exception as exc:
@@ -658,6 +740,43 @@ def profile_init(name: str = typer.Argument(..., help="Name of the new profile")
     console.print(f"created {dst} — edit profile.yaml, then run commands with --profile {name}")
 
 
+def _rank_and_refine(days: int, verbose: bool) -> None:
+    """The two AI stages as one loop: rank windows, refine, and rank again if the top moved down.
+
+    ``refine`` reads the shortlist against itself and marks most of it down, which lowers the
+    score at the bottom of the effective top N — and a lower boundary is exactly the state in
+    which a job the ranker never looked at could belong there. So whenever the boundary falls,
+    the rank stop rule gets another run (with a fresh miss-run counter) and, if it found
+    anything, the refine loop follows it. ``ai.refine_max_passes`` bounds the outer rounds.
+    """
+    from jobscraper.report import RANK_TOP_WATCH
+
+    ai = load_settings().profile.ai
+    n = ai.refine_top_n or RANK_TOP_WATCH
+    rounds = max(1, ai.refine_max_passes)
+    rank(days=days, verbose=verbose)
+    round_n = 1
+    while True:  # every way out of the loop is a break, each with a line saying which one
+        before = _top_boundary(days, n)
+        refine(days=days, verbose=verbose)
+        after = _top_boundary(days, n)
+        if before is None or after is None or after >= before:
+            if after is not None:
+                console.print(f"run: the top {n} boundary held at {after} through the refine "
+                              "pass; nothing further to rank", soft_wrap=True)
+            break
+        if round_n == rounds:
+            console.print(f"run: the top {n} boundary fell {before} → {after}, but "
+                          f"ai.refine_max_passes ({rounds}) is spent; stopping here", soft_wrap=True)
+            break
+        round_n += 1
+        console.print(f"run: the top {n} boundary fell {before} → {after} in the refine pass; "
+                      f"ranking further (round {round_n} of {rounds})", soft_wrap=True)
+        if not rank(days=days, verbose=verbose):
+            console.print("run: nothing new was ranked; the shortlist is final", soft_wrap=True)
+            break
+
+
 @app.command()
 def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (default: all enabled)"),
         days: int = 30, skip_ai: bool = False, verbose: bool = typer.Option(False, "--verbose", "-v"),
@@ -673,8 +792,7 @@ def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (
     filter_cmd(days=days, verbose=verbose)
     if not skip_ai:
         prefilter(days=days, verbose=verbose, batch=batch, wait=True)
-        rank(days=days, verbose=verbose)
-        refine(days=days, verbose=verbose)
+        _rank_and_refine(days=days, verbose=verbose)
     report(days=days)
 
 

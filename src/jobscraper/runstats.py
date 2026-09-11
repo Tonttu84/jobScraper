@@ -63,8 +63,30 @@ def _tokens_by_stage(path: Path | None) -> dict[str, int]:
     return totals
 
 
+def _rank_round(path: Path | None) -> dict:
+    """The shape of the latest rank round, from the subagent path's stop-rule state file.
+
+    Counters only — how many windows the round needed, how many jobs they newly ranked, and
+    which rule ended it — never the job ids the file itself keeps. The API path does not write
+    this file, and a round that has imported nothing yet has nothing to say: both leave the
+    three keys out of the row entirely rather than recording zeroes.
+    """
+    if path is None or not Path(path).is_file():
+        return {}
+    state = json.loads(Path(path).read_text(encoding="utf-8"))
+    windows = state.get("windows") or []
+    if not windows:
+        return {}
+    return {
+        "rank_windows": len(windows),
+        "rank_newly_ranked": sum(len(w.get("ranked") or []) for w in windows),
+        "rank_stop_reason": str(state.get("stop_reason") or "continue"),
+    }
+
+
 def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
-            profile: str | None, usage_path: Path | None) -> dict:
+            profile: str | None, usage_path: Path | None,
+            rank_state_path: Path | None = None) -> dict:
     """One JSON-able row of counters for the report just stored.
 
     ``new_jobs`` counts the jobs first seen at or after the *previous* report's ``created_at``;
@@ -107,6 +129,8 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
         "drops_by_category": dict(sorted(drops.items())),
         "prefilter": {"prefiltered": len(prefiltered), "passed": passed},
         "ranked": counts.get("ranked", 0),
+        # How the stop rule spent the latest rank round, when one was run through subagents.
+        **_rank_round(rank_state_path),
         # How far apart the two AI raters' 0-100 scales were on this shortlist; null when the
         # refine pass did not run. A counter about the graders, not about any posting.
         "refine_offset": snapshot.refine_offset,

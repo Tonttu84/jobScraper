@@ -729,6 +729,185 @@ def test_export_rank_sample_bounds_the_description_fetches(data_dir, monkeypatch
     assert "2 jobs" in capsys.readouterr().out
 
 
+# ------------------------------------------------- the rank round and its stop rule
+# `export rank` hands out ONE window of the queue and `import rank` records what that window did
+# to the effective top N, so the owner's loop has a termination signal instead of a fixed cut.
+
+
+def _rank_rule(monkeypatch, **values):
+    """Pin the rank stop rule (and the top it watches) for one test."""
+    settings = ai_batches.load_settings()
+    for key, value in values.items():
+        setattr(settings.profile.ai, key, value)
+    monkeypatch.setattr(ai_batches, "load_settings", lambda *a, **kw: settings)
+    return settings
+
+
+@pytest.fixture
+def queue(data_dir):
+    """Eight rule-kept jobs with descending screen scores: a queue with a known order."""
+    jobs = [_job(n, f"Junior Developer {n:02d}", LONG_DESCRIPTION) for n in range(8)]
+    _seed(jobs, ["keep"] * 8)
+    _prefilter_scores(jobs, list(range(99, 91, -1)))
+    return jobs
+
+
+def _rank_state(data_dir: Path) -> dict:
+    return json.loads((data_dir / "exports" / "ai" / "rank" / "state.json").read_text(encoding="utf-8"))
+
+
+def _answer_rank(data_dir: Path, scores: dict[str, int] | None = None, default: int = 10) -> None:
+    """Answer whatever the last `export rank` wrote, as the Opus subagent would."""
+    out = data_dir / "exports" / "ai" / "rank"
+    scores = scores or {}
+    lines = [json.dumps({"job_id": e["job_id"], "relevant": True,
+                         "score": scores.get(e["job_id"], default), "language_ok": True,
+                         "seniority_ok": True, "location_ok": True, "summary": "ranked",
+                         "concerns": [], "why_apply": []})
+             for e in _chunk_entries(out)]
+    (out / "verdicts").mkdir(parents=True, exist_ok=True)
+    (out / "verdicts" / "chunk-01.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_export_rank_opens_a_round_with_the_first_window_then_narrows(queue, data_dir, monkeypatch,
+                                                                      capsys):
+    """Nothing ranked yet means nothing to stop on, so the first window is ai.rank_top_n deep."""
+    _rank_rule(monkeypatch, rank_top_n=3, rank_window=2, rank_patience=30, rank_budget=0,
+               refine_top_n=2)
+
+    _run(monkeypatch, "export", "rank")
+    exported = [e["job_id"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")]
+    assert exported == [j.id for j in queue[:3]]
+    out = capsys.readouterr().out
+    assert "window 1 of this round, 8 in the queue" in out
+    assert "stop rule: miss run 0/30, 0 ranked this round → continue" in out
+    assert _rank_state(data_dir)["exported"] == exported
+
+    _answer_rank(data_dir, {queue[0].id: 95})
+    _run(monkeypatch, "import", "rank")
+    capsys.readouterr()
+
+    _run(monkeypatch, "export", "rank")
+    # the round is under way now: the windows after the first are ai.rank_window wide
+    assert [e["job_id"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")] == \
+        [j.id for j in queue[3:5]]
+    assert "window 2 of this round, 5 in the queue" in capsys.readouterr().out
+
+
+def test_import_rank_records_the_window_and_the_entrants(queue, data_dir, monkeypatch, capsys):
+    _rank_rule(monkeypatch, rank_top_n=3, rank_window=2, rank_patience=30, rank_budget=0,
+               refine_top_n=2)
+    _run(monkeypatch, "export", "rank")
+    _answer_rank(data_dir, {queue[0].id: 95, queue[1].id: 90})  # the third is a 10
+    capsys.readouterr()
+
+    _run(monkeypatch, "import", "rank")
+
+    state = _rank_state(data_dir)
+    assert [w["ranked"] for w in state["windows"]] == [[j.id for j in queue[:3]]]
+    assert state["windows"][0]["entered"] == 2  # the 95 and the 90 fill the watched top 2
+    assert state["top_before"] == [queue[0].id, queue[1].id]
+    assert state["exported"] == [] and state["stop_reason"] == "continue"
+    assert "stop rule: miss run 0/30, 3 ranked this round → continue" in capsys.readouterr().out
+
+
+def test_the_rank_round_stops_when_the_top_stops_gaining_entrants(queue, data_dir, monkeypatch,
+                                                                  capsys):
+    """Two windows of nothing new: patience runs out and the export refuses to ask for more."""
+    _rank_rule(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=4, rank_budget=0,
+               refine_top_n=2)
+    _run(monkeypatch, "export", "rank")
+    _answer_rank(data_dir, {queue[0].id: 95, queue[1].id: 90})
+    _run(monkeypatch, "import", "rank")
+    for _ in range(2):  # two windows of 10s, which enter nothing
+        _run(monkeypatch, "export", "rank")
+        _answer_rank(data_dir)
+        _run(monkeypatch, "import", "rank")
+    assert "stop rule: miss run 4/4, 6 ranked this round → stop (patience)" in capsys.readouterr().out
+
+    _run(monkeypatch, "export", "rank")
+
+    out = capsys.readouterr().out
+    assert "→ stop (patience)" in out
+    assert "nothing exported — 6 jobs ranked in 3 windows this round" in out
+    assert not list((data_dir / "exports" / "ai" / "rank").glob("chunk-*.json"))
+
+
+def test_the_rank_round_stops_when_the_budget_is_spent(queue, data_dir, monkeypatch, capsys):
+    _rank_rule(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=0, rank_budget=2,
+               refine_top_n=2)
+    _run(monkeypatch, "export", "rank")
+    _answer_rank(data_dir, {queue[0].id: 95, queue[1].id: 90})
+    _run(monkeypatch, "import", "rank")
+    assert "stop rule: miss run 0/0, 2/2 budget → stop (budget)" in capsys.readouterr().out
+
+    _run(monkeypatch, "export", "rank")
+    assert "→ stop (budget)" in capsys.readouterr().out
+
+
+def test_the_rank_round_stops_when_the_queue_runs_out(data_dir, monkeypatch, capsys):
+    jobs = [_job(n, f"Junior Developer {n:02d}", LONG_DESCRIPTION) for n in range(2)]
+    _seed(jobs, ["keep"] * 2)
+    _prefilter_scores(jobs, [99, 98])
+    _rank_rule(monkeypatch, rank_top_n=5, rank_window=5, rank_patience=30, rank_budget=90,
+               refine_top_n=2)
+
+    _run(monkeypatch, "export", "rank")
+    _answer_rank(data_dir)
+    _run(monkeypatch, "import", "rank")
+
+    assert "stop rule: miss run 0/30, 2/90 budget → stop (queue empty)" in capsys.readouterr().out
+
+
+def test_export_rank_reset_round_starts_the_stop_rule_over(queue, data_dir, monkeypatch, capsys):
+    _rank_rule(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=2, rank_budget=0,
+               refine_top_n=2)
+    _run(monkeypatch, "export", "rank")
+    _answer_rank(data_dir, {queue[0].id: 95, queue[1].id: 90})  # both fill the watched top 2
+    _run(monkeypatch, "import", "rank")
+    _run(monkeypatch, "export", "rank")
+    _answer_rank(data_dir)  # a window of 10s enters nothing, and patience is 2
+    _run(monkeypatch, "import", "rank")
+    _run(monkeypatch, "export", "rank")
+    assert "→ stop (patience)" in capsys.readouterr().out
+
+    _run(monkeypatch, "export", "rank", "--reset-round")
+
+    out = capsys.readouterr().out
+    assert "stop rule: miss run 0/2, 0 ranked this round → continue" in out
+    assert _rank_state(data_dir)["windows"] == []
+    # the queue skips the four jobs the first round ranked, so the new round opens below them
+    assert [e["job_id"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")] == \
+        [j.id for j in queue[4:6]]
+
+
+def test_export_rank_window_and_top_set_the_width_by_hand(queue, data_dir, monkeypatch, capsys):
+    _rank_rule(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=30, rank_budget=0,
+               refine_top_n=2)
+
+    _run(monkeypatch, "export", "rank", "--window", "4")
+    assert len(_chunk_entries(data_dir / "exports" / "ai" / "rank")) == 4
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+    assert len(_chunk_entries(data_dir / "exports" / "ai" / "rank")) == 5
+    capsys.readouterr()
+
+
+def test_export_rank_clears_the_previous_window_answers(queue, data_dir, monkeypatch, capsys):
+    """Each window is answered in the same verdicts/ directory; a stale answer must not linger."""
+    _rank_rule(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=30, rank_budget=0,
+               refine_top_n=2)
+    _run(monkeypatch, "export", "rank")
+    _answer_rank(data_dir)
+    _run(monkeypatch, "import", "rank")
+
+    _run(monkeypatch, "export", "rank")
+    assert not list((data_dir / "exports" / "ai" / "rank" / "verdicts").glob("chunk-*.jsonl"))
+    _answer_rank(data_dir)
+    _run(monkeypatch, "import", "rank")
+    assert "imported 2 verdicts, 0 bad lines, 0 missing" in capsys.readouterr().out
+
+
 # --------------------------------------------------------------------------- refine
 # The refine pass is a single request over the whole shortlist, so its export is one batch.json
 # rather than chunks, and its answer is one JSON object matching the Refinement schema.

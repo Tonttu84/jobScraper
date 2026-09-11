@@ -13,8 +13,12 @@ from jobscraper.report import (
     calibrated_refine,
     diff_reports,
     effective_score,
+    effective_top,
+    entered_top,
     export_jsonl,
+    miss_run,
     previous_report,
+    rank_queue,
     refine_offset,
     refine_shortlist,
     render_diff,
@@ -907,3 +911,82 @@ def test_render_diff_falls_back_to_the_item_score_without_a_verdict(diff_state):
     text = render_diff(diff_reports(new, old), jobs_by_id, {}, prefilter_verdicts)
     assert f"### 88 · [{fresh.title}]({fresh.url}) — Example Oy" in text
     assert "**Why apply:**" not in text
+
+
+# ------------------------------------------- the queue the rank stage works through
+# Measured 2026-09-11: the screen score does not predict the rank score (Spearman -0.06), so the
+# queue's order is only a prior, and the stop rule reading it is what decides when to stop.
+
+
+@pytest.fixture
+def queue_state():
+    """Six jobs: four screen survivors (one already ranked), one too weak, one the rules drop."""
+    jobs = [make_job("best", "Junior Backend Developer"), make_job("tie-a", "Junior SRE"),
+            make_job("tie-b", "Junior QA Engineer"), make_job("ranked", "Junior Data Engineer"),
+            make_job("weak", "Junior Platform Engineer"),
+            make_job("dropped", "Junior Polish-only Developer")]
+    best, tie_a, tie_b, ranked, weak, dropped = (j.id for j in jobs)
+    filters = {j.id: FilterResult(job_id=j.id, status="keep", location_tier=1) for j in jobs}
+    filters[dropped] = FilterResult(job_id=dropped, status="drop", reasons=["Polish required"])
+    prefilter = {jid: make_verdict(jid, "prefilter", score)
+                 for jid, score in [(best, 90), (tie_a, 70), (tie_b, 70), (ranked, 80),
+                                    (weak, 12), (dropped, 95)]}
+    return jobs, filters, prefilter, {ranked: make_verdict(ranked, "rank", 55)}
+
+
+def test_rank_queue_orders_the_unranked_survivors_by_screen_score(queue_state):
+    jobs, filters, prefilter, rank = queue_state
+    best, tie_a, tie_b = (j.id for j in jobs[:3])
+
+    queue = rank_queue(jobs, filters, prefilter, rank, min_score=30)
+
+    # the already-ranked 80, the 12 below the threshold and the dropped 95 are all out
+    assert _ids(queue) == [best, *sorted([tie_a, tie_b])]
+
+
+def test_rank_queue_leaves_out_screen_rejects_and_jobs_outside_the_window(queue_state):
+    jobs, filters, prefilter, _rank = queue_state
+    best = jobs[0].id
+    prefilter[best] = make_verdict(best, "prefilter", 90, relevant=False)
+
+    # only the two 70s are left, and a job the day window no longer returns is not in the queue
+    assert _ids(rank_queue(jobs[:3], filters, prefilter, {}, min_score=30)) == sorted(
+        [jobs[1].id, jobs[2].id])
+    assert rank_queue([], filters, prefilter, {}, min_score=30) == []
+
+
+def test_effective_top_returns_the_ids_and_the_score_at_the_boundary(shortlist_state):
+    jobs, filters, rank, refine = shortlist_state
+    best, second, _sinks, rises = (j.id for j in jobs[:4])
+
+    ids, edge = effective_top(jobs, filters, rank, refine, top=3)
+
+    assert ids == [best, second, rises]
+    assert edge == 83  # `rises` carries its rank score alone, and that is the boundary
+    assert effective_top(jobs, filters, {}, {}, top=3) == ([], None)
+
+
+def test_effective_top_keeps_a_tie_at_the_boundary_whole():
+    jobs = [make_job("clear", "Junior Backend Developer"), make_job("tie-a", "Junior SRE"),
+            make_job("tie-b", "Junior QA Engineer")]
+    filters = {j.id: FilterResult(job_id=j.id, status="keep", location_tier=1) for j in jobs}
+    rank = {j.id: make_verdict(j.id, "rank", score) for j, score in zip(jobs, [90, 82, 82])}
+
+    ids, edge = effective_top(jobs, filters, rank, {}, top=2)
+
+    assert ids == [jobs[0].id, *sorted([jobs[1].id, jobs[2].id])]
+    assert edge == 82
+
+
+def test_entered_top_counts_only_the_new_arrivals():
+    assert entered_top({"a"}, ["a", "b", "c"], ["b", "c"]) == 2
+    assert entered_top({"a"}, ["a", "b"], ["c"]) == 0        # ranked, but nowhere near the top
+    assert entered_top({"a", "b"}, ["a", "b"], ["b"]) == 0   # already there: not an entrant
+    assert entered_top(set(), [], ["a"]) == 0
+
+
+def test_miss_run_counts_the_rankings_since_the_last_entrant():
+    assert miss_run([]) == 0
+    assert miss_run([(15, 1), (15, 0), (15, 0)]) == 30
+    assert miss_run([(15, 0), (15, 2)]) == 0        # an entrant resets the run
+    assert miss_run([(15, 0), (0, 0)]) == 15        # a window that scored nothing adds nothing

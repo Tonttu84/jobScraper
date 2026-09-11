@@ -239,6 +239,34 @@ def test_collect_omits_tokens_when_the_usage_file_has_none(state, settings, tmp_
     assert "tokens_by_stage" not in row
 
 
+def test_collect_counts_the_rank_round_the_stop_rule_ran(state, settings, tmp_path):
+    """Counters from the stop-rule state file — never the job ids it keeps to do its work."""
+    rank_state = tmp_path / "state.json"
+    rank_state.write_text(json.dumps({
+        "started": "2026-09-11T09:00:00+00:00",
+        "windows": [{"ranked": ["a1", "b2", "c3"], "entered": 2},
+                    {"ranked": ["d4", "e5"], "entered": 0}],
+        "stop_reason": "patience"}), encoding="utf-8")
+
+    row = runstats.collect(state, snapshot_for(state), settings, profile=None, usage_path=None,
+                           rank_state_path=rank_state)
+
+    assert row["rank_windows"] == 2
+    assert row["rank_newly_ranked"] == 5
+    assert row["rank_stop_reason"] == "patience"
+    assert "a1" not in json.dumps(row)  # counters only: no posting, no id
+
+
+def test_collect_omits_the_rank_round_without_a_state_file(state, settings, tmp_path):
+    """The API path writes no state file, and a round that imported nothing has nothing to say."""
+    empty = tmp_path / "state.json"
+    empty.write_text(json.dumps({"windows": [], "exported": ["a1"]}), encoding="utf-8")
+    for path in (None, tmp_path / "nope.json", empty):
+        row = runstats.collect(state, snapshot_for(state), settings, profile=None, usage_path=None,
+                               rank_state_path=path)
+        assert not any(key.startswith("rank_") for key in row)
+
+
 def test_scrape_block_is_empty_without_any_run_rows(store, settings):
     store.upsert_jobs([make_job("arbeitnow", "1")])
     row = runstats.collect(store, snapshot_for(store), settings, profile=None, usage_path=None)

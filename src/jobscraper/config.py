@@ -178,7 +178,18 @@ class AIPolicy(BaseModel):
     prefilter_effort: str = "low"
     rank_effort: str = "high"
     refine_effort: str = "high"
+    #: Depth of the *first* rank window, while nothing carries a rank verdict yet: a fresh round
+    #: has no evidence to stop on, so it opens wide and the stop rule takes over after it.
     rank_top_n: int = 60
+    #: Jobs one rank window scores before the stop rule is re-checked.
+    rank_window: int = 15
+    #: Stop once this many jobs have been ranked without one of them entering the effective top
+    #: ``refine_top_n``. The screen score does not sort (measured 2026-09-11), so the queue is
+    #: close to a random sample of the survivors: how long the top has stood still is the only
+    #: honest signal that reading further down is not worth it. 0 turns the patience rule off.
+    rank_patience: int = 30
+    #: Most jobs one ``rank`` round may newly score whatever the patience rule says; 0 = no bound.
+    rank_budget: int = 90
     #: How many of the best-*effective*-scoring jobs the refine pass keeps refined; 0 turns the
     #: stage off. The pass iterates until every one of them carries a refine verdict, and a run
     #: of jobs tied with the N-th goes in whole rather than being split by job id.
