@@ -286,7 +286,11 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
        `ai.rank_top_n` re-documented as the first window's depth; `jobscraper rank` loops windows,
        `run` re-ranks when the refine loop lowered the top-20 boundary; subagent path keeps the
        round's memory in `data/exports/ai/rank/state.json` (`export rank --reset-round` starts a
-       new round). Not yet run on real data.
+       new round). First real round (Felipe, 2026-09-11): every window placed at least one
+       entrant into the top 20, so the patience rule never fired and the budget (90) stopped it —
+       the Sonnet-ordered queue is far from exhausted. Small fix wanted: `export rank` should
+       cap the window to the remaining budget (it exported 30 with 15 left; the budget is only
+       enforced at import).
 3. **Coverage gate to 97%** (adapter error branches).
 4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:
