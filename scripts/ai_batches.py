@@ -404,6 +404,8 @@ def export_rank(chunk: int, max_chars: int, top: int | None, window: int | None,
         return
 
     width = window or top or (ai.rank_window if ranked else ai.rank_top_n)
+    if ai.rank_budget and not top:
+        width = max(1, min(width, ai.rank_budget - newly))  # the last window is only what the round can still pay for
     todo = queue[:width]
     candidates = len(todo)
     if sample > 1:

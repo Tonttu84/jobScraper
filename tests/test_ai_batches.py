@@ -845,6 +845,20 @@ def test_the_rank_round_stops_when_the_budget_is_spent(queue, data_dir, monkeypa
     assert "→ stop (budget)" in capsys.readouterr().out
 
 
+def test_export_rank_caps_the_window_to_the_remaining_budget(queue, data_dir, monkeypatch, capsys):
+    """Seen live: 75 of 90 spent, a 30-job window went out anyway. The export must size the last
+    window to what the round can still pay for (an explicit --top keeps its exact meaning)."""
+    _rank_rule(monkeypatch, rank_top_n=2, rank_window=3, rank_patience=0, rank_budget=4, refine_top_n=2)
+    _run(monkeypatch, "export", "rank")
+    _answer_rank(data_dir, {queue[0].id: 95, queue[1].id: 90})
+    _run(monkeypatch, "import", "rank")
+    capsys.readouterr()
+    _run(monkeypatch, "export", "rank")
+    out = capsys.readouterr().out
+    assert "rank: 2 jobs of 2 candidates (window 2 of this round" in out
+    assert [e["job_id"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")] == [queue[2].id, queue[3].id]
+
+
 def test_the_rank_round_stops_when_the_queue_runs_out(data_dir, monkeypatch, capsys):
     jobs = [_job(n, f"Junior Developer {n:02d}", LONG_DESCRIPTION) for n in range(2)]
     _seed(jobs, ["keep"] * 2)
