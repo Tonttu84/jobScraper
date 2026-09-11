@@ -15,7 +15,7 @@ from contextlib import contextmanager
 
 import pytest
 import uvicorn
-from test_web import _seed, make_verdict  # tests/ is on sys.path (no package)
+from test_web import _seed, _seed_calibrated, make_verdict  # tests/ is on sys.path (no package)
 
 from jobscraper.store import Store
 from jobscraper.web.app import create_app
@@ -122,6 +122,21 @@ def refined_site(tmp_path):
 @pytest.fixture
 def refined_page(browser, refined_site):
     with _visiting(browser, refined_site[0]) as page:
+        yield page
+
+
+@pytest.fixture
+def calibrated_site(tmp_path):
+    """Three jobs scored by both AI passes, so the page has a +22.0 refine offset to show."""
+    db = tmp_path / "jobs.db"
+    jobs = _seed_calibrated(db)
+    with _serving(create_app(db, languages=["en", "pt"])) as base_url:
+        yield base_url, jobs
+
+
+@pytest.fixture
+def calibrated_page(browser, calibrated_site):
+    with _visiting(browser, calibrated_site[0]) as page:
         yield page
 
 
@@ -250,6 +265,29 @@ def test_a_refined_card_explains_the_score_box_with_both_component_scores(refine
     expect(web.locator(".score")).to_have_text(str(payload["score"]))
     # a job the refine pass never saw has one score only, and nothing to explain
     expect(card(refined_page, jobs["py"]).locator(".parts")).to_have_count(0)
+
+
+def test_a_calibrated_card_shows_the_refine_score_on_the_rank_scale(calibrated_page,
+                                                                    calibrated_site):
+    """The box is the mean of two numbers on one scale, so the parts line shows that scale."""
+    base_url, jobs = calibrated_site
+    web = card(calibrated_page, jobs["web"])
+    expect(web.locator(".parts")).to_have_text("rank 91 · refine 85")
+    payload = calibrated_page.request.get(f"{base_url}/api/jobs/{jobs['web'].id}").json()
+    assert payload["refine"]["score"] == 63 and payload["refine"]["calibrated"] == 85
+    expect(web.locator(".score")).to_have_text("88")
+
+
+def test_the_detail_names_the_raw_refine_score_and_the_calibration(calibrated_page,
+                                                                  calibrated_site):
+    """Nothing is hidden: the shortlist verdict's own number and the shift are both written out."""
+    _, jobs = calibrated_site
+    web = card(calibrated_page, jobs["web"])
+    web.locator("button.toggle").click()
+    detail = web.locator(".detail")
+    expect(detail).to_be_visible()
+    expect(detail).to_contain_text(
+        "refine score 63 on the refine scale, +22.0 calibration to the rank scale")
 
 
 def test_a_card_without_a_refine_verdict_has_no_parts_line(page, site):

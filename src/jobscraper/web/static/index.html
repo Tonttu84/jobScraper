@@ -318,13 +318,22 @@ function teaserText(text) {
 }
 
 // The score box holds the mean of the two AI passes when both ran; on its own that number
-// looks unexplained, so a refined card spells the components out under its rank.
+// looks unexplained, so a refined card spells the components out under its rank. The refine
+// stage marks the whole shortlist lower than the rank stage marks one posting, so the number
+// shown here is its score read on the rank scale — the one the mean was taken of.
 function scoreParts(job) {
   if (!job.refine) { return ""; }
   var bits = [];
   if (job.rank) { bits.push("rank " + job.rank.score); }
-  bits.push("refine " + job.refine.score);
+  bits.push("refine " + job.refine.calibrated);
   return bits.join(" · ");
+}
+
+// The calibration in words, for the detail: what the refine pass said, and how far it moved.
+function calibrationLine(refine) {
+  var shift = (refine.offset >= 0 ? "+" : "") + refine.offset.toFixed(1);
+  return '<div class="muted calibration">refine score ' + refine.score +
+    " on the refine scale, " + shift + " calibration to the rank scale</div>";
 }
 
 function teaserFor(job) {
@@ -407,7 +416,7 @@ function detailHtml(job) {
     var place = job.refine.position
       ? ' <span class="muted">position ' + job.refine.position + " of the shortlist</span>" : "";
     parts.push("<h4>Against the rest of the shortlist</h4><div>" +
-      esc(job.refine.summary) + place + "</div>");
+      esc(job.refine.summary) + place + "</div>" + calibrationLine(job.refine));
   }
   if (job.rank) {
     parts.push("<h4>Rank</h4><div>" + esc(job.rank.summary) + "</div>");

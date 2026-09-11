@@ -465,6 +465,44 @@ def test_refine_scores_only_the_new_shortlist_members(data_dir, fake_http, spy_r
     assert "DevOps" in result.output and "Core Developer" in result.output
 
 
+def _rank_three_jobs(data_dir):
+    """The two scraped jobs plus one written straight into the store — enough to calibrate on."""
+    from datetime import UTC, datetime
+
+    from jobscraper.models import Job
+
+    _scrape_and_filter(data_dir)
+    store = store_mod.Store()
+    try:
+        third = Job(source="arbeitnow", source_id="cal-1", title="Junior Data Engineer",
+                    url="https://jobs.example.test/cal-1", company="Example Oy",
+                    description="We build data pipelines in Python.", country="FI",
+                    remote="hybrid", posted_at=datetime.now(UTC))
+        store.upsert_jobs([third])
+        store.save_filter_results(
+            [FilterResult(job_id=third.id, status="keep", location_tier=1)], "rules-test")
+        first, second = _job(store, "DevOps"), _job(store, "Core Developer")
+        _seed_verdict(store, first, "rank", 80)
+        _seed_verdict(store, second, "rank", 66)
+        _seed_verdict(store, third, "rank", 52)
+        return first, second, third
+    finally:
+        store.close()
+
+
+def test_refine_table_shows_the_refine_scores_on_the_rank_scale(data_dir, fake_http, spy_refine):
+    """Three jobs scored twice: the table reports the calibrated number, and names the shift."""
+    _rank_three_jobs(data_dir)
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+    # the stage scores them 90 / 80 / 70 against ranks of 80 / 66 / 52
+    assert "calibration -14.0 to the rank scale" in result.output
+    row = next(ln for ln in result.output.splitlines() if "DevOps" in ln)
+    assert "76" in row      # 90 read on the rank scale
+    assert "90" not in row  # never the raw refine score
+    assert "78" in row      # round((80 + 76) / 2)
+
+
 def test_refine_says_so_when_nothing_is_new(data_dir, fake_http, spy_refine):
     job = _rank_one_job(data_dir)
     store = store_mod.Store()
@@ -554,7 +592,8 @@ def test_report_orders_by_the_effective_score(data_dir, fake_http, spy_refine):
     assert result.exit_code == 0, result.output
 
     text = next((data_dir / "results").glob("report-*.md")).read_text(encoding="utf-8")
-    assert "### 85 (rank 80 · refine 90) · [" in text  # (80 + 90) / 2
+    # One shared job is too few to measure the two stages' scale difference: nothing is moved.
+    assert "### 85 (rank 80 · refine 90, calibrated +0.0) · [" in text  # (80 + 90) / 2
     store = store_mod.Store()
     try:
         item = next(i for i in store.report().items if i.job_id == job.id)

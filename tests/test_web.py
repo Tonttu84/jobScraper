@@ -379,8 +379,36 @@ def test_a_refine_verdict_averages_the_score_and_is_exposed_on_its_own(tmp_path)
         first = next(i for i in client.get("/api/jobs").json()["items"] if i["id"] == jobs["web"].id)
     assert first["rank"]["score"] == 91
     assert first["refine"] == {"score": 71, "relevant": True, "summary": "Best of the shortlist.",
-                               "concerns": [], "why_apply": [], "position": 1}
-    assert first["score"] == 81  # (91 + 71) / 2
+                               "concerns": [], "why_apply": [], "position": 1,
+                               "calibrated": 71, "offset": 0.0}
+    assert first["score"] == 81  # (91 + 71) / 2, one shared job being too few to calibrate
+
+
+def _seed_calibrated(db_path) -> dict[str, Job]:
+    """The seeded database with three jobs scored by both AI passes, at a +22.0 refine offset."""
+    jobs = _seed(db_path)
+    store = Store(db_path)
+    for handle, rank_score, refine_score, position in [("web", 91, 63, 1), ("cpp", 80, 60, 2),
+                                                       ("py", 70, 52, 3)]:
+        job_id = jobs[handle].id
+        if handle != "web":  # "web" is the one job the seed ranks
+            store.save_verdict(make_verdict(job_id, "rank", rank_score))
+        store.save_verdict(make_verdict(job_id, "refine", refine_score, position=position,
+                                        model="claude-fable-5-1",
+                                        summary=f"Place {position} of the shortlist."))
+    store.close()
+    return jobs
+
+
+def test_a_refine_score_is_read_on_the_rank_scale_before_the_two_are_averaged(tmp_path):
+    """Three jobs scored twice are enough to measure the gap between the two raters' scales."""
+    jobs = _seed_calibrated(tmp_path / "t.db")
+    with TestClient(create_app(tmp_path / "t.db")) as client:
+        first = next(i for i in client.get("/api/jobs").json()["items"] if i["id"] == jobs["web"].id)
+    assert first["refine"]["score"] == 63       # what the refine pass actually said
+    assert first["refine"]["offset"] == 22.0    # mean of 91-63, 80-60, 70-52
+    assert first["refine"]["calibrated"] == 85  # 63 read on the rank stage's scale
+    assert first["score"] == 88                 # round((91 + 85) / 2), not 77
 
 
 def test_a_job_without_a_refine_verdict_keeps_its_rank_score(seeded):

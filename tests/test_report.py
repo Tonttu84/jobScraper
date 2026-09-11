@@ -10,9 +10,12 @@ import pytest
 from jobscraper.models import AIVerdict, FilterResult, Job, ReportItem, ReportSnapshot
 from jobscraper.report import (
     build_snapshot,
+    calibrated_refine,
     diff_reports,
+    effective_score,
     export_jsonl,
     previous_report,
+    refine_offset,
     render_diff,
     render_new_section,
     write_report,
@@ -430,7 +433,8 @@ def test_write_report_shows_both_scores_when_the_refine_pass_spoke(tmp_path, sta
 
     text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md",
                         refine=refine).read_text(encoding="utf-8")
-    assert f"### 88 (rank 91 · refine 85) · [{ranked_job.title}]({ranked_job.url})" in text
+    # One shared job is too few to measure a scale difference, so nothing is moved.
+    assert f"### 88 (rank 91 · refine 85, calibrated +0.0) · [{ranked_job.title}]({ranked_job.url})" in text
     assert "**Against the rest of the shortlist:** Best of the shortlist by a nose." in text
 
 
@@ -485,6 +489,118 @@ def test_build_snapshot_sorts_an_unrefined_job_after_a_refined_one(state):
     snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1", refine=refine)
     assert [(i.job_id, i.score) for i in snap.items if i.section == "ranked"] == [
         (ranked_job.id, 88), (other.id, 88)]
+
+
+# --------------------------------------------- calibrating refine onto the rank scale
+
+
+def _pairs(*rows) -> tuple[dict[str, AIVerdict], dict[str, AIVerdict]]:
+    """``(rank, refine)`` verdict dicts from ``(job_id, rank_score, refine_score)`` rows.
+
+    A ``None`` on either side means that stage never scored the job.
+    """
+    rank, refine = {}, {}
+    for pos, (job_id, rank_score, refine_score) in enumerate(rows, 1):
+        if rank_score is not None:
+            rank[job_id] = make_verdict(job_id, "rank", rank_score)
+        if refine_score is not None:
+            refine[job_id] = make_refine(job_id, refine_score, pos)
+    return rank, refine
+
+
+def test_refine_offset_averages_the_gap_over_the_jobs_both_stages_scored():
+    """Only the overlap counts: a job one stage never saw says nothing about the scale."""
+    rank, refine = _pairs(("a", 91, 70), ("b", 80, 60), ("c", 70, 48),
+                          ("d", 95, None), ("e", None, 20))
+    assert refine_offset(rank, refine) == 21.0
+
+
+def test_refine_offset_is_zero_when_fewer_than_three_jobs_overlap():
+    """Two shared jobs are noise, not a scale: leave the scores where the raters put them."""
+    rank, refine = _pairs(("a", 91, 60), ("b", 80, 50))
+    assert refine_offset(rank, refine) == 0.0
+    assert refine_offset({}, {}) == 0.0
+
+
+def test_refine_offset_rounds_to_one_decimal():
+    rank, refine = _pairs(("a", 90, 70), ("b", 90, 69), ("c", 90, 69))
+    assert refine_offset(rank, refine) == 20.7
+
+
+def test_calibrated_refine_moves_a_score_onto_the_rank_scale():
+    assert calibrated_refine(63, 22.0) == 85
+    assert calibrated_refine(63, 0.0) == 63
+    assert calibrated_refine(63, -2.4) == 61  # a refine pass that scores higher than rank
+
+
+def test_calibrated_refine_stays_inside_the_scale():
+    assert calibrated_refine(95, 22.0) == 100
+    assert calibrated_refine(5, -22.0) == 0
+
+
+def test_effective_score_averages_the_rank_score_with_the_calibrated_one():
+    rank, refine = _pairs(("a", 91, 63))
+    assert effective_score(rank["a"], refine["a"], 22.0) == 88
+    assert effective_score(rank["a"], refine["a"]) == 77  # uncalibrated, as before
+
+
+def test_effective_score_ignores_the_offset_when_only_one_pass_spoke():
+    """Calibration is a comparison between the two; with one rater there is nothing to compare."""
+    rank, refine = _pairs(("a", 91, 63))
+    assert effective_score(rank["a"], None, 22.0) == 91
+    assert effective_score(None, refine["a"], 22.0) == 63
+    assert effective_score(None, None, 22.0) is None
+
+
+@pytest.fixture
+def calibrated_state():
+    """Four ranked jobs; three of them refined, at a measurable −22.0 offset.
+
+    ``lift`` is refined 26 points below its rank score and ``bare`` was never refined, so the
+    two change places once the refine scores are put back on the rank stage's scale.
+    """
+    jobs = [make_job("lift", "Junior Backend Developer"), make_job("bare", "Junior Data Engineer"),
+            make_job("top", "Junior Platform Engineer"), make_job("low", "Junior QA Engineer")]
+    filters = {j.id: FilterResult(job_id=j.id, status="keep", location_tier=1) for j in jobs}
+    lift, bare, top, low = (j.id for j in jobs)
+    ranked, refine = _pairs((lift, 80, 54), (bare, 74, None), (top, 90, 70), (low, 60, 40))
+    return jobs, filters, ranked, refine
+
+
+def test_build_snapshot_orders_the_ranked_section_by_the_calibrated_score(calibrated_state):
+    """Raw averaging would put the unrefined job second; on one scale it is third."""
+    jobs, filters, ranked, refine = calibrated_state
+    lift, bare, top, low = (j.id for j in jobs)
+
+    snap = build_snapshot(jobs, filters, {}, ranked, days=7, prompt_version="v1", refine=refine)
+    assert [(i.job_id, i.score) for i in snap.items if i.section == "ranked"] == [
+        (top, 91), (lift, 78), (bare, 74), (low, 61)]
+    # the same input averaged raw would have read: top 80, bare 74, lift 67, low 50
+    assert [i.job_id for i in snap.items if i.section == "ranked"] != [top, bare, lift, low]
+
+
+def test_build_snapshot_stores_the_offset_it_calibrated_with(calibrated_state):
+    jobs, filters, ranked, refine = calibrated_state
+    snap = build_snapshot(jobs, filters, {}, ranked, days=7, prompt_version="v1", refine=refine)
+    assert snap.refine_offset == 22.0
+
+
+def test_build_snapshot_has_no_offset_without_a_refine_pass(calibrated_state):
+    """Nothing to calibrate against: the field stays empty rather than claiming a zero gap."""
+    jobs, filters, ranked, _refine = calibrated_state
+    snap = build_snapshot(jobs, filters, {}, ranked, days=7, prompt_version="v1")
+    assert snap.refine_offset is None
+
+
+def test_write_report_heading_shows_the_calibrated_refine_score_and_the_offset(tmp_path,
+                                                                              calibrated_state):
+    jobs, filters, ranked, refine = calibrated_state
+    top = jobs[2]
+
+    text = write_report(jobs, filters, {}, ranked, tmp_path / "r.md",
+                        refine=refine).read_text(encoding="utf-8")
+    assert f"### 91 (rank 90 · refine 92, calibrated +22.0) · [{top.title}]({top.url})" in text
+    assert "### 74 · [Junior Data Engineer]" in text  # the unrefined job says nothing about it
 
 
 # ------------------------------------------------------- diff between reports

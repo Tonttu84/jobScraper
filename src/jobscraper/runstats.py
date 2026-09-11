@@ -107,6 +107,9 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
         "drops_by_category": dict(sorted(drops.items())),
         "prefilter": {"prefiltered": len(prefiltered), "passed": passed},
         "ranked": counts.get("ranked", 0),
+        # How far apart the two AI raters' 0-100 scales were on this shortlist; null when the
+        # refine pass did not run. A counter about the graders, not about any posting.
+        "refine_offset": snapshot.refine_offset,
         "versions": {"rules": RULES_VERSION, "prompt": snapshot.prompt_version},
         "models": {"prefilter": ai.prefilter_model, "rank": ai.rank_model},
         "cost_usd": round(float(snapshot.cost.get("total", 0.0)), 4),
@@ -165,19 +168,26 @@ company, URL or any other text from a posting is recorded here — this file is 
 reports it counts stay private.
 
 Columns: **jobs** in the report's window, **new** since the previous report, **keep/review/drop**
-from the rule filter, **prefiltered/passed** from the Sonnet prefilter stage, **ranked** by Opus, **cost**
-in USD (0 when the AI stages ran through subagents), and the rule and prompt versions behind them.
+from the rule filter, **prefiltered/passed** from the Sonnet prefilter stage, **ranked** by Opus,
+**refine Δ** the points added to every refine score to read it on the rank stage's scale (blank
+when the refine pass did not run), **cost** in USD (0 when the AI stages ran through subagents),
+and the rule and prompt versions behind them.
 
 Written by `jobscraper report`; regenerate from `stats/runs.jsonl` with `jobscraper stats --public`."""
 
 _TABLE_HEAD = (
-    "| date | report | jobs | new | keep | review | drop | prefiltered | passed | ranked | cost | rules | prompt |",
-    "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
+    "| date | report | jobs | new | keep | review | drop | prefiltered | passed | ranked | refine Δ | cost | rules | prompt |",
+    "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
 )
 
 
 def _num(value: object) -> str:
     return f"{value:,}" if isinstance(value, int) else "—"
+
+
+def _offset(value: object) -> str:
+    """The refine calibration with its sign; empty for a run that measured none."""
+    return f"{value:+.1f}" if isinstance(value, int | float) else ""
 
 
 def _date(row: dict) -> str:
@@ -196,6 +206,7 @@ def _table_row(row: dict) -> str:
         _num(rules.get("keep")), _num(rules.get("review")), _num(rules.get("drop")),
         _num(pre.get("prefiltered")), _num(pre.get("passed")),
         _num(row.get("ranked")),
+        _offset(row.get("refine_offset")),
         f"${float(row.get('cost_usd') or 0):.2f}",
         str(versions.get("rules") or "—"), str(versions.get("prompt") or "—"),
     ]

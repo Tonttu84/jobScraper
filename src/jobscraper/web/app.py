@@ -35,7 +35,13 @@ from jobscraper.models import (
     ReportSection,
     ReportSnapshot,
 )
-from jobscraper.report import build_snapshot, closes_in, effective_score
+from jobscraper.report import (
+    build_snapshot,
+    calibrated_refine,
+    closes_in,
+    effective_score,
+    refine_offset,
+)
 from jobscraper.store import Store
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -109,6 +115,17 @@ class VerdictView(BaseModel):
     position: int | None = Field(None, description="Place in the shortlist, refine stage only")
 
 
+class RefineView(VerdictView):
+    """The refine stage's verdict, with its score also given on the rank stage's scale.
+
+    The two stages score 0-100 differently (see :func:`jobscraper.report.refine_offset`), so the
+    page shows the number the average actually used — and by how much it was moved.
+    """
+
+    calibrated: int = Field(description="The refine score read on the rank stage's scale")
+    offset: float = Field(description="Points added to get there, measured over this shortlist")
+
+
 class FacetsView(BaseModel):
     posting_language: str | None = None
     languages_required: list[str] = Field(default_factory=list)
@@ -152,7 +169,7 @@ class JobView(BaseModel):
     evergreen: bool = False
     prefilter: VerdictView | None = None
     rank: VerdictView | None = None
-    refine: VerdictView | None = None
+    refine: RefineView | None = None
     facets: FacetsView
     decision: DecisionView | None = None
 
@@ -238,6 +255,8 @@ class View:
     refine: dict[str, AIVerdict]
     facets: dict[str, JobFacets]
     decisions: dict[str, Decision]
+    #: Measured once for the whole report, not per job: the two AI passes' scale difference.
+    refine_offset: float
 
 
 def _stage_verdicts(store: Store, stage: str, ids: list[str] | None = None) -> dict[str, AIVerdict]:
@@ -286,16 +305,18 @@ def load_view(store: Store, report_id: int | None = None, user: str | None = Non
         if job_id not in facets:  # never persisted from the web app
             facets[job_id] = compute_facets(job, filters.get(job_id))
     decisions = {d.job_id: d for d in store.decisions(user)} if user else {}
+    rank, refine = _stage_verdicts(store, "rank", ids), _stage_verdicts(store, "refine", ids)
     return View(
         snapshot=snapshot,
         stored=stored,
         jobs=jobs,
         filters=filters,
         prefilter=_stage_verdicts(store, "prefilter", ids),
-        rank=_stage_verdicts(store, "rank", ids),
-        refine=_stage_verdicts(store, "refine", ids),
+        rank=rank,
+        refine=refine,
         facets=facets,
         decisions=decisions,
+        refine_offset=refine_offset(rank, refine),
     )
 
 
@@ -304,6 +325,15 @@ def _verdict_view(v: AIVerdict | None) -> VerdictView | None:
         return None
     return VerdictView(score=v.score, relevant=v.relevant, summary=v.summary,
                        concerns=list(v.concerns), why_apply=list(v.why_apply), position=v.position)
+
+
+def _refine_view(v: AIVerdict | None, offset: float) -> RefineView | None:
+    """The refine verdict as the UI needs it: its own score, and the one the average used."""
+    if v is None:
+        return None
+    return RefineView(score=v.score, relevant=v.relevant, summary=v.summary,
+                      concerns=list(v.concerns), why_apply=list(v.why_apply), position=v.position,
+                      calibrated=calibrated_refine(v.score, offset), offset=offset)
 
 
 def _facets_view(view: View, job: Job) -> FacetsView:
@@ -319,8 +349,8 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
     fr = view.filters.get(job.id)
     pre, rank = view.prefilter.get(job.id), view.rank.get(job.id)
     refine = view.refine.get(job.id)
-    # The AI score the list orders by: the two passes averaged, else whichever one spoke.
-    score = effective_score(rank, refine)
+    # The AI score the list orders by: the two passes averaged on one scale, else whichever spoke.
+    score = effective_score(rank, refine, view.refine_offset)
     decision = view.decisions.get(job.id)
     facets = _facets_view(view, job)
     fields: dict[str, Any] = {
@@ -348,7 +378,7 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
         "evergreen": facets.evergreen,
         "prefilter": _verdict_view(pre),
         "rank": _verdict_view(rank),
-        "refine": _verdict_view(refine),
+        "refine": _refine_view(refine, view.refine_offset),
         "facets": facets,
         "decision": DecisionView(status=decision.status, note=decision.note,
                                  updated_at=decision.updated_at) if decision else None,

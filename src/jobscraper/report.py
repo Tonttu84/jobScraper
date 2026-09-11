@@ -32,14 +32,42 @@ def _tier_label(t: int | None) -> str:
     return {1: "FI/EE", 2: "EU/EEA", 3: "extended", 0: "remote"}.get(t, "?") if t is not None else "?"
 
 
-def effective_score(rank: AIVerdict | None, refine: AIVerdict | None) -> int | None:
+#: Fewer shared jobs than this and the gap between the two stages is noise, not a scale.
+MIN_CALIBRATION_JOBS = 3
+
+
+def refine_offset(rank: dict[str, AIVerdict], refine: dict[str, AIVerdict]) -> float:
+    """How many points to add to a refine score to read it on the rank stage's scale.
+
+    The two stages use 0-100 differently. ``rank`` grades one posting at a time against the
+    profile; ``refine`` grades the whole shortlist against itself, which pushes its numbers down
+    by around twenty points on a list that is already the best of the run. Their ordering agrees
+    — that is the part worth keeping — but averaging the raw numbers drags a strong shortlist
+    into the sixties. This is the mean of ``rank - refine`` over the jobs both stages scored;
+    with fewer than :data:`MIN_CALIBRATION_JOBS` of them there is nothing to measure.
+    """
+    shared = sorted(set(rank) & set(refine))
+    if len(shared) < MIN_CALIBRATION_JOBS:
+        return 0.0
+    return round(sum(rank[i].score - refine[i].score for i in shared) / len(shared), 1)
+
+
+def calibrated_refine(refine_score: int, offset: float) -> int:
+    """One refine score moved onto the rank scale, kept inside the 0..100 both raters use."""
+    return max(0, min(100, round(refine_score + offset)))
+
+
+def effective_score(rank: AIVerdict | None, refine: AIVerdict | None,
+                    offset: float = 0.0) -> int | None:
     """The score everything orders by: the mean of the two AI passes, or whichever one exists.
 
     The rank stage scores a posting alone inside a chunk and the refine stage scores it against
     the rest of the shortlist; both say something the other doesn't, so neither is thrown away.
+    The refine score is put on the rank scale with ``offset`` (see :func:`refine_offset`) before
+    the two are averaged, so a job is not marked down for having been read twice.
     """
     if rank is not None and refine is not None:
-        return round((rank.score + refine.score) / 2)
+        return round((rank.score + calibrated_refine(refine.score, offset)) / 2)
     if refine is not None:
         return refine.score
     return rank.score if rank is not None else None
@@ -49,12 +77,12 @@ def effective_score(rank: AIVerdict | None, refine: AIVerdict | None) -> int | N
 _NO_POSITION = 10 ** 6
 
 
-def rank_order(refine: dict[str, AIVerdict]):
+def rank_order(refine: dict[str, AIVerdict], offset: float = 0.0):
     """Sort key for the ranked section: effective score, then refine position, then rank score."""
     def key(v: AIVerdict) -> tuple[int, int, int]:
         r = refine.get(v.job_id)
         position = r.position if r is not None and r.position is not None else _NO_POSITION
-        return -(effective_score(v, r) or 0), position, -v.score
+        return -(effective_score(v, r, offset) or 0), position, -v.score
 
     return key
 
@@ -77,10 +105,13 @@ def evergreen_cue(fr: FilterResult | None) -> str | None:
 
 
 def ranked_block(job: Job, score: int | None, verdict: AIVerdict | None = None,
-                 fr: FilterResult | None = None, refine: AIVerdict | None = None) -> list[str]:
+                 fr: FilterResult | None = None, refine: AIVerdict | None = None,
+                 offset: float = 0.0) -> list[str]:
     """The markdown block for one ranked job — shared by the report and the diff."""
     loc = f"{job.location_raw or '?'} · {job.remote}" + (f" · {_tier_label(fr.location_tier)}" if fr else "")
-    both = f" (rank {verdict.score} · refine {refine.score})" if verdict is not None and refine is not None else ""
+    # The refine number is shown the way the mean uses it — on the rank scale, shift named.
+    both = (f" (rank {verdict.score} · refine {calibrated_refine(refine.score, offset)}, "
+            f"calibrated {offset:+.1f})") if verdict is not None and refine is not None else ""
     days = closes_in(fr)
     closing = f" · {closes_text(days)}" if days is not None else ""
     cue = evergreen_cue(fr)
@@ -132,14 +163,15 @@ def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: d
         lines.append(f"Estimated API cost this state: ${cost.get('total', 0):.2f} " + " ".join(f"({m}: ${c:.2f})" for m, c in cost.items() if m != 'total'))
     lines.append("")
 
+    offset = refine_offset(ranked, refine)
     if ranked:
         lines += ["## Ranked (Opus)", ""]
-        for v in sorted(ranked.values(), key=rank_order(refine)):
+        for v in sorted(ranked.values(), key=rank_order(refine, offset)):
             j = by_id.get(v.job_id)
             if not j:
                 continue
             r = refine.get(v.job_id)
-            lines += ranked_block(j, effective_score(v, r), v, filters.get(j.id), r)
+            lines += ranked_block(j, effective_score(v, r, offset), v, filters.get(j.id), r, offset)
 
     if prefilter:
         rest = [v for v in prefilter.values() if v.job_id not in ranked]
@@ -174,6 +206,9 @@ def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter:
     (the mean of the rank and refine passes where both spoke), then the relevant prefilter
     survivors that were not ranked, then the rule-filter ``review`` leftovers that never
     reached the AI (capped at 300, as in the markdown).
+
+    The refine scores are read on the rank stage's scale first; the shift that took them there
+    is measured once here and kept on the snapshot as ``refine_offset``.
     """
     refine = refine or {}
     by_id = {j.id: j for j in jobs}
@@ -181,11 +216,12 @@ def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter:
     prefilter = {k: v for k, v in prefilter.items() if k not in dropped}
     ranked = {k: v for k, v in ranked.items() if k not in dropped}
     items: list[ReportItem] = []
+    offset = refine_offset(ranked, refine)
 
-    for v in sorted(ranked.values(), key=rank_order(refine)):
+    for v in sorted(ranked.values(), key=rank_order(refine, offset)):
         if v.job_id in by_id:
             items.append(ReportItem(job_id=v.job_id, section="ranked", position=len(items) + 1,
-                                    score=effective_score(v, refine.get(v.job_id))))
+                                    score=effective_score(v, refine.get(v.job_id), offset)))
 
     rest = [v for v in prefilter.values() if v.job_id not in ranked]
     start = len(items)
@@ -208,7 +244,8 @@ def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter:
         "ranked": len(ranked),
     }
     return ReportSnapshot(days=days, prompt_version=prompt_version, counts=counts,
-                          cost=dict(cost or {}), path=str(path) if path else None, items=items)
+                          cost=dict(cost or {}), path=str(path) if path else None, items=items,
+                          refine_offset=offset if refine else None)
 
 
 # ------------------------------------------------- "what's new" between reports

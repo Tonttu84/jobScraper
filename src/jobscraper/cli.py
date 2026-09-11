@@ -384,7 +384,7 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
     _setup_logging(verbose)
     from jobscraper.ai.client import RefineStage, estimate_cost
     from jobscraper.ai.prompts import PROMPT_VERSION
-    from jobscraper.report import effective_score
+    from jobscraper.report import calibrated_refine, effective_score, refine_offset
 
     settings = load_settings()
     n = top or settings.profile.ai.refine_top_n
@@ -421,17 +421,20 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
     scored = {v.job_id for v in verdicts}
     refined = store.verdicts("refine", PROMPT_VERSION)
     rows = sorted(todo, key=lambda j: _refine_sort_key(refined.get(j.id)))
+    # This pass marks the whole shortlist lower than the rank pass marks one posting; the table
+    # shows its scores where the mean uses them, on the rank scale.
+    offset = refine_offset(ranked, refined)
     table = Table("pos", "effective", "rank", "refine", "new", "title")
     for job in rows:
         rv, r = refined.get(job.id), ranked.get(job.id)
         table.add_row(str(rv.position) if rv and rv.position is not None else "—",
-                      str(effective_score(r, rv)), str(r.score) if r else "—",
-                      str(rv.score) if rv else "—", "*" if job.id in scored else "",
-                      job.title[:60])
+                      str(effective_score(r, rv, offset)), str(r.score) if r else "—",
+                      str(calibrated_refine(rv.score, offset)) if rv else "—",
+                      "*" if job.id in scored else "", job.title[:60])
     console.print(table)
     console.print(f"refine: {len(verdicts)} of {len(fresh)} new jobs placed against "
-                  f"{len(todo) - len(fresh)} already refined; cost ≈ {estimate_cost(verdicts)}",
-                  soft_wrap=True)
+                  f"{len(todo) - len(fresh)} already refined; calibration {offset:+.1f} to the "
+                  f"rank scale; cost ≈ {estimate_cost(verdicts)}", soft_wrap=True)
 
 
 @app.command()

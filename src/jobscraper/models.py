@@ -139,6 +139,11 @@ class ReportSnapshot(BaseModel):
     counts: dict[str, int] = Field(default_factory=dict)   # jobs, keep, review, drop, prefiltered, ranked
     cost: dict[str, float] = Field(default_factory=dict)
     path: str | None = Field(None, description="Markdown file written alongside, if any")
+    refine_offset: float | None = Field(
+        None, description="Points added to every refine score to read it on the rank stage's "
+                          "scale, measured over the jobs both stages scored; None when the "
+                          "refine pass did not run",
+    )
     items: list[ReportItem] = Field(default_factory=list)
 
 

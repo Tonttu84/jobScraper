@@ -106,9 +106,10 @@ def test_collect_builds_one_flat_anonymous_row(state, settings):
 
     assert set(row) == {
         "recorded_at", "report_id", "report_created_at", "profile", "jobs_total", "new_jobs",
-        "by_source", "rules", "drops_by_category", "prefilter", "ranked", "versions", "models",
-        "cost_usd", "scrape",
+        "by_source", "rules", "drops_by_category", "prefilter", "ranked", "refine_offset",
+        "versions", "models", "cost_usd", "scrape",
     }
+    assert row["refine_offset"] is None  # this run never refined anything
     assert row["report_id"] == snap.id
     assert row["report_created_at"] == snap.created_at.isoformat()
     assert row["profile"] == "default"
@@ -156,6 +157,22 @@ def test_collect_counts_evergreen_adverts_whatever_the_rules_made_of_them(state,
     row = runstats.collect(state, snapshot_for(state), settings, profile=None, usage_path=None)
     assert row["rules"]["evergreen"] == 2
     assert "evergreen" not in row["drops_by_category"]
+
+
+def test_collect_carries_the_refine_calibration_offset(state, settings):
+    """How far apart the two raters' scales were is a counter like any other — and anonymous."""
+    extra = [make_job("arbeitnow", f"cal-{n}") for n in range(3)]
+    state.upsert_jobs(extra)
+    state.save_filter_results(
+        [FilterResult(job_id=j.id, status="keep") for j in extra], "rules-test")
+    scores = {extra[0].id: (90, 70), extra[1].id: (80, 60), extra[2].id: (70, 48)}
+    rank = {jid: make_verdict(jid, "rank", pair[0]) for jid, pair in scores.items()}
+    refine = {jid: make_verdict(jid, "refine", pair[1]) for jid, pair in scores.items()}
+    snap = state.save_report(build_snapshot(state.jobs(), state.filter_results(), {}, rank,
+                                            days=30, prompt_version="v1", refine=refine))
+
+    row = runstats.collect(state, snap, settings, profile=None, usage_path=None)
+    assert row["refine_offset"] == 20.7  # mean of 20, 20 and 22
 
 
 def test_collect_never_writes_posting_text(state, settings):
@@ -305,6 +322,19 @@ def test_render_tables_are_newest_first_and_per_profile(tmp_path):
     assert "| ana | too_old | 5 |" in text
     assert "| default | too_old | 7 |" in text
     assert "| ana | location | 3 |" in text
+
+
+def test_render_shows_the_refine_calibration_where_one_was_measured(tmp_path):
+    """A run that never refined has no gap to report, so the column stays empty for it."""
+    path = tmp_path / "runs.jsonl"
+    runstats.record(_row(1, report_created_at="2026-09-01T10:00:00+00:00", refine_offset=22.0), path)
+    runstats.record(_row(2, report_created_at="2026-09-02T10:00:00+00:00", refine_offset=None), path)
+    text = runstats.render(path)
+
+    assert "refine Δ" in text
+    rows = {ln.split("|")[2].strip(): ln for ln in text.splitlines() if ln.startswith("| 2026-09-")}
+    assert "| +22.0 |" in rows["#1"]
+    assert "|  |" in rows["#2"]
 
 
 def test_render_survives_a_row_from_an_older_schema(tmp_path):
