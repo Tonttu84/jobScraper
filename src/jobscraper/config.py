@@ -182,7 +182,7 @@ class AIPolicy(BaseModel):
     #: has no evidence to stop on, so it opens wide and the stop rule takes over after it.
     rank_top_n: int = 60
     #: Jobs one rank window scores before the stop rule is re-checked.
-    rank_window: int = 15
+    rank_window: int = 30
     #: Stop once this many jobs have been ranked without one of them entering the effective top
     #: ``refine_top_n``. The screen score does not sort (measured 2026-09-11), so the queue is
     #: close to a random sample of the survivors: how long the top has stood still is the only

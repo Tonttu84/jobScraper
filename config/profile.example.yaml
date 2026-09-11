@@ -230,7 +230,7 @@ ai:
   # refine_top_n is rebuilt, and the round stops when the queue runs out, when rank_patience
   # jobs in a row failed to enter that top, or when rank_budget jobs have been scored.
   rank_top_n: 60            # depth of the FIRST window, while nothing is ranked yet
-  rank_window: 15           # jobs per window after that
+  rank_window: 30           # jobs per window after that
   rank_patience: 30         # consecutive rankings without a new top-20 entrant before stopping
   rank_budget: 90           # most jobs one rank round may newly score (0 = unlimited)
   # The ranker scores each job alone inside a chunk, so its score carries chunk noise (measured
