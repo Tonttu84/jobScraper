@@ -263,6 +263,9 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
        the refined anchors, recompute, repeat until the effective top N has no unrefined member
        (cap 5 passes). API path: `jobscraper refine` loops itself; subagent path: `export refine`
        until it reports nothing new — each pass is one small Fable call.
+       Width: refine the effective top **25** (owner, 2026-09-11: jobs 21–25 are likely to move up
+       once the refined ones regress), so the report's top 20 always lies inside a fully refined set;
+       `ai.refine_top_n` default 20 → 25.
 3. **Coverage gate to 97%** (adapter error branches).
 4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:
