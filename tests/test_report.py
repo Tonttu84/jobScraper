@@ -531,6 +531,8 @@ def test_calibrated_refine_moves_a_score_onto_the_rank_scale():
     assert calibrated_refine(63, 22.0) == 85
     assert calibrated_refine(63, 0.0) == 63
     assert calibrated_refine(63, -2.4) == 61  # a refine pass that scores higher than rank
+    assert calibrated_refine(95, 18.0) == 100  # the shift can never push a score past the scale
+    assert calibrated_refine(3, -10.0) == 0
 
 
 def test_calibrated_refine_stays_inside_the_scale():
