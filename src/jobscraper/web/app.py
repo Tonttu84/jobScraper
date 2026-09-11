@@ -390,14 +390,16 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
 
 
 def _sorted_views(view: View) -> list[JobView]:
-    """Every job of the report, best score first, ``None`` scores last."""
+    """Every job of the report in pipeline order: ranked, then prefiltered only, then rules only;
+    best score first inside a section (``None`` last). Sections never interleave, because the
+    screen score and the rank score are different scales."""
     out = [
         _job_view(view, view.jobs[item.job_id], item.section, item.position)
         for item in view.snapshot.items
         if item.job_id in view.jobs
     ]
-    out.sort(key=lambda j: (j.score is None, -(j.score or 0),
-                            SECTION_ORDER.get(j.section or "", 9), j.position or 0))
+    out.sort(key=lambda j: (SECTION_ORDER.get(j.section or "", 9), j.score is None, -(j.score or 0),
+                            j.position or 0))
     # The "#N" badge is numbered from this live order, not from the stored report: a refine pass
     # or a scoring change after the report was written would otherwise leave badges that
     # contradict the order on the page (seen 2026-09-11: unrefined jobs at #2 above refined #40s).

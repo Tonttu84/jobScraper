@@ -716,3 +716,16 @@ def test_the_rank_badge_follows_the_live_order_not_a_stale_report(tmp_path):
         items = client.get("/api/jobs").json()["items"]
     ranked = [(i["id"], i["position"], i["score"]) for i in items if i["section"] == "ranked"]
     assert ranked == [(jobs["py"].id, 1, 88), (jobs["web"].id, 2, 76)]
+
+
+def test_sections_never_interleave_even_when_a_screen_score_beats_a_rank_score(tmp_path):
+    """Sonnet's screen score and Opus's rank score are different scales: a prefiltered-only job
+    must not sort above a ranked one, or it would sit in the "top 20" without ever being ranked."""
+    db = tmp_path / "t.db"
+    jobs = _seed(db)
+    store = Store(db)
+    store.save_verdict(make_verdict(jobs["web"].id, "rank", 60))  # the one ranked job, now scored low
+    store.close()
+    with TestClient(create_app(db)) as client:
+        items = client.get("/api/jobs").json()["items"]
+    assert [(i["section"], i["score"]) for i in items[:3]] == [("ranked", 60), ("prefilter", 70), ("prefilter", 55)]
