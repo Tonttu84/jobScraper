@@ -267,6 +267,21 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
        only the *first* pass, when nothing is refined yet, takes **25** (`ai.refine_first_pass`),
        because jobs 21–25 are likely to move up once the refined ones regress. Later passes
        refine just the unrefined members of the effective top 20.
+     - [x] Built 2026-09-11 (`refine_shortlist`, `ai.refine_first_pass`, `ai.refine_max_passes`,
+       tie rule: the cut extends over every job tied with its last member; `reports.refine_offset`).
+   - [ ] **Rank until the top stops moving** (owner, 2026-09-11 — "assume it can happen"): the
+     rank cut is "top 90 survivors by Sonnet score", but measured over the ranked jobs the Sonnet
+     score has **no relation to the Opus score** (Spearman −0.06 owner / 0.15 Felipe, n=152/101),
+     and two thirds of the Opus-80+ jobs sat within 5 Sonnet points of the cut. Sonnet works as a
+     gate, not a sorter, so the ~1 500 never-ranked survivors probably hide strong jobs at a
+     similar rate, and refining can never surface them. In a small pool (Finland only) the miss
+     would be visible. Design: rank survivors in chunks of 15 (Sonnet order for want of better)
+     and stop when `ai.rank_patience` (30) consecutive newly ranked jobs produced no entrant
+     into the effective top 20, or when `ai.rank_budget` (90) calls are spent this round; then the
+     refine loop; if refining lowered the 20th score, one more rank window. Small pools rank
+     everything, huge pools are bounded. Subagent path: `export rank` becomes one window per
+     export and reports whether the stop rule is met. Loop shape (owner):
+     `while (top20 not refined) { while (top20 not ranked) [rank]; [refine] }`.
 3. **Coverage gate to 97%** (adapter error branches).
 4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:
