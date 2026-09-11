@@ -245,8 +245,17 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
      Engineer 38 vs ~67), and on a much lower scale (mean 60 vs 74). Averaging the two therefore
      lowers the effective numbers by ~10 points but keeps both orderings' information; whether
      Fable's opinion is *better* can only be decided against the owner's applied/skipped
-     decisions (item 4). Until then: averaging stays, and the UI colour thresholds (80/50)
-     still work on the effective score.
+     decisions (item 4).
+     **Calibration (2026-09-11).** The level difference is a rater-scale effect, not information:
+     over the jobs with both verdicts the rank mean is 80.6 vs refine 58.6 (offset −22.0, sd
+     10.1) for the owner and 86.1 vs 68.1 (−18.0) for Felipe, while the Opus-vs-Opus re-score
+     control dropped only 5–6 points. Averaging raw scores dragged a strong shortlist into the
+     60s (2 of 24 refined jobs kept 80+ against 17 by rank). Decision: shift the refine scores by
+     the shortlist's mean offset (jobs with both verdicts, none applied under 3) before averaging,
+     clamp to 0–100, keep the raw score, and report the offset per run (report snapshot, stats
+     column "refine Δ"). Fable's ordering and spread survive; its level does not. The prompt is
+     deliberately unchanged so old and new refine verdicts stay on one raw scale (anchors mix
+     them); a "same scale as the first pass" prompt line can come later with a version bump.
 3. **Coverage gate to 97%** (adapter error branches).
 4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:
