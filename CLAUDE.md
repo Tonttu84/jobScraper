@@ -46,6 +46,7 @@ rank (Opus 5, top N) → report (markdown + JSONL).
   check; a tracked config edit (`config/sources.yaml`) needs only `pytest tests/test_config.py`.
   Never run two checks (or a check and the browser suite) at the same time — the headless
   browser tests fail intermittently under contention.
+  `scripts/check.sh --fast` skips the browser suites for quick iterations (no gate).
 
 ## Git rule (from the owner)
 - Single developer project: commit straight to `main` and push after every green

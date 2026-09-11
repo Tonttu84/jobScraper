@@ -19,6 +19,14 @@ FIXTURES = Path(__file__).parent / "fixtures"
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
 
 
+@pytest.fixture(autouse=True)
+def _wide_terminal(monkeypatch):
+    """Typer renders errors through rich, which wraps to the terminal width; under pytest-xdist the
+    workers see a narrow one and a message like "already exists" can break across lines. Give
+    every test a wide terminal so output assertions do not depend on the runner."""
+    monkeypatch.setenv("COLUMNS", "200")
+
+
 def fixture_text(name: str) -> str:
     return (FIXTURES / name).read_text(encoding="utf-8")
 
