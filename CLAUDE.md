@@ -41,6 +41,11 @@ rank (Opus 5, top N) → report (markdown + JSONL).
   Claude SDK through monkeypatched `messages.parse`, third-party scrapers through monkeypatch.
 - Subagent prompts must include this rule; a task is not done until its tests pass and the
   coverage gate still holds.
+- When to run `scripts/check.sh` (owner, 2026-09-11): only for code changes, before the push.
+  Data operations (scrape, filter, rank, refine, report, publish) and stats/docs commits need no
+  check; a tracked config edit (`config/sources.yaml`) needs only `pytest tests/test_config.py`.
+  Never run two checks (or a check and the browser suite) at the same time — the headless
+  browser tests fail intermittently under contention.
 
 ## Git rule (from the owner)
 - Single developer project: commit straight to `main` and push after every green
