@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, StringConstraints
 
-from jobscraper.ai.prompts import PROMPT_VERSION
+from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS, PROMPT_VERSION
 from jobscraper.config import WebPreset
 from jobscraper.facets import FACETS_VERSION, compute_facets
 from jobscraper.models import (
@@ -261,12 +261,12 @@ class View:
 
 
 def _stage_verdicts(store: Store, stage: str, ids: list[str] | None = None) -> dict[str, AIVerdict]:
-    """Verdicts for ``stage`` under the current prompt version, falling back to older ones.
+    """Verdicts for ``stage`` under the compatible prompt versions, falling back to older ones.
 
-    A report can reference jobs that were scored before the prompt text changed; those would
-    otherwise show up without any AI commentary at all.
+    A report can reference jobs that were scored before the prompt text changed in a way that
+    moved the scale; those would otherwise show up without any AI commentary at all.
     """
-    current = store.verdicts(stage, PROMPT_VERSION)
+    current = store.verdicts(stage, COMPATIBLE_PROMPT_VERSIONS)
     if ids is not None and all(job_id in current for job_id in ids):
         return current
     merged = store.verdicts(stage)

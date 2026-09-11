@@ -18,6 +18,7 @@ from jobscraper.report import (
     export_jsonl,
     miss_run,
     previous_report,
+    rank_anchors,
     rank_queue,
     refine_offset,
     refine_shortlist,
@@ -976,6 +977,59 @@ def test_effective_top_keeps_a_tie_at_the_boundary_whole():
 
     assert ids == [jobs[0].id, *sorted([jobs[1].id, jobs[2].id])]
     assert edge == 82
+
+
+# ------------------------------------------- the fixed reference scores every rank batch carries
+# Owner, 2026-09-11: a rank window is a slice of a queue, so its members must not be graded
+# against each other. Three already-scored postings show the ranker where the scale sits.
+
+
+@pytest.fixture
+def anchor_state():
+    """Five ranked jobs spread over the scale, plus one the day window no longer returns."""
+    jobs = [make_job("a", "Junior Backend Developer"), make_job("b", "Junior SRE"),
+            make_job("c", "Junior QA Engineer"), make_job("d", "Junior Data Engineer"),
+            make_job("e", "Junior Platform Engineer")]
+    scores = dict(zip((j.id for j in jobs), [92, 84, 63, 45, 20]))
+    gone = make_job("gone", "Junior Go Developer")
+    ranked = {jid: make_verdict(jid, "rank", score) for jid, score in scores.items()}
+    ranked[gone.id] = make_verdict(gone.id, "rank", 85)  # perfect anchor, but aged out
+    return jobs, ranked
+
+
+def test_rank_anchors_pick_the_ranked_job_nearest_each_target(anchor_state):
+    jobs, ranked = anchor_state
+    picked = rank_anchors(jobs, ranked)
+    assert [(j.source_id, v.score) for j, v in picked] == [("b", 84), ("c", 63), ("d", 45)]
+
+
+def test_rank_anchors_never_use_the_same_job_twice(anchor_state):
+    jobs, ranked = anchor_state
+    picked = rank_anchors(jobs, ranked, targets=(85, 84, 83))
+    assert [j.source_id for j, _v in picked] == ["b", "a", "c"]  # 84, then the next nearest
+
+
+def test_rank_anchors_ignore_a_verdict_whose_job_has_aged_out(anchor_state):
+    jobs, ranked = anchor_state
+    assert all(j.source_id != "gone" for j, _v in rank_anchors(jobs, ranked))
+
+
+def test_rank_anchors_break_a_tie_on_the_higher_score_then_the_id():
+    jobs = [make_job("low", "Junior SRE"), make_job("high", "Junior QA Engineer"),
+            make_job("same", "Junior Data Engineer")]
+    low, high, same = (j.id for j in jobs)
+    ranked = {low: make_verdict(low, "rank", 60), high: make_verdict(high, "rank", 70),
+              same: make_verdict(same, "rank", 70)}
+    picked = rank_anchors(jobs, ranked, targets=(65,))
+    assert picked[0][0].id == min(high, same)  # both are 5 away: the higher score, then the id
+
+
+def test_rank_anchors_return_what_there_is_and_nothing_at_all_when_nothing_is_ranked():
+    jobs = [make_job("a", "Junior Backend Developer"), make_job("b", "Junior SRE")]
+    ranked = {jobs[0].id: make_verdict(jobs[0].id, "rank", 77)}
+    assert [j.source_id for j, _v in rank_anchors(jobs, ranked)] == ["a"]
+    assert rank_anchors(jobs, {}) == []
+    assert rank_anchors([], ranked) == []
 
 
 def test_entered_top_counts_only_the_new_arrivals():

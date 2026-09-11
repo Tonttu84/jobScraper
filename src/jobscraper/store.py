@@ -6,7 +6,7 @@ import json
 import os
 import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -319,11 +319,19 @@ class Store:
                 (v.job_id, v.stage, v.model, v.prompt_version, int(v.relevant), v.score, v.created_at.isoformat(), v.model_dump_json()),
             )
 
-    def verdicts(self, stage: str, prompt_version: str | None = None) -> dict[str, AIVerdict]:
+    def verdicts(self, stage: str,
+                 prompt_version: str | Sequence[str] | None = None) -> dict[str, AIVerdict]:
+        """Latest verdict per job for ``stage``, optionally restricted by prompt version.
+
+        ``prompt_version`` takes one version or a sequence of them
+        (:data:`~jobscraper.ai.prompts.COMPATIBLE_PROMPT_VERSIONS`, so a wording change that kept
+        the scoring scale does not hide the verdicts written before it); None reads every version.
+        """
         sql, args = "SELECT data FROM ai_verdicts WHERE stage=?", [stage]
         if prompt_version:
-            sql += " AND prompt_version=?"
-            args.append(prompt_version)
+            versions = [prompt_version] if isinstance(prompt_version, str) else list(prompt_version)
+            sql += f" AND prompt_version IN ({','.join('?' * len(versions))})"
+            args.extend(versions)
         out: dict[str, AIVerdict] = {}
         for row in self.conn.execute(sql + " ORDER BY created_at", args):
             v = AIVerdict.model_validate_json(row["data"])

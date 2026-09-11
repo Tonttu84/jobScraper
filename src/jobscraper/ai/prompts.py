@@ -1,5 +1,12 @@
-"""Prompt text for the two AI stages. Bump PROMPT_VERSION when you change wording so cached
-verdicts are recomputed.
+"""Prompt text for the two AI stages.
+
+Bump PROMPT_VERSION when you change wording; every verdict is stamped with the version it was
+produced under. Whether the older verdicts are still *read* is a separate decision, and it is
+:data:`COMPATIBLE_PROMPT_VERSIONS` that makes it: a wording change that leaves the scoring scale
+where it was is added to that tuple, so nothing is re-scored (owner, 2026-09-11: verdicts don't
+expire with the prompt, jobs do — they age out of the day window and take their verdicts with
+them). A change that moves the scale — new bands, a different question, a different candidate —
+resets the tuple to ``(PROMPT_VERSION,)`` alone, and every job goes back through the stage.
 
 Nothing here knows who the candidate is: the role label, the seniority and role rules and any
 extra bullets come from ``profile.prompt`` (:class:`~jobscraper.config.PromptPolicy`), and the
@@ -12,7 +19,13 @@ from jobscraper.config import LanguagePolicy, LocationPolicy, Profile
 from jobscraper.filters.language import LANGUAGE_NAMES
 from jobscraper.models import AIVerdict, FilterResult, Job
 
-PROMPT_VERSION = "2026-09-09.1"
+PROMPT_VERSION = "2026-09-11.1"
+
+#: Verdicts read as current. A wording change that keeps the scoring scale is added here
+#: instead of re-queueing every ranked job (owner, 2026-09-11: verdicts don't expire with the
+#: prompt, jobs do — they age out); a change that breaks the scale resets this to
+#: (PROMPT_VERSION,) alone.
+COMPATIBLE_PROMPT_VERSIONS: tuple[str, ...] = (PROMPT_VERSION, "2026-09-09.1")
 
 
 def _language_name(code: str) -> str:
@@ -102,6 +115,18 @@ Judge each posting on fit and on realistic chance of getting an interview. Be co
 skills that match, the gaps, the language/location/seniority risks, and how the candidate should
 angle the application (which projects or background to emphasise). Score 0-100 where 80+ means
 "apply this week", 50-79 "apply if time allows", below 50 "probably skip".
+
+Score on a fixed scale, not against the other postings you see. Postings reach you in arbitrary
+slices of a queue: a slice is not a shortlist, its order carries no information, and its members
+are not competing with each other. Judge each one as if it were the only posting you saw today.
+A slice of weak postings has no 80s; a slice of strong ones may have ten. Do not spread scores to
+fill the range and do not rank postings against each other — that is a separate, later pass.
+The bands, concretely: 80+ means the stated minimum requirements are met, the stack overlaps the
+core of the CV, and level, language and location fit, so the only open question is competition;
+50-79 means a real fit with one gap a good application could bridge (a missing core tool, a level
+stretch, a language or location risk); below 50 means a minimum requirement is unmet or it is a
+different job. When REFERENCE SCORES are given, they show where this scale sits for this
+candidate: a posting as good as the one at 85 scores about 85.
 
 """
 
@@ -200,6 +225,34 @@ def job_prompt(job: Job, fr: FilterResult | None, max_chars: int) -> str:
         meta.append(f"Detected signals: {fr.signals}{_deadline_note(fr.signals)}"
                     f"{_evergreen_note(fr.signals)}")
     return "JOB POSTING\n" + "\n".join(meta) + "\n\nDESCRIPTION\n" + (desc or "(no description available; judge from the title)")
+
+
+#: Head of the reference block every rank batch carries. The bullets under it are postings this
+#: candidate's ranker already scored, spread over the scale (see
+#: :func:`jobscraper.report.rank_anchors`), so a window of weak postings cannot talk itself into
+#: an 80 and a window of strong ones cannot be marked down to fill the range.
+_RANK_ANCHORS_HEAD = """REFERENCE SCORES (fixed; not part of your task — do not return these)
+Earlier postings scored for this candidate, so every batch is graded on the same scale. Score
+the new postings against this scale, not against each other.
+"""
+
+
+def _rank_anchor_line(job: Job, verdict: AIVerdict) -> str:
+    """One reference posting as a single line: what it is, and what it scored."""
+    where = job.location_raw or job.country or "unknown"
+    return (f"- {job.title} · {job.company or 'unknown'} · {where} · "
+            f"score {verdict.score} · {verdict.summary}")
+
+
+def rank_anchor_block(anchors: list[tuple[Job, AIVerdict]]) -> str:
+    """The REFERENCE SCORES block that goes in front of a rank batch, or "" when there is none.
+
+    A new profile's first round has nothing ranked yet and gets no block; the paragraph in
+    :data:`RANK_SYSTEM` stands on its own until there is.
+    """
+    if not anchors:
+        return ""
+    return _RANK_ANCHORS_HEAD + "\n".join(_rank_anchor_line(j, v) for j, v in anchors) + "\n\n"
 
 
 #: Tail of the user prompt when part of the shortlist is already placed. The answer covers the

@@ -336,13 +336,13 @@ def _top_boundary(days: int, n: int) -> int | None:
     and marks most of it down, so a boundary that fell means jobs that were never ranked could
     now be in the top — and the ranker is worth another window loop.
     """
-    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
     from jobscraper.report import effective_top
 
     store = Store()
     jobs, filters = _load_state(store, days)
-    _ids, edge = effective_top(jobs, filters, store.verdicts("rank", PROMPT_VERSION),
-                               store.verdicts("refine", PROMPT_VERSION), top=n)
+    _ids, edge = effective_top(jobs, filters, store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
+                               store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS), top=n)
     return edge
 
 
@@ -367,16 +367,23 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
     """
     _setup_logging(verbose)
     from jobscraper.ai.client import AIStage, estimate_cost
-    from jobscraper.ai.prompts import PROMPT_VERSION
-    from jobscraper.report import RANK_TOP_WATCH, effective_top, entered_top, miss_run, rank_queue
+    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS, rank_anchor_block
+    from jobscraper.report import (
+        RANK_TOP_WATCH,
+        effective_top,
+        entered_top,
+        miss_run,
+        rank_anchors,
+        rank_queue,
+    )
 
     settings = load_settings()
     ai = settings.profile.ai
     store = Store()
     jobs, filters = _load_state(store, days)
-    pre = store.verdicts("prefilter", PROMPT_VERSION)
-    ranked = store.verdicts("rank", PROMPT_VERSION)
-    refined = store.verdicts("refine", PROMPT_VERSION)  # fixed for the whole round
+    pre = store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS)
+    ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
+    refined = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)  # fixed for the whole round
     queue = rank_queue(jobs, filters, pre, {} if force else ranked, min_score=ai.prefilter_min_score)
     if not queue:
         console.print("rank: nothing to rank — every screen survivor already carries a rank "
@@ -385,7 +392,11 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
 
     n = ai.refine_top_n or RANK_TOP_WATCH
     budget = top or ai.rank_budget  # --top names the whole round
-    stage = AIStage("rank", settings.profile, store, model=model)
+    # Fixed for the round, like `refined`: every window is graded against the same reference
+    # scores, so a weak window cannot inflate itself into the top and a strong one is not
+    # flattened to fill the range.
+    stage = AIStage("rank", settings.profile, store, model=model,
+                    preamble=rank_anchor_block(rank_anchors(jobs, ranked)))
     before, _edge = effective_top(jobs, filters, ranked, refined, top=n)
     opening = not ranked  # nothing ranked yet: the first window opens at ai.rank_top_n
     windows: list[tuple[int, int]] = []
@@ -401,7 +412,7 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
                         progress=lambda v: console.print(f"  {v.score:3d} {v.summary[:110]}"))
         new_ids = [j.id for j in batch if j.id in got]
         scored += [got[job_id] for job_id in new_ids]
-        ranked = store.verdicts("rank", PROMPT_VERSION)
+        ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
         after, _edge = effective_top(jobs, filters, ranked, refined, top=n)
         windows.append((len(new_ids), entered_top(set(before), after, new_ids)))
         before = after
@@ -469,7 +480,7 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
     """
     _setup_logging(verbose)
     from jobscraper.ai.client import RefineStage, estimate_cost
-    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
     from jobscraper.report import calibrated_refine, effective_score, refine_shortlist
 
     settings = load_settings()
@@ -482,8 +493,8 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
     first_pass = top or ai.refine_first_pass
     store = Store()
     jobs, filters = _load_state(store, days)
-    ranked = store.verdicts("rank", PROMPT_VERSION)
-    refined = store.verdicts("refine", PROMPT_VERSION)
+    ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
+    refined = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
     shortlist, offset = refine_shortlist(jobs, filters, ranked, refined, top=n, first_pass=first_pass)
     if not shortlist:
         console.print("refine: nothing ranked under the current prompt version — run "
@@ -513,7 +524,7 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
         console.print(f"pass {passes}: {len(fresh)} new against {len(shortlist) - len(fresh)} "
                       f"placed, offset {offset:+.1f}", soft_wrap=True)
         force_now = False
-        refined = store.verdicts("refine", PROMPT_VERSION)
+        refined = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
         shortlist, offset = refine_shortlist(jobs, filters, ranked, refined, top=n,
                                              first_pass=first_pass)
 
@@ -551,7 +562,7 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
 def report(days: int = 30, out: Path | None = None) -> None:
     """Write the markdown report and a JSONL export, and store the report in the database."""
     from jobscraper.ai.client import estimate_cost
-    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS, PROMPT_VERSION
     from jobscraper.report import (
         build_snapshot,
         diff_reports,
@@ -565,9 +576,9 @@ def report(days: int = 30, out: Path | None = None) -> None:
 
     store = Store()
     jobs, filters = _load_state(store, days)
-    pre = store.verdicts("prefilter", PROMPT_VERSION)
-    ranked = store.verdicts("rank", PROMPT_VERSION)
-    refined = store.verdicts("refine", PROMPT_VERSION)
+    pre = store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS)
+    ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
+    refined = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
     cost = estimate_cost(list(pre.values()) + list(ranked.values()) + list(refined.values()))
     path = write_report(jobs, filters, pre, ranked, out, cost, refine=refined)
     jsonl = export_jsonl([j for j in jobs if filters.get(j.id) and filters[j.id].status != "drop"], filters, {**pre, **ranked},

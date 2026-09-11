@@ -286,7 +286,7 @@ def spy_ai(monkeypatch):
     calls: dict[str, dict] = {}
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-    def init(self, stage, profile, store, model=None) -> None:
+    def init(self, stage, profile, store, model=None, preamble="") -> None:
         self.stage = stage
 
     def record(name):
@@ -342,12 +342,13 @@ def spy_rank(monkeypatch):
     from jobscraper.ai.prompts import PROMPT_VERSION
     from jobscraper.models import AIVerdict
 
-    calls: dict = {"windows": [], "scored": [], "scores": {}, "force": []}
+    calls: dict = {"windows": [], "scored": [], "scores": {}, "force": [], "preambles": []}
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-    def init(self, stage, profile, store, model=None) -> None:
+    def init(self, stage, profile, store, model=None, preamble="") -> None:
         self.stage, self.store = stage, store
         self.model = model or profile.ai.rank_model
+        calls["preambles"].append(preamble)
 
     def run(self, jobs, filters, *, force=False, progress=None):
         jobs = list(jobs)
@@ -474,6 +475,25 @@ def test_rank_force_puts_the_ranked_jobs_back_into_the_queue(data_dir, spy_rank,
     assert result.exit_code == 0, result.output
     assert len(spy_rank["scored"]) == 6  # the same three jobs, scored a second time
     assert spy_rank["force"] == [False, True]
+
+
+def test_rank_sends_the_reference_scores_once_something_has_been_ranked(data_dir, spy_rank,
+                                                                       monkeypatch):
+    """Fixed for the whole round, so every window of it is graded on the same scale."""
+    _queued_jobs(4)
+    _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=0, rank_budget=2,
+               refine_top_n=2, prefilter_min_score=30)
+    spy_rank["scores"] = {"Queued Developer 00": 86, "Queued Developer 01": 41}
+
+    assert runner.invoke(cli_mod.app, ["rank"]).exit_code == 0
+    assert spy_rank["preambles"] == [""]  # a first round has nothing to anchor on
+
+    result = runner.invoke(cli_mod.app, ["rank"])
+    assert result.exit_code == 0, result.output
+    preamble = spy_rank["preambles"][1]
+    assert preamble.startswith("REFERENCE SCORES (fixed;")
+    assert "· score 86 · ranked Queued Developer 00" in preamble
+    assert "· score 41 · ranked Queued Developer 01" in preamble
 
 
 def test_rank_watches_the_top_20_when_the_refine_stage_is_off(data_dir, spy_rank, monkeypatch):

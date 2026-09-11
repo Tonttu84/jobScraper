@@ -23,7 +23,13 @@ from anthropic.types.message_create_params import MessageCreateParamsNonStreamin
 from anthropic.types.messages.batch_create_params import Request
 from pydantic import BaseModel, ValidationError
 
-from jobscraper.ai.prompts import PROMPT_VERSION, job_prompt, refine_user_prompt, system_prompt
+from jobscraper.ai.prompts import (
+    COMPATIBLE_PROMPT_VERSIONS,
+    PROMPT_VERSION,
+    job_prompt,
+    refine_user_prompt,
+    system_prompt,
+)
 from jobscraper.ai.schemas import Ranking, RefinedJob, Refinement, Screening
 from jobscraper.config import Profile
 from jobscraper.models import AIVerdict, FilterResult, Job
@@ -57,9 +63,17 @@ def _client() -> anthropic.Anthropic:
 
 
 class AIStage:
-    def __init__(self, stage: str, profile: Profile, store: Store, model: str | None = None) -> None:
+    def __init__(self, stage: str, profile: Profile, store: Store, model: str | None = None,
+                 preamble: str = "") -> None:
+        """``preamble`` goes in front of every job prompt this stage sends.
+
+        The rank stage uses it for the REFERENCE SCORES block
+        (:func:`jobscraper.ai.prompts.rank_anchor_block`): it is fixed for the round but changes
+        between rounds, so it belongs in the user message, not in the cached system prompt.
+        """
         assert stage in ("prefilter", "rank")
         self.stage = stage
+        self.preamble = preamble
         self.profile = profile
         self.store = store
         ai = profile.ai
@@ -104,7 +118,7 @@ class AIStage:
             model=self.model,
             max_tokens=4000,
             system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": job_prompt(job, fr, self.max_chars)}],
+            messages=[{"role": "user", "content": self.preamble + job_prompt(job, fr, self.max_chars)}],
             output_format=self.schema,
             thinking={"type": "adaptive"},
             output_config={"effort": self.effort},
@@ -141,7 +155,7 @@ class AIStage:
     def _existing(self, force: bool) -> dict[str, AIVerdict]:
         if force:
             return {}
-        stored = self.store.verdicts(self.stage, PROMPT_VERSION)
+        stored = self.store.verdicts(self.stage, COMPATIBLE_PROMPT_VERSIONS)
         return {k: v for k, v in stored.items() if v.model == self.model}
 
     # ---------------------------------------------------------------- batches
@@ -151,7 +165,7 @@ class AIStage:
             model=self.model,
             max_tokens=4000,
             system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": job_prompt(job, fr, self.max_chars)}],
+            messages=[{"role": "user", "content": self.preamble + job_prompt(job, fr, self.max_chars)}],
             thinking={"type": "adaptive"},
             output_config={"format": output_schema(self.schema), "effort": self.effort},
         )
@@ -321,7 +335,7 @@ class RefineStage:
         """
         if force:
             return list(jobs), []
-        placed = self.store.verdicts("refine", PROMPT_VERSION)
+        placed = self.store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
         todo = [j for j in jobs if j.id not in placed]
         anchors = [(j, placed[j.id]) for j in jobs if j.id in placed]
         anchors.sort(key=lambda pair: (pair[1].position is None, pair[1].position or 0, -pair[1].score))

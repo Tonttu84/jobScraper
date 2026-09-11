@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -153,6 +154,39 @@ def rank_queue(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dic
                       and v.job_id in by_id and v.job_id not in rank),
                      key=lambda v: (-v.score, v.job_id))
     return [by_id[v.job_id] for v in ordered]
+
+
+#: Where the reference postings sent with every rank batch should sit: one clear "apply this
+#: week", one middling fit, one near-miss. Three is enough to fix a scale and cheap to send.
+RANK_ANCHOR_TARGETS = (85, 65, 40)
+
+
+def rank_anchors(jobs: Iterable[Job], ranked: dict[str, AIVerdict],
+                 targets: tuple[int, ...] = RANK_ANCHOR_TARGETS) -> list[tuple[Job, AIVerdict]]:
+    """Already-ranked postings nearest each target score, one per target, in target order.
+
+    The rank stage reads a queue in windows, and a window is an arbitrary slice: without a fixed
+    reference a weak window talks itself up and a strong one is marked down to fill the range,
+    which is exactly the noise the stop rule then reads as movement. These are the fixed points
+    the prompt scores against.
+
+    Only jobs still in ``jobs`` qualify — a verdict whose job has aged out of the day window is a
+    posting the ranker can no longer be shown. Ties go to the higher score, then the job id, so
+    the same round picks the same anchors. Fewer ranked jobs than targets returns fewer anchors,
+    and an unranked profile returns none.
+    """
+    by_id = {j.id: j for j in jobs}
+    pool = [(by_id[v.job_id], v) for v in ranked.values() if v.job_id in by_id]
+    picked: list[tuple[Job, AIVerdict]] = []
+    used: set[str] = set()
+    for target in targets:
+        left = [pair for pair in pool if pair[1].job_id not in used]
+        if not left:
+            break
+        job, verdict = min(left, key=lambda p: (abs(p[1].score - target), -p[1].score, p[1].job_id))
+        used.add(verdict.job_id)
+        picked.append((job, verdict))
+    return picked
 
 
 def effective_top(jobs: list[Job], filters: dict[str, FilterResult], rank: dict[str, AIVerdict],

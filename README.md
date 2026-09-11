@@ -162,8 +162,9 @@ session, with the same prompts and the same stored verdicts:
 uv run python scripts/ai_batches.py export prefilter        # data/exports/ai/prefilter/{system.txt,chunk-NN.json}
 # ask one Sonnet subagent per chunk to write data/exports/ai/prefilter/verdicts/chunk-NN.jsonl
 uv run python scripts/ai_batches.py import prefilter
-uv run python scripts/ai_batches.py export rank --top 60    # top prefilter survivors, full descriptions + CV
-# ask one Opus subagent per chunk to write data/exports/ai/rank/verdicts/chunk-NN.jsonl
+uv run python scripts/ai_batches.py export rank --top 60    # one window of the queue, full descriptions + CV
+# ask one Opus subagent per chunk: read system.txt, then anchors.txt if it is there, then the
+# chunk, and write data/exports/ai/rank/verdicts/chunk-NN.jsonl
 uv run python scripts/ai_batches.py import rank
 uv run jobscraper report
 ```
@@ -172,6 +173,13 @@ Every action takes `--profile NAME` (or `$JOBSCRAPER_PROFILE`), like the CLI: co
 exports all move under that candidate's directories. `export` also takes `--sample N`, which keeps
 every N-th candidate (positions 0, N, 2N, … after `--top`), so `export prefilter --sample 20` is a
 "1 in 20" sanity run through the whole loop before committing a few hundred postings to it.
+
+A rank export is one window of a queue, not a shortlist, so the ranker must not grade its members
+against each other: `data/exports/ai/rank/anchors.txt` holds three postings this candidate's
+ranker already scored (around 85, 65 and 40), and every agent of the round reads it after
+`system.txt` and before its chunk. The anchors are context, not work — they are already scored,
+and no verdict line is written for them. The file is absent on a profile's very first round, and
+`export rank` deletes a stale one when nothing is ranked any more.
 
 Each verdict line is `{"job_id", "relevant", "score", "language_ok", "seniority_ok", "location_ok",
 "summary", "concerns"[, "why_apply"]}`. Import validates against the stage schema and stores the rows

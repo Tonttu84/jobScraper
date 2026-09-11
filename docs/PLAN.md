@@ -291,6 +291,13 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
        the Sonnet-ordered queue is far from exhausted. Fixed the same day: `export rank` now
        caps the window to the remaining budget (it had exported 30 with 15 left; the budget was
        only enforced at import).
+     - [x] Absolute scale, 2026-09-11: batch-relative scoring corrupts the stop rule — a weak
+       window inflates a false entrant into the top 20, a strong one hides real ones — so the rank
+       prompt now carries a paragraph forbidding it and every batch is prefixed with three fixed
+       reference scores (`report.rank_anchors`, targets 85/65/40, written to `anchors.txt` on the
+       subagent path). Verdicts made under `2026-09-09.1` stay current through
+       `COMPATIBLE_PROMPT_VERSIONS` by the owner's decision: no re-ranking, the old verdicts age
+       out with their jobs.
 3. **Coverage gate to 97%** (adapter error branches).
 4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:

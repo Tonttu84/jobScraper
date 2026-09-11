@@ -229,6 +229,67 @@ def test_export_rank_skips_dropped_and_already_ranked_jobs(ranked, data_dir, mon
     assert "0 jobs" in capsys.readouterr().out
 
 
+def test_a_verdict_from_a_compatible_prompt_version_still_counts_as_ranked(ranked, data_dir,
+                                                                           monkeypatch, capsys):
+    """Owner, 2026-09-11: a wording change that keeps the scale does not re-queue the whole list —
+    the old verdicts stay in use until their jobs age out."""
+    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
+
+    older = next(v for v in COMPATIBLE_PROMPT_VERSIONS if v != PROMPT_VERSION)
+    store = store_mod.Store()
+    try:
+        store.save_verdict(AIVerdict(job_id=ranked[0].id, stage="rank",
+                                     model="claude-opus-5 (subagent)", prompt_version=older,
+                                     relevant=True, score=88, language_ok=True, seniority_ok=True,
+                                     location_ok=True, summary="ranked before the wording change"))
+    finally:
+        store.close()
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    assert _chunk_entries(data_dir / "exports" / "ai" / "rank") == []
+    assert "0 jobs" in capsys.readouterr().out
+
+
+def test_export_rank_writes_the_reference_scores_next_to_the_system_prompt(ranked, data_dir,
+                                                                          monkeypatch, capsys):
+    """The window is a slice of a queue; the anchors are what keeps every slice on one scale."""
+    already = _job(3, "Junior Kotlin Developer", LONG_DESCRIPTION)
+    _seed([already], ["keep"])
+    store = store_mod.Store()
+    try:
+        store.save_verdict(AIVerdict(job_id=already.id, stage="prefilter",
+                                     model="claude-sonnet-5 (subagent)", prompt_version=PROMPT_VERSION,
+                                     relevant=True, score=90, language_ok=True, seniority_ok=True,
+                                     location_ok=True, summary="screened"))
+        store.save_verdict(AIVerdict(job_id=already.id, stage="rank", model="claude-opus-5 (subagent)",
+                                     prompt_version=PROMPT_VERSION, relevant=True, score=86,
+                                     language_ok=True, seniority_ok=True, location_ok=True,
+                                     summary="Strong Kotlin fit."))
+    finally:
+        store.close()
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    anchors = (data_dir / "exports" / "ai" / "rank" / "anchors.txt").read_text(encoding="utf-8")
+    assert anchors.startswith("REFERENCE SCORES (fixed;")
+    assert "- Junior Kotlin Developer · Acme · FI · score 86 · Strong Kotlin fit." in anchors
+    assert [e["job_id"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")] == [ranked[0].id]
+    assert "+ anchors.txt (1 reference scores)" in capsys.readouterr().out
+
+
+def test_export_rank_without_a_single_ranked_job_removes_a_stale_anchor_file(ranked, data_dir,
+                                                                            monkeypatch, capsys):
+    out = data_dir / "exports" / "ai" / "rank"
+    (out / "verdicts").mkdir(parents=True, exist_ok=True)
+    (out / "anchors.txt").write_text("REFERENCE SCORES from a previous profile\n", encoding="utf-8")
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    assert not (out / "anchors.txt").exists()
+    assert "no reference scores yet" in capsys.readouterr().out
+
+
 # ------------------------------------------------------- LinkedIn description hydration
 # The linkedin adapter runs with `fetch_descriptions: false` (slow + rate-limited), so its rows
 # are title-only. Ranking looks at ~60 jobs, so those few are topped up from the guest page.

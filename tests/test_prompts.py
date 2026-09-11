@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from conftest import fixture_json
 
-from jobscraper.ai.prompts import system_prompt
+from jobscraper.ai.prompts import rank_anchor_block, system_prompt
 from jobscraper.config import (
     LanguagePolicy,
     LocationPolicy,
@@ -16,6 +16,7 @@ from jobscraper.config import (
     PromptPolicy,
     SeniorityPolicy,
 )
+from jobscraper.models import AIVerdict, Job
 
 # "internship" is deliberately absent: it survives in the generic employment-type bullet,
 # which is about contract shape, not about seniority.
@@ -102,8 +103,11 @@ def test_no_weak_languages_means_no_weak_line():
 
 # --- deal-breakers -------------------------------------------------------------------------
 
-#: The exact prompts a profile without deal-breakers produced before the feature existed.
-#: Regenerating this fixture invalidates every cached verdict, so it has to be a deliberate act.
+#: The exact prompts a profile without deal-breakers produces. Regenerating this fixture is a
+#: deliberate act: it means the wording moved, which is at least a PROMPT_VERSION bump and — when
+#: the scoring scale moved with it — a reset of COMPATIBLE_PROMPT_VERSIONS that re-scores
+#: everything. Last regenerated 2026-09-11 for the rank stage's absolute-scale paragraph, which
+#: pins the same bands down harder instead of changing them, so the old verdicts stayed in use.
 BASELINE_PROFILE = dict(name="Nobody", summary="Someone who writes software.", cv_text="A CV.")
 
 DEAL_BREAKERS = [
@@ -153,3 +157,56 @@ def test_blank_deal_breakers_are_ignored():
     text = system_prompt("prefilter", profile)
     assert "- on-call rotations" in text
     assert "- \n" not in text and "-   \n" not in text
+
+
+# --- the absolute scale ---------------------------------------------------------------------
+# Owner, 2026-09-11: a rank window is a slice of a queue, not a shortlist. Scoring it relatively
+# corrupts the stop rule — a weak window inflates a false entrant, a strong one hides real ones.
+
+
+def test_the_rank_prompt_scores_on_a_fixed_scale(settings):
+    rank = system_prompt("rank", settings.profile)
+    assert "Score on a fixed scale, not against the other postings you see." in rank
+    assert "A slice of weak postings has no 80s; a slice of strong ones may have ten." in rank
+    assert "When REFERENCE SCORES are given" in rank
+
+
+def test_the_refine_prompt_keeps_the_fixed_scale_head_and_its_own_tail(settings):
+    """Both stages share the head on purpose: refine *is* the "separate, later pass"."""
+    refine = system_prompt("refine", settings.profile)
+    assert refine.index("Score on a fixed scale") < refine.index("REFINEMENT PASS")
+    assert refine.rstrip().endswith("not a description of the job.")
+
+
+def _anchor_job(source_id: str, title: str, **kw) -> Job:
+    base = {"source": "teamtailor", "source_id": source_id,
+            "url": f"https://jobs.example.test/{source_id}", "title": title,
+            "company": "Example Oy", "location_raw": "Helsinki, Finland", "country": "FI"}
+    base.update(kw)
+    return Job(**base)
+
+
+def _anchor_verdict(job: Job, score: int, summary: str) -> AIVerdict:
+    return AIVerdict(job_id=job.id, stage="rank", model="claude-opus-5", prompt_version="v1",
+                     relevant=True, score=score, language_ok=True, seniority_ok=True,
+                     location_ok=True, summary=summary)
+
+
+def test_no_anchors_means_no_reference_block():
+    assert rank_anchor_block([]) == ""
+
+
+def test_the_reference_block_is_one_line_per_anchor():
+    strong = _anchor_job("a", "Junior Go Developer")
+    weak = _anchor_job("b", "Salesforce Consultant", company=None, location_raw=None, country=None)
+    block = rank_anchor_block([(strong, _anchor_verdict(strong, 85, "Core stack, junior level.")),
+                               (weak, _anchor_verdict(weak, 38, "Different job entirely."))])
+    assert block == (
+        "REFERENCE SCORES (fixed; not part of your task — do not return these)\n"
+        "Earlier postings scored for this candidate, so every batch is graded on the same scale. "
+        "Score\nthe new postings against this scale, not against each other.\n"
+        "- Junior Go Developer · Example Oy · Helsinki, Finland · score 85 · "
+        "Core stack, junior level.\n"
+        "- Salesforce Consultant · unknown · unknown · score 38 · Different job entirely.\n"
+        "\n"
+    )

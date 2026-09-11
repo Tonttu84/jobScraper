@@ -119,7 +119,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jobscraper import config  # noqa: E402
 from jobscraper.ai.client import refine_verdicts  # noqa: E402
-from jobscraper.ai.prompts import PROMPT_VERSION, job_prompt, refine_user_prompt, system_prompt  # noqa: E402
+from jobscraper.ai.prompts import (  # noqa: E402
+    COMPATIBLE_PROMPT_VERSIONS,
+    PROMPT_VERSION,
+    job_prompt,
+    rank_anchor_block,
+    refine_user_prompt,
+    system_prompt,
+)
 from jobscraper.ai.schemas import Ranking, Refinement, Screening  # noqa: E402
 from jobscraper.config import load_settings, paths  # noqa: E402
 from jobscraper.http import Http  # noqa: E402
@@ -129,6 +136,7 @@ from jobscraper.report import (  # noqa: E402
     effective_top,
     entered_top,
     miss_run,
+    rank_anchors,
     rank_queue,
     refine_shortlist,
 )
@@ -159,7 +167,7 @@ def _survivors(store: Store, settings, filters: dict) -> list[AIVerdict]:
 
     Best score first; the job id breaks ties so a position is the same on every run.
     """
-    pre = store.verdicts("prefilter", PROMPT_VERSION)
+    pre = store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS)
     min_score = settings.profile.ai.prefilter_min_score
     alive = {jid for jid, f in filters.items() if f.status != "drop"}
     return sorted((v for v in pre.values() if v.relevant and v.score >= min_score and v.job_id in alive),
@@ -178,7 +186,7 @@ def hydrate_top_linkedin(top: int, max_fetch: int) -> None:
     store = Store()
     jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
     survivors = _survivors(store, settings, store.filter_results())
-    ranks = store.verdicts("rank", PROMPT_VERSION)
+    ranks = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
     log = _hydration_log()
     http = Http()
     hydrated: list[str] = []
@@ -223,8 +231,8 @@ def boost() -> None:
         print(f"no hydration log yet ({log}); run `hydrate linkedin` first")
         return
     store = Store()
-    pre = store.verdicts("prefilter", PROMPT_VERSION)
-    ranks = store.verdicts("rank", PROMPT_VERSION)
+    pre = store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS)
+    ranks = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
     rows = sorted(entries.values(), key=lambda r: r["position_before"])
 
     def cell(before, after) -> str:
@@ -299,7 +307,7 @@ def export(stage: str, chunk: int, max_chars: int, export_all: bool = False, sam
     filters = store.filter_results()
     # Refill semantics: rule-filter survivors that don't already carry a prefilter verdict under
     # the current prompt version, so a hydration round only re-screens the jobs it cleared.
-    already = set() if export_all else set(store.verdicts("prefilter", PROMPT_VERSION))
+    already = set() if export_all else set(store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS))
     todo = [j for j in jobs.values()
             if filters.get(j.id) and filters[j.id].status in ("keep", "review") and j.id not in already]
     todo.sort(key=lambda j: (j.source, j.title.lower()))
@@ -366,8 +374,8 @@ def _print_rank_stop(reason: str, misses: int, newly: int, ai) -> None:
 def _rank_top_ids(store: Store, settings, filters: dict) -> list[str]:
     """The effective top ``ai.refine_top_n`` as it stands in the database right now."""
     ids, _edge = effective_top(store.jobs(seen_within_days=30), filters,
-                               store.verdicts("rank", PROMPT_VERSION),
-                               store.verdicts("refine", PROMPT_VERSION),
+                               store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
+                               store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS),
                                top=settings.profile.ai.refine_top_n or RANK_TOP_WATCH)
     return ids
 
@@ -386,9 +394,10 @@ def export_rank(chunk: int, max_chars: int, top: int | None, window: int | None,
     ai = settings.profile.ai
     store = Store()
     filters = store.filter_results()
-    ranked = store.verdicts("rank", PROMPT_VERSION)
-    queue = rank_queue(store.jobs(seen_within_days=30), filters,
-                       store.verdicts("prefilter", PROMPT_VERSION), ranked,
+    jobs = store.jobs(seen_within_days=30)
+    ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
+    queue = rank_queue(jobs, filters,
+                       store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS), ranked,
                        min_score=ai.prefilter_min_score)
     state = _read_rank_state()
     if reset_round or not state:
@@ -416,8 +425,20 @@ def export_rank(chunk: int, max_chars: int, top: int | None, window: int | None,
     # leaving them behind would have the next import read them again as unknown job ids.
     for old in (_out_dir("rank") / "verdicts").glob("chunk-*.jsonl"):
         old.unlink()
+    # Every window of the round is graded against the same fixed reference scores, so a slice of
+    # weak postings cannot talk itself into an 80 and a strong slice is not flattened to fill the
+    # range. The agents read this file after system.txt and never answer for the postings in it.
+    anchors = rank_anchors(jobs, ranked)
+    anchors_file = _out_dir("rank") / "anchors.txt"
+    if anchors:
+        anchors_file.write_text(rank_anchor_block(anchors), encoding="utf-8")
+    elif anchors_file.exists():
+        anchors_file.unlink()  # a previous round's scale is not this profile's scale
+    anchor_note = (f" + anchors.txt ({len(anchors)} reference scores)" if anchors
+                   else " + no reference scores yet")
     _write_chunks("rank", todo, filters, chunk, max_chars, settings.profile, candidates, sample,
-                  note=f" (window {done + 1} of this round, {len(queue)} in the queue)")
+                  note=f" (window {done + 1} of this round, {len(queue)} in the queue)"
+                       f"{anchor_note}")
     state["exported"] = [j.id for j in todo]
     state["top_before"] = _rank_top_ids(store, settings, filters)
     _write_rank_state(state)
@@ -435,8 +456,8 @@ def _record_rank_window(store: Store, imported: list[str]) -> None:
     state["exported"], state["top_before"] = [], after
     _write_rank_state(state)
     queue = rank_queue(store.jobs(seen_within_days=30), filters,
-                       store.verdicts("prefilter", PROMPT_VERSION),
-                       store.verdicts("rank", PROMPT_VERSION),
+                       store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS),
+                       store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
                        min_score=settings.profile.ai.prefilter_min_score)
     reason, misses, newly = _rank_stop(state, len(queue), settings.profile.ai)
     state["stop_reason"] = reason
@@ -463,9 +484,9 @@ def export_refine(top: int | None, max_chars: int, force: bool = False) -> None:
     store = Store()
     filters = store.filter_results()
     n = top or settings.profile.ai.refine_top_n
-    placed = store.verdicts("refine", PROMPT_VERSION)
+    placed = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
     shortlist, _offset = refine_shortlist(store.jobs(seen_within_days=30), filters,
-                                          store.verdicts("rank", PROMPT_VERSION), placed,
+                                          store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS), placed,
                                           top=n, first_pass=top or settings.profile.ai.refine_first_pass)
     refined = {} if force else placed
     todo = [j for j in shortlist if j.id not in refined]
@@ -593,7 +614,7 @@ def stability_export(top: int, chunk: int, max_chars: int, seed: int) -> None:
     store = Store()
     jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
     filters = store.filter_results()
-    scored = sorted((v for v in store.verdicts("rank", PROMPT_VERSION).values() if v.job_id in jobs),
+    scored = sorted((v for v in store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS).values() if v.job_id in jobs),
                     key=lambda v: (-v.score, v.job_id))[:top]
     todo = [jobs[v.job_id] for v in scored]
     root = _stability_dir()
@@ -703,7 +724,7 @@ def stability_compare(top_n: int = 10) -> None:
     b, bad_b = _read_run(root / "run-b")
     store = Store()
     titles = {j.id: j.title for j in store.jobs()}
-    original = {jid: v.score for jid, v in store.verdicts("rank", PROMPT_VERSION).items()}
+    original = {jid: v.score for jid, v in store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS).items()}
     both = sorted(set(a) & set(b), key=lambda jid: (-original.get(jid, -1), jid))
 
     md = ["# Ranking stability", "",
@@ -713,7 +734,7 @@ def stability_compare(top_n: int = 10) -> None:
         md += [f"Unparsable verdict lines: run-a {bad_a}, run-b {bad_b}.", ""]
     # The refine pass saw all these jobs in one request, so its score is the drift-free reference
     # to read the two chunked runs against; the column only appears once that pass has run.
-    refined = {jid: v.score for jid, v in store.verdicts("refine", PROMPT_VERSION).items()}
+    refined = {jid: v.score for jid, v in store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS).items()}
     head, rule = (" refine |", " ---: |") if refined else ("", "")
     md += [f"| job | title | orig |{head} A | B | \\|A-B\\| | flip |",
            f"| --- | --- | ---: |{rule} ---: | ---: | ---: | --- |"]

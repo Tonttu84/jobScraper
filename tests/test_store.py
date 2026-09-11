@@ -146,6 +146,24 @@ def test_verdicts_return_the_latest_per_job_and_stage(store):
     assert store.verdicts("rank", "v1") == {}
 
 
+def test_verdicts_accept_several_compatible_prompt_versions(store):
+    """A wording change that keeps the scoring scale must not hide the verdicts before it."""
+    now = datetime.now(UTC)
+    old = make_verdict("a", prompt_version="v1", score=40, created_at=now - timedelta(hours=2))
+    new = make_verdict("a", prompt_version="v2", score=90, created_at=now)
+    other = make_verdict("b", prompt_version="v3", score=55, created_at=now)
+    for v in (old, new, other):
+        store.save_verdict(v)
+
+    both = store.verdicts("prefilter", ("v2", "v1"))
+    assert set(both) == {"a"}          # "v3" is not compatible: job b is invisible
+    assert both["a"].score == 90       # latest wins across the compatible versions
+
+    assert store.verdicts("prefilter", ("v1",))["a"].score == 40
+    assert store.verdicts("prefilter", "v1")["a"].score == 40   # a bare string is unchanged
+    assert store.verdicts("prefilter", ("v9", "v8")) == {}
+
+
 def test_save_verdict_replaces_the_same_key(store):
     store.save_verdict(make_verdict("a", score=10))
     store.save_verdict(make_verdict("a", score=55, summary="Second opinion."))

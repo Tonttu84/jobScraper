@@ -168,6 +168,34 @@ def test_rank_stage_uses_ranking_schema(settings, tmp_path, monkeypatch):
     assert st.schema is Ranking and st.effort == "high" and st.model == settings.profile.ai.rank_model
 
 
+def test_the_preamble_rides_in_front_of_the_job_prompt(settings, tmp_path, monkeypatch):
+    """Reference scores are part of the user message, not the cached system prompt: they change
+    every round, and the system prompt is what the cache is keyed on."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    store = Store(tmp_path / "p.db")
+    calls: dict = {}
+
+    def fake_parse(**kw):
+        calls.update(kw)
+        return _response(Ranking(relevant=True, score=81, language_ok=True, seniority_ok=True,
+                                 location_ok=True, summary="Strong junior Go fit."))
+
+    job = _job()
+    plain = AIStage("rank", settings.profile, store)
+    assert plain.preamble == ""
+    monkeypatch.setattr(plain.client.messages, "parse", fake_parse)
+    plain.judge(job, None)
+    assert calls["messages"][0]["content"] == job_prompt(job, None, plain.max_chars)
+
+    anchored = AIStage("rank", settings.profile, store,
+                       preamble="REFERENCE SCORES (fixed)\n- something · score 85 · why\n\n")
+    monkeypatch.setattr(anchored.client.messages, "parse", fake_parse)
+    anchored.judge(job, None)
+    content = calls["messages"][0]["content"]
+    assert content.startswith("REFERENCE SCORES")
+    assert content.endswith(job_prompt(job, None, anchored.max_chars))
+
+
 def test_estimate_cost():
     from jobscraper.models import AIVerdict
 
@@ -276,6 +304,15 @@ def test_run_batch_request_shape(stage, batches):
     assert cfg["effort"] == "low"
     assert cfg["format"]["type"] == "json_schema"
     assert set(cfg["format"]["schema"]["properties"]) >= {"relevant", "score", "summary"}
+
+
+def test_run_batch_carries_the_preamble_too(stage, batches):
+    """A Message Batch is the same request as judge(), so the reference block rides along."""
+    stage.preamble = "REFERENCE SCORES (fixed)\n- something · score 85 · why\n\n"
+    job = _job(source_id="1")
+    stage.run_batch([job], {})
+    content = batches.submitted[0][0]["params"]["messages"][0]["content"]
+    assert content == stage.preamble + job_prompt(job, None, stage.max_chars)
 
 
 def test_run_batch_stores_verdicts_marked_as_batch(stage, batches):
