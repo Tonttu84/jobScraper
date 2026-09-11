@@ -692,3 +692,27 @@ def test_the_page_is_served_with_no_cache_so_a_deploy_reaches_open_browsers(seed
     assert resp.headers["cache-control"] == "no-cache"
     api = client.get("/api/jobs?limit=1")
     assert api.headers["cache-control"] == "no-store"
+
+
+def test_the_rank_badge_follows_the_live_order_not_a_stale_report(tmp_path):
+    """A report written before a refine pass (or before a scoring change) stores positions that no
+    longer match the order the page shows; the badge is numbered from the live order instead."""
+    db = tmp_path / "t.db"
+    jobs = _seed(db)
+    store = Store(db)
+    store.save_verdict(make_verdict(jobs["py"].id, "rank", 85))
+    snap = build_snapshot(list(store.jobs()), store.filter_results(),
+                          store.verdicts("prefilter", PROMPT_VERSION), store.verdicts("rank", PROMPT_VERSION),
+                          days=30, cost={}, prompt_version=PROMPT_VERSION)
+    store.save_report(snap)
+    stored = {i.job_id: i.position for i in snap.items if i.section == "ranked"}
+    assert stored == {jobs["web"].id: 1, jobs["py"].id: 2}
+    # a refine pass after the report flips them: web (91 + 60) / 2 = 76, py (85 + 90) / 2 = 88
+    # (two shared jobs are too few to calibrate, so the raw refine scores count as they are)
+    store.save_verdict(make_verdict(jobs["web"].id, "refine", 60, position=2, model="claude-fable-5-1"))
+    store.save_verdict(make_verdict(jobs["py"].id, "refine", 90, position=1, model="claude-fable-5-1"))
+    store.close()
+    with TestClient(create_app(db)) as client:
+        items = client.get("/api/jobs").json()["items"]
+    ranked = [(i["id"], i["position"], i["score"]) for i in items if i["section"] == "ranked"]
+    assert ranked == [(jobs["py"].id, 1, 88), (jobs["web"].id, 2, 76)]

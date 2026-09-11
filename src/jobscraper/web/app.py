@@ -398,6 +398,14 @@ def _sorted_views(view: View) -> list[JobView]:
     ]
     out.sort(key=lambda j: (j.score is None, -(j.score or 0),
                             SECTION_ORDER.get(j.section or "", 9), j.position or 0))
+    # The "#N" badge is numbered from this live order, not from the stored report: a refine pass
+    # or a scoring change after the report was written would otherwise leave badges that
+    # contradict the order on the page (seen 2026-09-11: unrefined jobs at #2 above refined #40s).
+    n = 0
+    for j in out:
+        if j.section == "ranked":
+            n += 1
+            j.position = n
     return out
 
 
