@@ -282,6 +282,11 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
      everything, huge pools are bounded. Subagent path: `export rank` becomes one window per
      export and reports whether the stop rule is met. Loop shape (owner):
      `while (top20 not refined) { while (top20 not ranked) [rank]; [refine] }`.
+     - [x] Built 2026-09-11: `ai.rank_window` 15, `ai.rank_patience` 30, `ai.rank_budget` 90,
+       `ai.rank_top_n` re-documented as the first window's depth; `jobscraper rank` loops windows,
+       `run` re-ranks when the refine loop lowered the top-20 boundary; subagent path keeps the
+       round's memory in `data/exports/ai/rank/state.json` (`export rank --reset-round` starts a
+       new round). Not yet run on real data.
 3. **Coverage gate to 97%** (adapter error branches).
 4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:

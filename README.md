@@ -85,7 +85,9 @@ uv run jobscraper scrape linkedin indeed
 uv run jobscraper filter --days 14
 uv run jobscraper prefilter --max-jobs 50     # try the Sonnet pass on a sample first
 uv run jobscraper prefilter --batch           # same verdicts at half price via the Message Batches API (async; --no-wait submits and exits, re-run to collect)
-uv run jobscraper rank --top 30
+uv run jobscraper rank                  # Opus, in windows of 15 until the top 20 stops gaining entrants (or the round budget is spent)
+uv run jobscraper rank --top 30         # or exactly the next 30 of the queue
+uv run jobscraper refine                # Fable over the effective top 20 (25 on the first pass), repeated until it is fully refined
 uv run jobscraper report
 uv run jobscraper diff                  # what changed since the previous report — see docs/SCHEDULING.md
 uv run jobscraper stats
