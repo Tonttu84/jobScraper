@@ -225,9 +225,20 @@ ai:
   rank_top_n: 60            # how many prefilter survivors Opus ranks in detail
   # The ranker scores each job alone inside a chunk, so its score carries chunk noise (measured
   # 2026-09-10: median drift 3 points, p90 8, top-10 overlap 0.54 between two runs). `jobscraper
-  # refine` sends the best rank_top jobs in one request so they are judged against each other,
-  # and the report orders by the mean of the two passes. 0 turns the stage off.
+  # refine` sends the best jobs in one request so they are judged against each other, and the
+  # report orders by the mean of the two passes. 0 turns the stage off.
+  # The shortlist is picked by that mean, not by the rank score, and the stage repeats until
+  # every one of the best refine_top_n jobs has been through both passes: a refined job sits at
+  # the average of two samples while an unrefined neighbour still carries its single, luckier
+  # rank score, so the window moves as soon as the first answers come back. A run of jobs tied
+  # with the last one in the window is refined whole: the job id that would split it says
+  # nothing about the job.
   refine_top_n: 20
+  # The opening request, before anything has been refined, reaches deeper than refine_top_n —
+  # the extra jobs are cheap here and save a whole second round for the ones the reshuffle lifts.
+  refine_first_pass: 25
+  # How many times `jobscraper refine` may rebuild the shortlist and score whatever is new in it.
+  refine_max_passes: 5
   concurrency: 4
   max_description_chars: 6000
   # Batching sends the whole prefilter as one Message Batch: the same verdicts at half price,

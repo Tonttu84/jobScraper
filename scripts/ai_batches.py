@@ -4,7 +4,7 @@
     python scripts/ai_batches.py export prefilter [--chunk 100] [--max-chars 1500] [--all] [--sample 20]
     python scripts/ai_batches.py import prefilter|rank|refine
     python scripts/ai_batches.py export rank [--top 60] [--chunk 15] [--max-fetch 60] [--sample 20]
-    python scripts/ai_batches.py export refine [--top 20] [--max-chars N] [--force] [--force]
+    python scripts/ai_batches.py export refine [--top N] [--max-chars N] [--force]
     python scripts/ai_batches.py boost
     python scripts/ai_batches.py stability export [--top 30] [--chunk 15] [--seed 1] [--max-chars N]
     python scripts/ai_batches.py stability compare
@@ -17,6 +17,10 @@ Intended sequence for one round:
 ``export rank`` → (Opus subagent) → ``import rank`` → ``export refine`` → (Fable subagent) →
 ``import refine`` → ``boost`` → ``jobscraper report``.
 
+The refine step is a loop, not one step: repeat ``export refine`` → (Fable subagent) →
+``import refine`` until the export says *top N fully refined*. Each round's answers move the
+shortlist (see below), so the round after it asks about whatever moved into the top N.
+
 Export writes ``data/exports/ai/<stage>/system.txt`` (the stage's system prompt) and
 ``chunk-NN.json`` (a JSON list of ``{"job_id", "prompt"}`` built with the pipeline's own
 ``job_prompt``). A subagent answers each chunk with ``verdicts/chunk-NN.jsonl`` (one JSON object per
@@ -25,18 +29,29 @@ schemas and stores them as ``AIVerdict`` rows, so ``jobscraper report`` renders 
 
 ``refine`` is the odd one out: it is a single request, not a chunked one. ``export refine`` writes
 ``refine/system.txt`` and one ``refine/batch.json`` — ``{"prompt", "job_ids", "anchors"}`` — over the
-shortlist (the best ``--top`` jobs by rank score). The subagent answers with one
+shortlist. The subagent answers with one
 ``refine/verdicts/batch.json``, a JSON object ``{"items": [{job_id, position, score, summary}, ...]}``
 matching the ``Refinement`` schema, and ``import refine`` stores it exactly as the API path would.
+
+The shortlist is the best ``ai.refine_top_n`` jobs by *effective* score — the mean of the two
+passes, with the refine scale calibrated onto the rank one, which is what the report orders by —
+and not the best by rank score. A refined job sits at the average of two samples while an
+unrefined neighbour still carries its single, selection-inflated rank score, so the window moves
+as soon as answers come in: the jobs this round marked down drop out and their replacements are
+what the next export asks about. Before anything has been refined the window is the wider
+``ai.refine_first_pass``; ``--top`` overrides both widths. The width is a lower bound: a run of
+equal scores at the boundary goes in whole, because the job id that would split it says nothing
+about the job.
 
 ``export refine`` is incremental: shortlist members that already carry a refine verdict under the
 current prompt version are *not* re-scored. They go into the prompt as fixed anchors — one line
 each with the score and position they already have — and their ids go into ``anchors``;
 ``job_ids`` holds only the new ones, which is what the subagent answers for and what
-``import refine`` validates against. So a second round after a scrape pays for the jobs that
-joined the shortlist, not for the whole list again. The printed line says how many are new and how
-many are anchored; when nothing is new the export is skipped, and ``--force`` re-scores the whole
-shortlist against itself (useful for measuring drift, or after a prompt change).
+``import refine`` validates against. So a second round pays for the jobs that joined the
+shortlist, not for the whole list again. The printed line says how many are new and how many are
+anchored; when nothing is new the export is skipped and says *top N fully refined*, which is the
+signal to stop repeating the loop. ``--force`` re-scores the whole shortlist against itself
+(useful for measuring drift, or after a prompt change).
 
 ``export prefilter`` is refill-aware: it skips jobs that already carry a prefilter verdict under
 the current prompt version, so after a hydration round only the cleared rows go back to Sonnet
@@ -86,6 +101,7 @@ from jobscraper.ai.schemas import Ranking, Refinement, Screening  # noqa: E402
 from jobscraper.config import load_settings, paths  # noqa: E402
 from jobscraper.http import Http  # noqa: E402
 from jobscraper.models import AIVerdict, Job  # noqa: E402
+from jobscraper.report import refine_shortlist  # noqa: E402
 from jobscraper.sources import linkedin  # noqa: E402
 from jobscraper.store import Store  # noqa: E402
 
@@ -267,37 +283,37 @@ def export(stage: str, chunk: int, max_chars: int, top: int, max_fetch: int = 0,
     print(f"{stage}: {len(todo)} jobs{sampled} → {n} chunks of ≤{chunk} in {out}")
 
 
-def _shortlist(store: Store, filters: dict, top: int) -> list[Job]:
-    """The best ``top`` ranked jobs the rule filter still keeps — the refine stage's input."""
-    jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
-    alive = {jid for jid, f in filters.items() if f.status != "drop"}
-    ranked = sorted((v for v in store.verdicts("rank", PROMPT_VERSION).values()
-                     if v.job_id in jobs and v.job_id in alive),
-                    key=lambda v: (-v.score, v.job_id))[:top]
-    return [jobs[v.job_id] for v in ranked]
-
-
-def export_refine(top: int, max_chars: int, force: bool = False) -> None:
+def export_refine(top: int | None, max_chars: int, force: bool = False) -> None:
     """Write the shortlist as ONE prompt: the refine pass is a single request, not chunks.
+
+    The shortlist is the best ``ai.refine_top_n`` jobs by *effective* score — the mean of the two
+    passes that the report orders by — so a job the refine pass marked down leaves it and the
+    unrefined neighbour that took its place is what the next export asks about. Before anything
+    has been refined the window is the wider ``ai.refine_first_pass``. ``--top`` overrides both.
 
     Incremental, like the API path: a shortlisted job that already carries a refine verdict under
     the current prompt version is not re-scored, it goes into the prompt as a fixed anchor (one
     line: title, company, its score and position) and its id lands in ``anchors``. ``job_ids``
-    holds the new ones — the ones the subagent has to answer for. When nothing is new there is
-    nothing to compare and the export is skipped; ``--force`` re-scores the whole shortlist
-    against itself, e.g. to measure drift.
+    holds the new ones — the ones the subagent has to answer for. When nothing is new the top N
+    is fully refined and the export is skipped; ``--force`` re-scores the whole shortlist against
+    itself, e.g. to measure drift.
     """
     settings = load_settings()
     store = Store()
     filters = store.filter_results()
-    shortlist = _shortlist(store, filters, top)
-    refined = {} if force else store.verdicts("refine", PROMPT_VERSION)
+    n = top or settings.profile.ai.refine_top_n
+    placed = store.verdicts("refine", PROMPT_VERSION)
+    shortlist, _offset = refine_shortlist(store.jobs(seen_within_days=30), filters,
+                                          store.verdicts("rank", PROMPT_VERSION), placed,
+                                          top=n, first_pass=top or settings.profile.ai.refine_first_pass)
+    refined = {} if force else placed
     todo = [j for j in shortlist if j.id not in refined]
     anchors = [(j, refined[j.id]) for j in shortlist if j.id in refined]
     anchors.sort(key=lambda pair: (pair[1].position is None, pair[1].position or 0, -pair[1].score))
     if shortlist and not todo:
         print(f"refine: all {len(shortlist)} shortlisted jobs already carry a refine verdict and the "
-              "shortlist has not changed; nothing new to compare (--force re-runs it)")
+              f"shortlist has not changed; nothing new to compare — top {n} fully refined "
+              "(--force re-runs it)")
         return
     out = _out_dir("refine")
     (out / "system.txt").write_text(system_prompt("refine", settings.profile), encoding="utf-8")
@@ -305,7 +321,7 @@ def export_refine(top: int, max_chars: int, force: bool = False) -> None:
              "job_ids": [j.id for j in todo], "anchors": [j.id for j, _ in anchors]}
     (out / "batch.json").write_text(json.dumps(batch, ensure_ascii=False, indent=0), encoding="utf-8")
     print(f"refine: {len(todo)} new jobs against {len(anchors)} already placed "
-          f"→ {out / 'batch.json'}")
+          f"(effective top {n}, plus anything tied with its last member) → {out / 'batch.json'}")
 
 
 def import_refine() -> None:
@@ -633,7 +649,7 @@ def main() -> None:
     if a.stage == "refine":
         # One request over the whole shortlist: no chunking, no sampling, no hydration.
         if a.action == "export":
-            export_refine(a.top or 20, a.max_chars or 6000, force=a.force)
+            export_refine(a.top, a.max_chars or 6000, force=a.force)
         else:
             import_refine()
         return

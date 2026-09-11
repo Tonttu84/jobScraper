@@ -372,58 +372,82 @@ def _refine_sort_key(verdict) -> tuple[float, int]:
 @app.command()
 def refine(days: int = 30, top: int | None = None, model: str | None = None,
            force: bool = False, verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
-    """One request that ranks the best-ranked jobs against each other (Fable by default).
+    """Rank the best jobs against each other until that top N is fully refined (Fable by default).
 
     The rank stage scores each posting alone inside a chunk, so its score carries chunk noise.
     This pass sees the whole shortlist at once; the report orders by the mean of the two.
 
-    Incremental: only shortlist members without a refine verdict are scored, and the ones already
-    placed are sent as fixed anchors so the new ones land in the same ordering. ``--force``
-    re-scores the whole shortlist against itself.
+    The shortlist is the best ``ai.refine_top_n`` jobs by that mean, not by the rank score, so a
+    refined job that fell leaves it and the unrefined neighbour that took its place is scored on
+    the next pass — up to ``ai.refine_max_passes`` times. The first request, before anything has
+    been refined, is ``ai.refine_first_pass`` wide, and any width takes everything tied with its
+    last member rather than splitting a run of equal scores. Each pass is incremental: only the members
+    without a refine verdict are scored, the rest ride along as fixed anchors. ``--force``
+    re-scores the whole shortlist once, and then iterates as usual.
     """
     _setup_logging(verbose)
     from jobscraper.ai.client import RefineStage, estimate_cost
     from jobscraper.ai.prompts import PROMPT_VERSION
-    from jobscraper.report import calibrated_refine, effective_score, refine_offset
+    from jobscraper.report import calibrated_refine, effective_score, refine_shortlist
 
     settings = load_settings()
-    n = top or settings.profile.ai.refine_top_n
+    ai = settings.profile.ai
+    n = top or ai.refine_top_n
     if not n:
         console.print("refine: ai.refine_top_n is 0 and no --top given — stage skipped", soft_wrap=True)
         return
+    # An explicit --top names one width; otherwise the opening pass reaches deeper than the rest.
+    first_pass = top or ai.refine_first_pass
     store = Store()
     jobs, filters = _load_state(store, days)
     ranked = store.verdicts("rank", PROMPT_VERSION)
-    by_id = {j.id: j for j in jobs}
-    alive = {jid for jid, f in filters.items() if f.status != "drop"}
-    best = sorted((v for v in ranked.values() if v.job_id in alive and v.job_id in by_id),
-                  key=lambda v: (-v.score, v.job_id))[:n]
-    todo = [by_id[v.job_id] for v in best]
-    if not todo:
+    refined = store.verdicts("refine", PROMPT_VERSION)
+    shortlist, offset = refine_shortlist(jobs, filters, ranked, refined, top=n, first_pass=first_pass)
+    if not shortlist:
         console.print("refine: nothing ranked under the current prompt version — run "
                       "`jobscraper rank` first", soft_wrap=True)
         return
 
-    placed = {} if force else store.verdicts("refine", PROMPT_VERSION)
-    fresh = [j for j in todo if j.id not in placed]
-    if not fresh:
-        console.print(f"refine: all {len(todo)} shortlisted jobs already carry a refine verdict; "
-                      "nothing new to compare (--force re-scores them)", soft_wrap=True)
-        return
+    stage = RefineStage(settings.profile, store, model=model)
+    verdicts: list = []     # every verdict this invocation brought back, over all passes
+    attempted = 0           # how many jobs those passes asked about
+    anchored = None         # how many were already refined when the first pass started
+    passes = 0
+    force_now = force
+    for _ in range(max(1, ai.refine_max_passes)):
+        fresh = list(shortlist) if force_now else [j for j in shortlist if j.id not in refined]
+        if anchored is None:
+            anchored = len(shortlist) - len(fresh)
+        if not fresh:
+            break
+        new = stage.run(shortlist, filters, force=force_now)
+        if not new:
+            console.print(f"refine: no verdicts came back for {len(fresh)} jobs; the rank scores "
+                          "stand", soft_wrap=True)
+            break
+        passes += 1
+        attempted += len(fresh)
+        verdicts += new
+        console.print(f"pass {passes}: {len(fresh)} new against {len(shortlist) - len(fresh)} "
+                      f"placed, offset {offset:+.1f}", soft_wrap=True)
+        force_now = False
+        refined = store.verdicts("refine", PROMPT_VERSION)
+        shortlist, offset = refine_shortlist(jobs, filters, ranked, refined, top=n,
+                                             first_pass=first_pass)
 
-    verdicts = RefineStage(settings.profile, store, model=model).run(todo, filters, force=force)
+    unrefined = [j for j in shortlist if j.id not in refined]
     if not verdicts:
-        console.print(f"refine: no verdicts came back for {len(fresh)} jobs; the rank scores stand",
-                      soft_wrap=True)
+        if not unrefined:
+            console.print(f"refine: all {len(shortlist)} shortlisted jobs already carry a refine "
+                          f"verdict; nothing new to compare — the top {n} is fully refined "
+                          "(--force re-scores it)", soft_wrap=True)
         return
 
     # The table is the whole shortlist, anchors included, so the new jobs are read in context.
     scored = {v.job_id for v in verdicts}
-    refined = store.verdicts("refine", PROMPT_VERSION)
-    rows = sorted(todo, key=lambda j: _refine_sort_key(refined.get(j.id)))
+    rows = sorted(shortlist, key=lambda j: _refine_sort_key(refined.get(j.id)))
     # This pass marks the whole shortlist lower than the rank pass marks one posting; the table
     # shows its scores where the mean uses them, on the rank scale.
-    offset = refine_offset(ranked, refined)
     table = Table("pos", "effective", "rank", "refine", "new", "title")
     for job in rows:
         rv, r = refined.get(job.id), ranked.get(job.id)
@@ -432,8 +456,12 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
                       str(calibrated_refine(rv.score, offset)) if rv else "—",
                       "*" if job.id in scored else "", job.title[:60])
     console.print(table)
-    console.print(f"refine: {len(verdicts)} of {len(fresh)} new jobs placed against "
-                  f"{len(todo) - len(fresh)} already refined; calibration {offset:+.1f} to the "
+    ended = (f"top {n} fully refined after {passes} pass{'es' if passes != 1 else ''}"
+             if not unrefined else
+             f"stopped after {passes} passes with {len(unrefined)} shortlist member"
+             f"{'s' if len(unrefined) != 1 else ''} still unrefined (ai.refine_max_passes)")
+    console.print(f"refine: {len(verdicts)} of {attempted} new jobs placed against "
+                  f"{anchored} already refined; {ended}; calibration {offset:+.1f} to the "
                   f"rank scale; cost ≈ {estimate_cost(verdicts)}", soft_wrap=True)
 
 

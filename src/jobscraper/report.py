@@ -77,14 +77,54 @@ def effective_score(rank: AIVerdict | None, refine: AIVerdict | None,
 _NO_POSITION = 10 ** 6
 
 
+def _refine_position(refine: AIVerdict | None) -> int:
+    """Where the refine pass put a job in the combined ordering; unplaced jobs sort last."""
+    if refine is None or refine.position is None:
+        return _NO_POSITION
+    return refine.position
+
+
 def rank_order(refine: dict[str, AIVerdict], offset: float = 0.0):
     """Sort key for the ranked section: effective score, then refine position, then rank score."""
     def key(v: AIVerdict) -> tuple[int, int, int]:
         r = refine.get(v.job_id)
-        position = r.position if r is not None and r.position is not None else _NO_POSITION
-        return -(effective_score(v, r, offset) or 0), position, -v.score
+        return -(effective_score(v, r, offset) or 0), _refine_position(r), -v.score
 
     return key
+
+
+def refine_shortlist(jobs: list[Job], filters: dict[str, FilterResult],
+                     rank: dict[str, AIVerdict], refine: dict[str, AIVerdict], *,
+                     top: int, first_pass: int) -> tuple[list[Job], float]:
+    """The jobs the refine pass should be holding, and the offset they were ordered with.
+
+    Candidates are the rule-kept jobs that carry a rank verdict, ordered by the very score the
+    report prints. Ordering them by the rank score instead leaves the pass chasing its own tail:
+    a refined job sits at the mean of two samples while its unrefined neighbour still carries a
+    single, selection-inflated rank score, so the unrefined one drifts into the effective top N
+    on one lucky sample and is never looked at again.
+
+    ``first_pass`` is the width used while nothing on the list has been refined yet — one wider
+    request costs little and leaves room for the reshuffle that calibrating the second scale
+    causes — and ``top`` the invariant width every pass after it.
+
+    The width is a lower bound, not a cut: every further candidate tied with the last included
+    one comes along. Scores are whole numbers and a run of them at the boundary is a genuine
+    tie — the job id that separates them says nothing about the job — so refining half of a run
+    would leave the rest sitting unrefined just inside the window forever.
+    """
+    alive = {job_id for job_id, f in filters.items() if f.status != "drop"}
+    offset = refine_offset(rank, refine)
+    scored = [(effective_score(rank[j.id], refine.get(j.id), offset) or 0, j)
+              for j in jobs if j.id in alive and j.id in rank]
+    scored.sort(key=lambda pair: (-pair[0], _refine_position(refine.get(pair[1].id)),
+                                  -rank[pair[1].id].score, pair[1].id))
+    width = top if any(j.id in refine for _, j in scored) else first_pass
+    picked = [j for _, j in scored[:width]]
+    if picked:
+        edge = scored[len(picked) - 1][0]  # descending: everything still tied with it follows here
+        picked += [j for score, j in scored[len(picked):] if score == edge]
+    return picked, offset
 
 
 def closes_in(fr: FilterResult | None) -> int | None:

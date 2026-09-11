@@ -541,6 +541,7 @@ def test_refine_table_lists_a_shortlisted_job_with_no_refine_verdict(data_dir, f
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     _rank_two_jobs(data_dir)
+    _widths(monkeypatch, top=20, first_pass=25, max_passes=1)
 
     def init(self, profile, store, model=None) -> None:
         self.store = store
@@ -560,6 +561,143 @@ def test_refine_table_lists_a_shortlisted_job_with_no_refine_verdict(data_dir, f
     assert result.exit_code == 0, result.output
     assert "1 of 2 new jobs placed against 0 already refined" in result.output
     assert "DevOps" in result.output and "Core Developer" in result.output
+
+
+# ------------------------------------------------- iterating to a fully refined top N
+
+
+def _widths(monkeypatch, *, top: int, first_pass: int, max_passes: int = 5):
+    """Pin the three refine widths for one test, whatever the repo's profile says."""
+    settings = cli_mod.load_settings()
+    settings.profile.ai.refine_top_n = top
+    settings.profile.ai.refine_first_pass = first_pass
+    settings.profile.ai.refine_max_passes = max_passes
+    monkeypatch.setattr(cli_mod, "load_settings", lambda *a, **kw: settings)
+    return settings
+
+
+def _rank_six_jobs(data_dir, scores: dict[str, int]) -> dict[str, str]:
+    """Six rule-kept jobs written straight into the store with the given rank scores."""
+    from datetime import UTC, datetime
+
+    from jobscraper.models import Job
+
+    store = store_mod.Store()
+    try:
+        ids = {}
+        for n, (name, score) in enumerate(scores.items(), start=1):
+            job = Job(source="arbeitnow", source_id=f"loop-{n}", title=f"{name} Engineer",
+                      url=f"https://jobs.example.test/loop-{n}", company="Example Oy",
+                      description="We build backend services in Python.", country="FI",
+                      remote="hybrid", posted_at=datetime.now(UTC))
+            store.upsert_jobs([job])
+            store.save_filter_results(
+                [FilterResult(job_id=job.id, status="keep", location_tier=1)], "rules-test")
+            _seed_verdict(store, job, "rank", score)
+            ids[name] = job.id
+        return ids
+    finally:
+        store.close()
+
+
+@pytest.fixture
+def scripted_refine(monkeypatch):
+    """A refine stage that answers from a score table, so a test can steer the calibration."""
+    from jobscraper.ai import client as ai_client
+    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.models import AIVerdict
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    scores: dict[str, int] = {}       # job id -> the score this stage will answer with
+    passes: list[list[str]] = []      # the ids scored by each call, in order
+
+    def init(self, profile, store, model=None) -> None:
+        self.store = store
+        self.model = model or profile.ai.refine_model
+
+    def run(self, jobs, filters, *, force=False):
+        placed = {} if force else self.store.verdicts("refine", PROMPT_VERSION)
+        todo = [j for j in jobs if j.id not in placed]
+        passes.append([j.id for j in todo])
+        ordered = sorted(todo, key=lambda j: -scores[j.id])
+        out = [AIVerdict(job_id=j.id, stage="refine", model=self.model,
+                         prompt_version=PROMPT_VERSION, relevant=True, score=scores[j.id],
+                         position=n, language_ok=True, seniority_ok=True, location_ok=True,
+                         summary=f"place {n}") for n, j in enumerate(ordered, start=1)]
+        for v in out:
+            self.store.save_verdict(v)
+        return out
+
+    monkeypatch.setattr(ai_client.RefineStage, "__init__", init)
+    monkeypatch.setattr(ai_client.RefineStage, "run", run)
+    return scores, passes
+
+
+def test_refine_iterates_until_the_effective_top_n_is_fully_refined(data_dir, fake_http,
+                                                                    scripted_refine, monkeypatch):
+    """Calibration drops three of the first five, so a sixth job enters the top 3 and is scored."""
+    scores, passes = scripted_refine
+    _widths(monkeypatch, top=3, first_pass=5)
+    ids = _rank_six_jobs(data_dir, {"Alpha": 95, "Bravo": 91, "Charlie": 90, "Delta": 89,
+                                    "Echo": 88, "Foxtrot": 87})
+    scores.update({ids["Alpha"]: 80, ids["Bravo"]: 78, ids["Charlie"]: 30, ids["Delta"]: 29,
+                   ids["Echo"]: 28, ids["Foxtrot"]: 30})
+
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+
+    # First pass: the five widest. Foxtrot was 6th by rank, but on one scale it beats the three
+    # the second pass marked down, so the second pass picks it up.
+    assert passes == [[ids[n] for n in ("Alpha", "Bravo", "Charlie", "Delta", "Echo")],
+                      [ids["Foxtrot"]]]
+    assert "pass 1: 5 new against 0 placed" in result.output
+    assert "pass 2: 1 new against 2 placed" in result.output
+    assert "top 3 fully refined after 2 passes" in result.output
+    assert "6 of 6 new jobs placed against 0 already refined" in result.output
+
+
+def test_refine_stops_at_refine_max_passes(data_dir, fake_http, scripted_refine, monkeypatch):
+    """A shortlist that keeps changing is bounded: the stage says what it left unrefined."""
+    scores, passes = scripted_refine
+    _widths(monkeypatch, top=3, first_pass=3, max_passes=2)
+    ids = _rank_six_jobs(data_dir, {"Alpha": 95, "Bravo": 91, "Charlie": 90, "Delta": 89,
+                                    "Echo": 88, "Foxtrot": 87})
+    # Every pass marks its new jobs down far below the one that sets the scale, so the next
+    # unrefined neighbour always takes the place they leave and the window never settles.
+    scores.update({ids["Alpha"]: 80, ids["Bravo"]: 20, ids["Charlie"]: 20, ids["Delta"]: 20,
+                   ids["Echo"]: 20, ids["Foxtrot"]: 20})
+
+    result = runner.invoke(cli_mod.app, ["refine"])
+    assert result.exit_code == 0, result.output
+    assert passes == [[ids[n] for n in ("Alpha", "Bravo", "Charlie")],
+                      [ids[n] for n in ("Delta", "Echo")]]
+    assert "stopped after 2 passes with 1 shortlist member still unrefined" in result.output
+    assert "ai.refine_max_passes" in result.output
+    assert "fully refined" not in result.output
+
+
+def test_refine_force_rescores_once_and_then_iterates(data_dir, fake_http, scripted_refine,
+                                                      monkeypatch):
+    """--force re-scores the whole shortlist, and the passes after it are incremental again."""
+    scores, passes = scripted_refine
+    _widths(monkeypatch, top=3, first_pass=3)
+    ids = _rank_six_jobs(data_dir, {"Alpha": 95, "Bravo": 91, "Charlie": 90, "Delta": 89,
+                                    "Echo": 88, "Foxtrot": 87})
+    scores.update({ids["Alpha"]: 80, ids["Bravo"]: 78, ids["Charlie"]: 30, ids["Delta"]: 76,
+                   ids["Echo"]: 28, ids["Foxtrot"]: 27})
+    store = store_mod.Store()
+    try:
+        for name in ("Alpha", "Bravo", "Charlie"):
+            job = next(j for j in store.jobs() if j.id == ids[name])
+            _seed_verdict(store, job, "refine", 50, position=1)
+    finally:
+        store.close()
+
+    result = runner.invoke(cli_mod.app, ["refine", "--force"])
+    assert result.exit_code == 0, result.output
+    assert passes[0] == [ids[n] for n in ("Alpha", "Bravo", "Charlie")]  # all three, re-scored
+    assert passes[1] == [ids["Delta"]]                                   # incremental from here
+    assert "top 3 fully refined after 2 passes" in result.output
 
 
 def test_refine_force_re_scores_the_whole_shortlist(data_dir, fake_http, spy_refine):

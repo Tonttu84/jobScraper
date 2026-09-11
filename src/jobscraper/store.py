@@ -107,7 +107,8 @@ CREATE TABLE IF NOT EXISTS reports (
     prompt_version TEXT NOT NULL,
     counts TEXT NOT NULL,
     cost TEXT NOT NULL,
-    path TEXT
+    path TEXT,
+    refine_offset REAL
 );
 
 CREATE TABLE IF NOT EXISTS report_items (
@@ -120,6 +121,11 @@ CREATE TABLE IF NOT EXISTS report_items (
 );
 CREATE INDEX IF NOT EXISTS report_items_report ON report_items(report_id, section, position);
 """
+
+
+#: Columns added to :data:`SCHEMA` after databases already existed, as (table, column, type).
+#: :meth:`Store._migrate` adds each of them to a database that predates it.
+_ADDED_COLUMNS = (("reports", "refine_offset", "REAL"),)
 
 
 def _now() -> str:
@@ -214,6 +220,7 @@ class Store:
         self.conn.execute("PRAGMA foreign_keys = ON")
         if not readonly:
             self.conn.executescript(SCHEMA)
+            self._migrate()
         self._decisions = "decisions"
         if decisions_path is not None:
             decisions_path = Path(decisions_path)
@@ -222,6 +229,18 @@ class Store:
             self.conn.execute(f"CREATE TABLE IF NOT EXISTS dec.decisions ({_DECISIONS_DDL})")
             self.conn.commit()
             self._decisions = "dec.decisions"
+
+    def _migrate(self) -> None:
+        """Add the columns ``CREATE TABLE IF NOT EXISTS`` cannot add to a table that exists.
+
+        A database written by an earlier version keeps its rows; only the new column is empty.
+        A read-only copy is never migrated, so every reader treats a missing column as unknown.
+        """
+        for table, column, decl in _ADDED_COLUMNS:
+            have = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+            if column not in have:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        self.conn.commit()
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
@@ -385,6 +404,7 @@ class Store:
     # ---------------------------------------------------------------- reports
     @staticmethod
     def _snapshot(row: sqlite3.Row, items: list[ReportItem] | None = None) -> ReportSnapshot:
+        columns = row.keys()  # a sqlite3.Row is not a mapping: `in` would search the values
         return ReportSnapshot(
             id=row["id"],
             created_at=row["created_at"],
@@ -393,6 +413,8 @@ class Store:
             counts=json.loads(row["counts"]),
             cost=json.loads(row["cost"]),
             path=row["path"],
+            # A read-only copy written before the column existed cannot be migrated on open.
+            refine_offset=row["refine_offset"] if "refine_offset" in columns else None,
             items=items or [],
         )
 
@@ -400,8 +422,10 @@ class Store:
         """Insert the report row and its items in one transaction; returns a copy with the id."""
         with self.tx() as c:
             cur = c.execute(
-                "INSERT INTO reports (created_at, days, prompt_version, counts, cost, path) VALUES (?,?,?,?,?,?)",
-                (snap.created_at.isoformat(), snap.days, snap.prompt_version, dumps(snap.counts), dumps(snap.cost), snap.path),
+                "INSERT INTO reports (created_at, days, prompt_version, counts, cost, path, refine_offset)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (snap.created_at.isoformat(), snap.days, snap.prompt_version, dumps(snap.counts),
+                 dumps(snap.cost), snap.path, snap.refine_offset),
             )
             report_id = cur.lastrowid
             c.executemany(

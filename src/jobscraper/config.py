@@ -179,8 +179,16 @@ class AIPolicy(BaseModel):
     rank_effort: str = "high"
     refine_effort: str = "high"
     rank_top_n: int = 60
-    #: How many of the best-ranked jobs go into the single refine request; 0 turns the stage off.
+    #: How many of the best-*effective*-scoring jobs the refine pass keeps refined; 0 turns the
+    #: stage off. The pass iterates until every one of them carries a refine verdict, and a run
+    #: of jobs tied with the N-th goes in whole rather than being split by job id.
     refine_top_n: int = 20
+    #: Width of the first request, while nothing on the list has been refined yet: calibrating
+    #: the second scale reshuffles the window, so the opening pass reaches a little deeper.
+    refine_first_pass: int = 25
+    #: How many times `jobscraper refine` may rebuild the shortlist and score its new entrants
+    #: before giving up on reaching a fixed point.
+    refine_max_passes: int = 5
     prefilter_min_score: int = 30
     concurrency: int = 4
     max_description_chars: int = 6000

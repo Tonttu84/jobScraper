@@ -16,6 +16,7 @@ from jobscraper.report import (
     export_jsonl,
     previous_report,
     refine_offset,
+    refine_shortlist,
     render_diff,
     render_new_section,
     write_report,
@@ -603,6 +604,106 @@ def test_write_report_heading_shows_the_calibrated_refine_score_and_the_offset(t
                         refine=refine).read_text(encoding="utf-8")
     assert f"### 91 (rank 90 · refine 92, calibrated +22.0) · [{top.title}]({top.url})" in text
     assert "### 74 · [Junior Data Engineer]" in text  # the unrefined job says nothing about it
+
+
+# ------------------------------------------- the shortlist the refine pass works on
+
+
+@pytest.fixture
+def shortlist_state():
+    """Four rule-kept ranked jobs, one the rules drop, and one the ranker never saw.
+
+    Three of the four were refined, which puts the offset at +27.3. ``sinks`` was marked down
+    far enough by the second pass that ``rises`` — never refined, so still carrying its single
+    rank score — passes it once both are read on the same scale.
+    """
+    jobs = [make_job("best", "Junior Backend Developer"), make_job("second", "Junior SRE"),
+            make_job("sinks", "Junior Platform Engineer"), make_job("rises", "Junior QA Engineer"),
+            make_job("dropped", "Junior Polish-only Developer"),
+            make_job("unranked", "Junior Data Engineer")]
+    best, second, sinks, rises, dropped, unranked = (j.id for j in jobs)
+    filters = {j.id: FilterResult(job_id=j.id, status="keep", location_tier=1) for j in jobs}
+    filters[dropped] = FilterResult(job_id=dropped, status="drop", reasons=["Polish required"])
+    rank, refine = _pairs((best, 90, 66), (second, 86, 62), (sinks, 84, 50), (rises, 83, None),
+                          (dropped, 95, None), (unranked, None, None))
+    return jobs, filters, rank, refine
+
+
+def _ids(jobs) -> list[str]:
+    return [j.id for j in jobs]
+
+
+def test_refine_shortlist_takes_the_effective_top_not_the_rank_top(shortlist_state):
+    """The window is the one the report shows, so a refined job that fell can leave it again."""
+    jobs, filters, rank, refine = shortlist_state
+    best, second, sinks, rises = (j.id for j in jobs[:4])
+
+    picked, _offset = refine_shortlist(jobs, filters, rank, refine, top=3, first_pass=5)
+
+    assert _ids(picked) == [best, second, rises]
+    # by rank score alone it would have been the three best-ranked jobs, sinks among them
+    assert sorted(_ids(picked)) != sorted([best, second, sinks])
+
+
+def test_refine_shortlist_returns_the_offset_it_ordered_with(shortlist_state):
+    jobs, filters, rank, refine = shortlist_state
+    _picked, offset = refine_shortlist(jobs, filters, rank, refine, top=3, first_pass=5)
+    assert offset == 27.3
+    assert refine_shortlist(jobs, filters, rank, {}, top=3, first_pass=5)[1] == 0.0
+
+
+def test_refine_shortlist_leaves_out_drops_and_jobs_the_ranker_never_saw(shortlist_state):
+    """A wide window still only holds jobs the pipeline would report on."""
+    jobs, filters, rank, refine = shortlist_state
+    dropped, unranked = jobs[4].id, jobs[5].id
+
+    picked, _offset = refine_shortlist(jobs, filters, rank, refine, top=99, first_pass=99)
+
+    assert len(picked) == 4
+    assert dropped not in _ids(picked) and unranked not in _ids(picked)
+
+
+def test_refine_shortlist_is_wider_until_something_has_been_refined(shortlist_state):
+    """The first request reaches deeper: calibration reshuffles the window it produced."""
+    jobs, filters, rank, _refine = shortlist_state
+
+    assert len(refine_shortlist(jobs, filters, rank, {}, top=2, first_pass=4)[0]) == 4
+
+    one = {jobs[0].id: make_refine(jobs[0].id, 66, 1)}
+    assert len(refine_shortlist(jobs, filters, rank, one, top=2, first_pass=4)[0]) == 2
+
+
+def test_refine_shortlist_keeps_a_tie_that_straddles_the_cut_together():
+    """Whole-number scores tie for real: refining half a run of 82s leaves the rest stuck inside."""
+    jobs = [make_job("clear", "Junior Backend Developer"), make_job("tie-a", "Junior SRE"),
+            make_job("tie-b", "Junior QA Engineer"), make_job("tie-c", "Junior Data Engineer"),
+            make_job("below", "Junior Platform Engineer")]
+    filters = {j.id: FilterResult(job_id=j.id, status="keep", location_tier=1) for j in jobs}
+    clear, tie_a, tie_b, tie_c, below = (j.id for j in jobs)
+    rank = {j.id: make_verdict(j.id, "rank", score)
+            for j, score in zip(jobs, [90, 82, 82, 82, 70])}
+
+    picked, _offset = refine_shortlist(jobs, filters, rank, {}, top=2, first_pass=2)
+
+    assert _ids(picked) == [clear, *sorted([tie_a, tie_b, tie_c])]
+    assert below not in _ids(picked)
+
+
+def test_refine_shortlist_breaks_a_tie_by_position_then_rank_score_then_id():
+    """Equal effective scores: the placed jobs first, best-ranked first, and the id decides."""
+    jobs = [make_job("placed-high", "Junior Backend Developer"), make_job("placed-low", "Junior SRE"),
+            make_job("bare-a", "Junior QA Engineer"), make_job("bare-b", "Junior Data Engineer")]
+    high, low, bare_a, bare_b = (j.id for j in jobs)
+    filters = {j.id: FilterResult(job_id=j.id, status="keep", location_tier=1) for j in jobs}
+    # two verdicts overlap, which is too few to calibrate on: every job is worth exactly 80
+    rank = {high: make_verdict(high, "rank", 90), low: make_verdict(low, "rank", 70),
+            bare_a: make_verdict(bare_a, "rank", 80), bare_b: make_verdict(bare_b, "rank", 80)}
+    refine = {high: make_refine(high, 70, 1), low: make_refine(low, 90, 1)}  # the same position
+
+    picked, offset = refine_shortlist(jobs, filters, rank, refine, top=4, first_pass=4)
+
+    assert offset == 0.0
+    assert _ids(picked) == [high, low, *sorted([bare_a, bare_b])]
 
 
 # ------------------------------------------------------- diff between reports

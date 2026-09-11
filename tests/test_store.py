@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
 
@@ -343,6 +344,71 @@ def make_snapshot(**kw) -> ReportSnapshot:
     }
     base.update(kw)
     return ReportSnapshot(**base)
+
+
+#: The reports table as it was before the refine pass had a scale to calibrate, plus the items
+#: table, so a database written by an older version can be opened here.
+_PRE_OFFSET_SCHEMA = """
+CREATE TABLE reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    days INTEGER NOT NULL,
+    prompt_version TEXT NOT NULL,
+    counts TEXT NOT NULL,
+    cost TEXT NOT NULL,
+    path TEXT
+);
+CREATE TABLE report_items (
+    report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL,
+    section TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    score INTEGER,
+    PRIMARY KEY (report_id, job_id)
+);
+INSERT INTO reports (created_at, days, prompt_version, counts, cost, path)
+VALUES ('2026-09-10T06:00:00+00:00', 7, 'v1', '{}', '{}', '/tmp/old.md');
+"""
+
+
+def _pre_offset_db(path):
+    conn = sqlite3.connect(path)
+    conn.executescript(_PRE_OFFSET_SCHEMA)
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_save_report_keeps_the_calibration_offset(store):
+    saved = store.save_report(make_snapshot(refine_offset=-21.4))
+    assert saved.refine_offset == -21.4
+    assert store.report(saved.id).refine_offset == -21.4
+    assert store.reports()[0].refine_offset == -21.4
+
+
+def test_a_report_written_without_a_refine_pass_has_no_offset(store):
+    saved = store.save_report(make_snapshot())
+    assert store.report(saved.id).refine_offset is None
+
+
+def test_an_older_database_gains_the_offset_column_when_it_is_opened(tmp_path):
+    """`CREATE TABLE IF NOT EXISTS` cannot widen a table that exists: the open migrates it."""
+    store = Store(_pre_offset_db(tmp_path / "old.db"))
+    try:
+        assert store.report().refine_offset is None  # the row written before the column existed
+        saved = store.save_report(make_snapshot(refine_offset=12.5))
+        assert store.report(saved.id).refine_offset == 12.5
+    finally:
+        store.close()
+
+
+def test_a_readonly_store_reads_a_database_it_cannot_migrate(tmp_path):
+    """A read-only copy is opened as it stands, so the offset simply reads as unknown."""
+    store = Store(_pre_offset_db(tmp_path / "ro.db"), readonly=True)
+    try:
+        assert store.report().refine_offset is None
+    finally:
+        store.close()
 
 
 def test_save_report_returns_a_copy_with_an_id(store):

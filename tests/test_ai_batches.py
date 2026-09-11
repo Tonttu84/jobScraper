@@ -785,7 +785,65 @@ def test_export_refine_skips_a_shortlist_that_was_already_refined(shortlist, dat
     _refine_scores(shortlist[:2], [85, 75])
     _run(monkeypatch, "export", "refine", "--top", "2")
     assert not (_refine_dir(data_dir) / "batch.json").exists()
-    assert "already carry a refine verdict" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "already carry a refine verdict" in out
+    # The owner repeats export -> subagent -> import until this sentence appears.
+    assert "top 2 fully refined" in out
+
+
+def _widths(monkeypatch, *, top: int, first_pass: int):
+    """Pin the two shortlist widths for one test, whatever the repo's profile says."""
+    settings = ai_batches.load_settings()
+    settings.profile.ai.refine_top_n = top
+    settings.profile.ai.refine_first_pass = first_pass
+    monkeypatch.setattr(ai_batches, "load_settings", lambda *a, **kw: settings)
+
+
+@pytest.fixture
+def wide_shortlist(data_dir):
+    """Six rule-kept jobs ranked 95 down to 87 — enough to see the window move."""
+    jobs = [_job(n, f"Junior Developer {n}", LONG_DESCRIPTION) for n in range(1, 7)]
+    _seed(jobs, ["keep"] * 6)
+    _rank_scores(jobs, [95, 91, 90, 89, 88, 87])
+    return jobs
+
+
+def test_export_refine_takes_the_effective_top_not_the_rank_top(wide_shortlist, data_dir,
+                                                                monkeypatch, capsys):
+    """Three of the five refined jobs were marked down, so the sixth-ranked one takes their place."""
+    _refine_scores(wide_shortlist[:5], [80, 78, 30, 29, 28])
+
+    _run(monkeypatch, "export", "refine", "--top", "3")
+
+    batch = json.loads((_refine_dir(data_dir) / "batch.json").read_text(encoding="utf-8"))
+    assert batch["job_ids"] == [wide_shortlist[5].id]   # never in the rank-score top 3
+    assert batch["anchors"] == [wide_shortlist[0].id, wide_shortlist[1].id]
+    assert "1 new jobs against 2 already placed" in capsys.readouterr().out
+
+
+def test_export_refine_opens_with_the_wider_first_pass_width(wide_shortlist, data_dir,
+                                                             monkeypatch, capsys):
+    """Nothing refined yet: the first request reaches past the width it has to keep refined."""
+    _widths(monkeypatch, top=2, first_pass=4)
+
+    _run(monkeypatch, "export", "refine")
+
+    batch = json.loads((_refine_dir(data_dir) / "batch.json").read_text(encoding="utf-8"))
+    assert batch["job_ids"] == [j.id for j in wide_shortlist[:4]]
+    assert "4 new jobs against 0 already placed" in capsys.readouterr().out
+
+
+def test_export_refine_narrows_to_the_top_once_something_is_refined(wide_shortlist, data_dir,
+                                                                    monkeypatch, capsys):
+    """After the opening pass the width is the invariant one, not the wider first-pass one."""
+    _widths(monkeypatch, top=2, first_pass=4)
+    _refine_scores(wide_shortlist[:1], [95])   # the second pass agreed, so it keeps its place
+
+    _run(monkeypatch, "export", "refine")
+
+    batch = json.loads((_refine_dir(data_dir) / "batch.json").read_text(encoding="utf-8"))
+    assert batch["anchors"] == [wide_shortlist[0].id]
+    assert batch["job_ids"] == [wide_shortlist[1].id]   # the pair is the whole shortlist now
 
 
 def test_export_refine_exports_only_the_new_jobs_and_anchors_the_rest(shortlist, data_dir, monkeypatch, capsys):
