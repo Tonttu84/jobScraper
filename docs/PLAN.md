@@ -256,6 +256,13 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
      column "refine Δ"). Fable's ordering and spread survive; its level does not. The prompt is
      deliberately unchanged so old and new refine verdicts stay on one raw scale (anchors mix
      them); a "same scale as the first pass" prompt line can come later with a version bump.
+     - [ ] **Iterate to a fully refined top N** (owner, 2026-09-11): once refined jobs are
+       calibrated they sit lower than rank-only neighbours, so an unrefined job at rank position
+       21–30 can enter the effective top 20 on one lucky sample. Select the refine shortlist by
+       *effective* score (rank alone for unrefined jobs), refine the unrefined members against
+       the refined anchors, recompute, repeat until the effective top N has no unrefined member
+       (cap 5 passes). API path: `jobscraper refine` loops itself; subagent path: `export refine`
+       until it reports nothing new — each pass is one small Fable call.
 3. **Coverage gate to 97%** (adapter error branches).
 4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:
