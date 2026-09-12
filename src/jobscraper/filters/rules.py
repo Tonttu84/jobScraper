@@ -11,7 +11,7 @@ import re
 from collections import defaultdict
 from datetime import UTC, date, datetime
 
-from jobscraper.config import Profile
+from jobscraper.config import LocationPolicy, Profile
 from jobscraper.filters.deadline import find_deadline
 from jobscraper.filters.evergreen import is_evergreen
 from jobscraper.filters.language import detect_language, find_language_requirements
@@ -237,8 +237,19 @@ def evaluate(job: Job, profile: Profile, today: date | None = None) -> FilterRes
     return FilterResult(job_id=job.id, status=status, reasons=reasons + review, signals=signals, location_tier=tier)
 
 
-def dedupe(jobs: list[Job]) -> tuple[list[Job], dict[str, list[str]]]:
-    """Collapse the same posting seen on several boards. Returns (unique_jobs, {kept_id: [dup_ids]})."""
+def dedupe(jobs: list[Job], location: LocationPolicy | None = None) -> tuple[list[Job], dict[str, list[str]]]:
+    """Collapse the same posting seen on several boards. Returns (unique_jobs, {kept_id: [dup_ids]}).
+
+    Where the job is comes before which board it came from, because dedupe runs *before* the rule
+    filter: the losers are marked duplicates and never looked at again, so a copy kept for its
+    source alone can then be dropped for being outside the target countries while the well-located
+    sibling no longer exists to be kept in its place. A multinational advertises the same title in
+    several countries at once (Oura's Android role in the US and in Finland, wolt's sales role
+    across four), and picking the wrong one silently loses a job the candidate could take. An
+    unknown country is not yet a reason to reject, so it outranks a country we know is out of
+    reach; a remote posting is kept whatever its country says, when the profile keeps all remote.
+    With no location given every copy ranks the same and the source priority decides, as before.
+    """
     def key(j: Job) -> str:
         t = re.sub(r"[^a-z0-9]+", " ", (j.title or "").lower()).strip()
         c = re.sub(r"[^a-z0-9]+", " ", (j.company or "").lower()).strip()
@@ -248,13 +259,27 @@ def dedupe(jobs: list[Job]) -> tuple[list[Job], dict[str, list[str]]]:
     # Prefer direct company boards over aggregators when the same job appears twice.
     priority = {"teamtailor": 0, "ats_boards": 0, "duunitori": 1, "thehub": 1, "tyomarkkinatori": 2,
                 "cvee": 2, "cvkeskus": 2, "linkedin": 5, "indeed": 5}
+
+    tiers = [{c.upper() for c in t} for t in (location.tier1, location.tier2, location.tier3)] if location else []
+
+    def tier_rank(j: Job) -> int:
+        if location is None:
+            return 0
+        country = (j.country or "").upper()
+        for rank, codes in enumerate(tiers):
+            if country in codes:
+                return rank
+        if not j.country or (j.remote == "remote" and location.keep_all_remote):
+            return 3
+        return 4
+
     groups: dict[str, list[Job]] = defaultdict(list)
     for j in jobs:
         groups[key(j) if j.company else j.id].append(j)
     unique: list[Job] = []
     dups: dict[str, list[str]] = {}
     for members in groups.values():
-        members.sort(key=lambda j: (priority.get(j.source, 3), j.id))
+        members.sort(key=lambda j: (tier_rank(j), priority.get(j.source, 3), j.id))
         unique.append(members[0])
         if len(members) > 1:
             dups[members[0].id] = [m.id for m in members[1:]]

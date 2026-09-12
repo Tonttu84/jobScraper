@@ -11,7 +11,7 @@ from datetime import date
 
 import pytest
 
-from jobscraper.config import Profile, SeniorityPolicy
+from jobscraper.config import LocationPolicy, Profile, SeniorityPolicy
 from jobscraper.filters.deadline import find_deadline
 from jobscraper.filters.evergreen import CUES, is_evergreen
 from jobscraper.filters.rules import classify_remote_region, dedupe, evaluate
@@ -351,6 +351,73 @@ def test_dedupe_keeps_unrelated_jobs_apart():
     unique, dups = dedupe([a, b])
     assert len(unique) == 2
     assert dups == {}
+
+
+# --------------------------------------------------- dedupe: location preference
+
+DEDUPE_LOCATION = LocationPolicy(tier1=["FI"], tier2=["SE"], tier3=["DE"])
+
+
+@pytest.mark.parametrize("better,worse", [("FI", "SE"), ("SE", "DE"), ("DE", "US"), (None, "US")])
+def test_dedupe_prefers_the_better_located_copy(better, worse):
+    # The better-located copy is on the *worse* source, so only the location can decide it.
+    good = make_job(source="linkedin", source_id=f"li-{better}", company="Acme Oy", country=better)
+    bad = make_job(source="teamtailor", source_id=f"tt-{worse}", company="Acme Oy", country=worse)
+    unique, dups = dedupe([bad, good], DEDUPE_LOCATION)
+    assert [j.id for j in unique] == [good.id]
+    assert dups == {good.id: [bad.id]}
+
+
+def test_dedupe_within_the_same_tier_still_follows_source_priority():
+    linkedin = make_job(source="linkedin", source_id="li-fi", company="Acme Oy", country="FI")
+    teamtailor = make_job(source="teamtailor", source_id="tt-fi", company="Acme Oy", country="FI")
+    unique, dups = dedupe([linkedin, teamtailor], DEDUPE_LOCATION)
+    assert [j.id for j in unique] == [teamtailor.id]
+    assert dups == {teamtailor.id: [linkedin.id]}
+
+
+def test_dedupe_matches_tier_countries_case_insensitively():
+    lowercase = LocationPolicy(tier1=["fi"], tier2=[], tier3=[])
+    fi = make_job(source="linkedin", source_id="li-lc", company="Acme Oy", country="FI")
+    us = make_job(source="teamtailor", source_id="tt-lc", company="Acme Oy", country="US")
+    unique, _ = dedupe([us, fi], lowercase)
+    assert [j.id for j in unique] == [fi.id]
+
+
+def test_dedupe_prefers_a_remote_copy_when_both_are_out_of_tier():
+    remote = make_job(source="linkedin", source_id="li-rem", company="Acme Oy", country="US",
+                      remote="remote")
+    onsite = make_job(source="teamtailor", source_id="tt-ons", company="Acme Oy", country="US")
+    unique, dups = dedupe([onsite, remote], DEDUPE_LOCATION)
+    assert [j.id for j in unique] == [remote.id]
+    assert dups == {remote.id: [onsite.id]}
+
+
+def test_dedupe_ignores_remote_when_the_profile_does_not_keep_all_remote():
+    strict = LocationPolicy(tier1=["FI"], tier2=[], tier3=[], keep_all_remote=False)
+    remote = make_job(source="linkedin", source_id="li-rem2", company="Acme Oy", country="US",
+                      remote="remote")
+    onsite = make_job(source="teamtailor", source_id="tt-ons2", company="Acme Oy", country="US")
+    unique, _ = dedupe([remote, onsite], strict)
+    assert [j.id for j in unique] == [onsite.id]
+
+
+def test_dedupe_without_a_location_keeps_the_source_ordering():
+    us = make_job(source="teamtailor", source_id="tt-us", company="Acme Oy", country="US")
+    fi = make_job(source="linkedin", source_id="li-fi2", company="Acme Oy", country="FI")
+    unique, dups = dedupe([fi, us])
+    assert [j.id for j in unique] == [us.id]
+    assert dups == {us.id: [fi.id]}
+
+
+def test_dedupe_lists_every_loser_under_the_winner():
+    fi = make_job(source="linkedin", source_id="li-multi", company="Acme Oy", country="FI")
+    us = make_job(source="teamtailor", source_id="tt-multi", company="Acme Oy", country="US")
+    ie = make_job(source="duunitori", source_id="du-multi", company="Acme Oy", country="IE")
+    unique, dups = dedupe([us, ie, fi], DEDUPE_LOCATION)
+    assert [j.id for j in unique] == [fi.id]
+    # Losers keep the same ordering: teamtailor outranks duunitori once both are out of tier.
+    assert dups == {fi.id: [us.id, ie.id]}
 
 
 # ------------------------------------------------------------------ remote region

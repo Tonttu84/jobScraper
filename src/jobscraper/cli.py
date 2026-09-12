@@ -190,7 +190,7 @@ def filter_cmd(days: int = 30, verbose: bool = typer.Option(False, "--verbose", 
     settings = load_settings()
     store = Store()
     jobs = store.jobs(seen_within_days=days)
-    unique, dups = dedupe(jobs)
+    unique, dups = dedupe(jobs, settings.profile.location)
     results = apply_rules(unique, settings.profile)
     dup_results = []
     from jobscraper.models import FilterResult
