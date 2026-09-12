@@ -134,25 +134,33 @@ RANK_TOP_WATCH = 20
 
 
 def rank_queue(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
-               rank: dict[str, AIVerdict], *, min_score: int) -> list[Job]:
+               rank: dict[str, AIVerdict], *, min_score: int,
+               prior: dict[str, float] | None = None) -> list[Job]:
     """The jobs still waiting for a rank verdict, in the order the rank stage should read them.
 
     Candidates are the rule-kept jobs the screening pass called relevant and scored at least
     ``min_score`` — the same gate the report's prefilter section uses — minus everything that
-    already carries a rank verdict, so the queue is a refill list.
+    already carries a rank verdict, so the queue is a refill list. The screen decides *who is in
+    the queue*; it no longer decides the order.
 
-    The order is the screen score, best first, with the job id breaking ties. That is a weak
-    prior and known to be one: measured over the ranked jobs on 2026-09-11 the screen score has
-    no relation to the rank score (Spearman -0.06), so reading further down this queue keeps
-    finding strong jobs. It is still the only prior there is, and the stop rule — not the
-    ordering — is what decides how deep to go.
+    With a ``prior`` (``{job_id: score}`` from :func:`jobscraper.prior.queue_prior`) the order is
+    that score, best first, with the screen score and then the job id breaking ties; a job the
+    prior never scored counts as 0.0. The screen score sorts no better than chance — Spearman
+    -0.06 against the rank score on the default profile, +0.23 on the second, measured
+    2026-09-11 — while the lexical prior managed +0.19 / +0.29 on the same verdicts for nothing.
+    With ``prior=None`` (``ai.rank_order = "screen"``) the old screen ordering is used unchanged.
+
+    Either way the ordering is a prior, not a verdict: the stop rule decides how deep to read.
     """
     by_id = {j.id: j for j in jobs}
     alive = {job_id for job_id, f in filters.items() if f.status != "drop"}
-    ordered = sorted((v for v in prefilter.values()
-                      if v.relevant and v.score >= min_score and v.job_id in alive
-                      and v.job_id in by_id and v.job_id not in rank),
-                     key=lambda v: (-v.score, v.job_id))
+    candidates = [v for v in prefilter.values()
+                  if v.relevant and v.score >= min_score and v.job_id in alive
+                  and v.job_id in by_id and v.job_id not in rank]
+    if prior is None:
+        ordered = sorted(candidates, key=lambda v: (-v.score, v.job_id))
+    else:
+        ordered = sorted(candidates, key=lambda v: (-prior.get(v.job_id, 0.0), -v.score, v.job_id))
     return [by_id[v.job_id] for v in ordered]
 
 

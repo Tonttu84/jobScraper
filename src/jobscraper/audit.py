@@ -1,24 +1,33 @@
-"""Audit of the rule filter's false negatives.
+"""Audits of the two cheap, deterministic stages nobody was measuring.
 
-The rule filter drops the great majority of everything scraped, and its reasons are cheap and
-deterministic — which also means nobody knows how many good jobs go into the bin with them.
-This module draws a *stratified* sample of dropped jobs (up to N per drop reason, seeded so the
-same database always yields the same sample), which the owner labels by hand, and turns the
-labels back into a false-negative rate per reason and an estimate of how many good jobs each
-rule loses.
+*The rule filter's false negatives.* It drops the great majority of everything scraped, and its
+reasons are cheap and deterministic — which also means nobody knows how many good jobs go into
+the bin with them. This module draws a *stratified* sample of dropped jobs (up to N per drop
+reason, seeded so the same database always yields the same sample), which the owner labels by
+hand, and turns the labels back into a false-negative rate per reason and an estimate of how
+many good jobs each rule loses. Sampling per reason rather than uniformly is the point: a rule
+that fires 100 times and a rule that fires 3000 times each need the same handful of eyeballs
+before its rate is worth anything.
 
-Sampling per reason rather than uniformly is the point: a rule that fires 100 times and a rule
-that fires 3000 times each need the same handful of eyeballs before its rate is worth anything.
+*The order the rank queue is read in.* Only ~90 of some 1 600 screen survivors are ranked per
+round, so the ordering is most of the product. :func:`prior_comparison` replays both candidate
+orderings — the lexical prior (:mod:`jobscraper.prior`) and the Sonnet screen score — against
+the rank verdicts the database already holds, and reports how much sooner each of them would
+have reached the jobs that ended up in the effective top N.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 from collections import defaultdict
+from collections.abc import Collection, Sequence
 from pathlib import Path
 
+from jobscraper.config import Profile
+from jobscraper.models import AIVerdict, FilterResult, Job
 from jobscraper.store import Store
 
 #: Reason template (as built in ``filters/rules.py`` and by ``cli.filter``) → category slug.
@@ -173,3 +182,112 @@ def read_labels(path: Path) -> list[dict]:
     """Read a labelled sample file back; blank lines (easy to leave behind) are ignored."""
     lines = Path(path).read_text(encoding="utf-8").splitlines()
     return [json.loads(line) for line in lines if line.strip()]
+
+
+# ------------------------------------------------------ is the queue in a useful order?
+
+#: How deep into the queue to count, in jobs. Three cuts of the 90-call round budget: what one
+#: window-and-a-half, two thirds of a round, and two thirds again would have reached.
+DEPTHS: tuple[int, ...] = (20, 40, 60)
+
+
+def average_ranks(values: Sequence[float]) -> list[float]:
+    """1-based ranks of ``values``, smallest first, with ties sharing the mean of their places."""
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    start = 0
+    while start < len(order):
+        stop = start
+        while stop + 1 < len(order) and values[order[stop + 1]] == values[order[start]]:
+            stop += 1
+        shared = (start + stop) / 2 + 1  # 1-based, averaged over the positions the tie covers
+        for i in order[start : stop + 1]:
+            ranks[i] = shared
+        start = stop + 1
+    return ranks
+
+
+def spearman(xs: Sequence[float], ys: Sequence[float]) -> float | None:
+    """Spearman's rho: Pearson over :func:`average_ranks`, so ties are handled properly.
+
+    ``None`` when there is nothing to correlate — fewer than two pairs, or one side that never
+    moves (an all-zero prior on a profile with no skills would otherwise divide by zero).
+    Implemented here rather than pulled in: scipy is a large dependency for eight lines.
+    """
+    if len(xs) != len(ys):
+        raise ValueError(f"spearman needs two series of the same length, got {len(xs)} and {len(ys)}")
+    if len(xs) < 2:
+        return None
+    rx, ry = average_ranks(xs), average_ranks(ys)
+    mx, my = sum(rx) / len(rx), sum(ry) / len(ry)
+    cov = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    var_x = sum((a - mx) ** 2 for a in rx)
+    var_y = sum((b - my) ** 2 for b in ry)
+    if not var_x or not var_y:
+        return None
+    return cov / math.sqrt(var_x * var_y)
+
+
+def reading_depth(order: Sequence[str], targets: Collection[str],
+                  depths: Sequence[int] = DEPTHS) -> dict:
+    """Where ``targets`` sit in ``order``: how many inside each cut, and their median position.
+
+    Positions are 1-based; a target missing from ``order`` is simply not counted (``found`` says
+    how many were located at all). The median is the honest summary — a single target buried at
+    position 400 says more about the ordering than any one cut does.
+    """
+    positions = sorted(n for n, job_id in enumerate(order, start=1) if job_id in targets)
+    return {
+        "found": len(positions),
+        "at": {int(d): sum(1 for p in positions if p <= d) for d in depths},
+        "median_position": _median(positions),
+    }
+
+
+def _median(values: Sequence[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[middle])
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def prior_comparison(jobs: list[Job], filters: dict[str, FilterResult],
+                     prefilter: dict[str, AIVerdict], rank: dict[str, AIVerdict],
+                     refine: dict[str, AIVerdict], profile: Profile, *,
+                     top: int = 20, depths: Sequence[int] = DEPTHS) -> dict:
+    """Would the lexical prior have found the good jobs sooner than the screen score did?
+
+    Both orderings are replayed over the jobs that carry a rank verdict — the only jobs whose
+    answer is known — and measured two ways: Spearman against the rank score, and how deep into
+    the ordering the current effective top ``top`` sits.
+
+    The comparison is conservative by construction and cannot be made otherwise: the ranked jobs
+    were themselves chosen by the screen ordering, so the screen score is being graded on its
+    own sample. A prior that ties here is already ahead.
+    """
+    from jobscraper.prior import rank_prior
+    from jobscraper.report import effective_top
+
+    prior = rank_prior(jobs, profile)
+    screen = {job_id: float(v.score) for job_id, v in prefilter.items()}
+    measured = sorted(job_id for job_id in rank if job_id in prior)
+    top_ids, _edge = effective_top(jobs, filters, rank, refine, top=top)
+
+    orderings = {}
+    for name, scores in (("prior", prior), ("screen", screen)):
+        order = sorted(measured, key=lambda i: (-scores.get(i, 0.0), -screen.get(i, 0.0), i))
+        pairs = [(scores.get(i, 0.0), float(rank[i].score)) for i in measured if i in scores]
+        orderings[name] = {
+            "n": len(pairs),
+            "spearman": spearman([p[0] for p in pairs], [p[1] for p in pairs]),
+            **reading_depth(order, set(top_ids), depths),
+        }
+    return {
+        "sample": len(measured),
+        "top": list(top_ids),
+        "depths": tuple(int(d) for d in depths),
+        "orderings": orderings,
+    }

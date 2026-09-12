@@ -956,6 +956,36 @@ def test_rank_queue_leaves_out_screen_rejects_and_jobs_outside_the_window(queue_
     assert rank_queue([], filters, prefilter, {}, min_score=30) == []
 
 
+def test_rank_queue_orders_by_the_prior_when_one_is_given(queue_state):
+    """The prior decides the order; the gate (who is in the queue at all) is unchanged."""
+    jobs, filters, prefilter, rank = queue_state
+    best, tie_a, tie_b = (j.id for j in jobs[:3])
+    # a prior that reverses today's order: the 90-point screen survivor goes last
+    prior = {best: 0.1, tie_a: 5.0, tie_b: 2.0}
+
+    queue = rank_queue(jobs, filters, prefilter, rank, min_score=30, prior=prior)
+
+    assert _ids(queue) == [tie_a, tie_b, best]
+
+
+def test_rank_queue_treats_a_job_the_prior_never_scored_as_zero(queue_state):
+    jobs, filters, prefilter, rank = queue_state
+    best, tie_a, tie_b = (j.id for j in jobs[:3])
+
+    # tie_a is missing from the prior entirely: it falls to 0.0 and the screen score breaks the
+    # tie with `best`, which is also 0.0 there.
+    queue = rank_queue(jobs, filters, prefilter, rank, min_score=30, prior={tie_b: 1.0})
+
+    assert _ids(queue) == [tie_b, best, tie_a]
+
+
+def test_rank_queue_without_a_prior_is_exactly_the_screen_ordering(queue_state):
+    jobs, filters, prefilter, rank = queue_state
+
+    assert rank_queue(jobs, filters, prefilter, rank, min_score=30, prior=None) == rank_queue(
+        jobs, filters, prefilter, rank, min_score=30)
+
+
 def test_effective_top_returns_the_ids_and_the_score_at_the_boundary(shortlist_state):
     jobs, filters, rank, refine = shortlist_state
     best, second, _sinks, rises = (j.id for j in jobs[:4])

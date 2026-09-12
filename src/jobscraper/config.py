@@ -190,6 +190,12 @@ class AIPolicy(BaseModel):
     rank_patience: int = 30
     #: Most jobs one ``rank`` round may newly score whatever the patience rule says; 0 = no bound.
     rank_budget: int = 90
+    #: What the rank queue is ordered by. ``prior``: the free lexical similarity between the
+    #: posting and the profile's own words (:mod:`jobscraper.prior`) — the screen stays a gate
+    #: only. ``screen``: the Sonnet score, the ordering used until 2026-09-12, kept because the
+    #: prior's advantage is a measured claim (``jobscraper audit-prior``) and has to stay
+    #: falsifiable.
+    rank_order: Literal["prior", "screen"] = "prior"
     #: How many of the best-*effective*-scoring jobs the refine pass keeps refined; 0 turns the
     #: stage off. The pass iterates until every one of them carries a refine verdict, and a run
     #: of jobs tied with the N-th goes in whole rather than being split by job id.

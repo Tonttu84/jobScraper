@@ -291,6 +291,17 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
        the Sonnet-ordered queue is far from exhausted. Fixed the same day: `export rank` now
        caps the window to the remaining budget (it had exported 30 with 15 left; the budget was
        only enforced at import).
+     - [x] A queue order worth reading, 2026-09-12: with ~1 600 survivors and 90 ranked per
+       round the *order* is most of the product, and the screen score does not provide one
+       (Spearman −0.06 / +0.23 against the Opus score). The queue is now ordered by a free
+       lexical prior — BM25 over the posting against the profile's own skills, interests,
+       summary and CV, `src/jobscraper/prior.py`, no new dependencies — which scored +0.19 /
+       +0.29 on the same stored verdicts. Sonnet is a **gate** only (relevant, ≥
+       `ai.prefilter_min_score`); it no longer decides who is read first. `ai.rank_order`
+       (`prior` | `screen`) switches every path at once, and `jobscraper audit-prior` compares
+       the two orderings on the current database: Spearman against the stored rank score plus
+       how deep each one buries the effective top 20. The comparison understates the prior,
+       since the only measurable jobs are the ones the screen ordering itself selected.
      - [x] Absolute scale, 2026-09-11: batch-relative scoring corrupts the stop rule — a weak
        window inflates a false entrant into the top 20, a strong one hides real ones — so the rank
        prompt now carries a paragraph forbidding it and every batch is prefixed with three fixed

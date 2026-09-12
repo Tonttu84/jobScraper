@@ -392,3 +392,164 @@ def test_the_audit_module_is_documented_in_the_cli_help() -> None:
 def test_labels_directory_is_git_ignored() -> None:
     ignore = Path(cli_mod.__file__).resolve().parents[2] / ".gitignore"
     assert "data/labels/" in ignore.read_text(encoding="utf-8")
+
+
+# ------------------------------------------------- the prior vs the screen score as an ordering
+# Owner, 2026-09-12: the rank queue is now ordered by a free lexical prior instead of the screen
+# score. `jobscraper audit-prior` is the number that says whether that was worth doing.
+
+
+def test_average_ranks_shares_a_tie_between_the_positions_it_covers() -> None:
+    assert audit.average_ranks([10, 20, 30]) == [1.0, 2.0, 3.0]
+    assert audit.average_ranks([10, 10, 30]) == [1.5, 1.5, 3.0]
+    assert audit.average_ranks([5, 5, 5]) == [2.0, 2.0, 2.0]
+    assert audit.average_ranks([]) == []
+
+
+def test_spearman_has_the_textbook_value_on_a_known_pair() -> None:
+    assert audit.spearman([1, 2, 3, 4, 5], [5, 4, 3, 2, 1]) == pytest.approx(-1.0)
+    assert audit.spearman([1, 2, 3, 4, 5], [2, 1, 4, 3, 5]) == pytest.approx(0.8)
+
+
+def test_spearman_averages_the_ranks_of_a_tie() -> None:
+    # ranks: x -> [1.5, 1.5, 3, 4], y -> [1, 2, 3, 4]
+    assert audit.spearman([1, 1, 2, 3], [1, 2, 3, 4]) == pytest.approx(0.94868, abs=1e-5)
+
+
+def test_spearman_is_unknown_without_two_points_or_any_variation() -> None:
+    assert audit.spearman([1], [2]) is None
+    assert audit.spearman([], []) is None
+    assert audit.spearman([3, 3, 3], [1, 2, 3]) is None  # one side never moves
+
+
+def test_spearman_rejects_mismatched_series() -> None:
+    with pytest.raises(ValueError):
+        audit.spearman([1, 2], [1, 2, 3])
+
+
+def test_reading_depth_counts_the_targets_inside_each_cut_and_their_median() -> None:
+    order = ["a", "b", "c", "d", "e", "f"]
+
+    depth = audit.reading_depth(order, {"a", "d", "zzz"}, depths=(2, 4))
+
+    assert depth["found"] == 2  # "zzz" is not in the ordering at all
+    assert depth["at"] == {2: 1, 4: 2}
+    assert depth["median_position"] == pytest.approx(2.5)  # positions 1 and 4
+
+
+def test_reading_depth_medians_an_odd_number_of_targets_on_the_middle_one() -> None:
+    depth = audit.reading_depth(["a", "b", "c", "d", "e"], {"a", "c", "e"}, depths=(3,))
+    assert depth["found"] == 3 and depth["at"] == {3: 2}
+    assert depth["median_position"] == pytest.approx(3.0)  # positions 1, 3, 5
+
+
+def test_reading_depth_without_a_single_target_in_the_ordering() -> None:
+    depth = audit.reading_depth(["a", "b"], {"c"}, depths=(2,))
+    assert depth == {"found": 0, "at": {2: 0}, "median_position": None}
+
+
+@pytest.fixture
+def prior_state():
+    """Four ranked jobs: the two the ranker liked are the two the screen score buried."""
+    from jobscraper.config import Profile
+
+    profile = Profile(name="T", summary="", skills=["Rust"])
+    jobs = [make_job(1, title="Junior Rust Developer", description="Rust systems work."),
+            make_job(2, title="Rust Platform Engineer", description="More Rust here."),
+            make_job(3, title="Junior Sales Engineer", description="Selling to customers."),
+            make_job(4, title="Junior Office Assistant", description="Filing and calls.")]
+    ids = [j.id for j in jobs]
+    filters = {i: FilterResult(job_id=i, status="keep", location_tier=1) for i in ids}
+    rank = {i: verdict(i, "rank", s) for i, s in zip(ids, [90, 85, 50, 40])}
+    prefilter = {i: verdict(i, "prefilter", s) for i, s in zip(ids, [40, 45, 90, 88])}
+    return jobs, filters, prefilter, rank, profile
+
+
+def verdict(job_id: str, stage: str, score: int):
+    from jobscraper.models import AIVerdict
+
+    return AIVerdict(job_id=job_id, stage=stage, model="m", prompt_version="v1", relevant=True,
+                     score=score, language_ok=True, seniority_ok=True, location_ok=True,
+                     summary="s")
+
+
+def test_prior_comparison_scores_both_orderings_against_the_rank_score(prior_state) -> None:
+    jobs, filters, prefilter, rank, profile = prior_state
+
+    out = audit.prior_comparison(jobs, filters, prefilter, rank, {}, profile, top=2, depths=(2, 4))
+
+    assert out["sample"] == 4
+    assert len(out["top"]) == 2
+    prior, screen = out["orderings"]["prior"], out["orderings"]["screen"]
+    assert prior["spearman"] > screen["spearman"]
+    # the prior puts both top-2 members in the first two positions; the screen score puts neither
+    assert prior["at"] == {2: 2, 4: 2}
+    assert screen["at"] == {2: 0, 4: 2}
+    assert prior["median_position"] == pytest.approx(1.5)
+    assert screen["median_position"] == pytest.approx(3.5)
+
+
+def test_prior_comparison_on_a_database_with_nothing_ranked(prior_state) -> None:
+    jobs, filters, prefilter, _rank, profile = prior_state
+    out = audit.prior_comparison(jobs, filters, prefilter, {}, {}, profile, top=2, depths=(2,))
+    assert out["sample"] == 0 and out["top"] == []
+    assert out["orderings"]["prior"]["spearman"] is None
+
+
+def build_ranked_db(path: Path) -> None:
+    """A database the ``audit-prior`` command can measure: four kept, screened, ranked jobs."""
+    s = Store(path)
+    try:
+        jobs = [make_job(1, title="Junior Rust Developer", description="Rust systems work."),
+                make_job(2, title="Rust Platform Engineer", description="More Rust here."),
+                make_job(3, title="Junior Sales Engineer", description="Selling to customers."),
+                make_job(4, title="Junior Office Assistant", description="Filing and calls.")]
+        s.upsert_jobs(jobs)
+        ids = [j.id for j in jobs]
+        s.save_filter_results([FilterResult(job_id=i, status="keep") for i in ids], "test")
+        from jobscraper.ai.prompts import PROMPT_VERSION
+
+        for i, rank_score, screen in zip(ids, [90, 85, 50, 40], [40, 45, 90, 88]):
+            for stage, score in (("rank", rank_score), ("prefilter", screen)):
+                v = verdict(i, stage, score).model_copy(update={"prompt_version": PROMPT_VERSION})
+                s.save_verdict(v)
+    finally:
+        s.close()
+
+
+def test_audit_prior_prints_both_orderings_and_the_caveat(data_dir) -> None:
+    db = data_dir / "jobs.db"
+    build_ranked_db(db)
+    result = runner.invoke(cli_mod.app, ["--db", str(db), "audit-prior", "--top", "2",
+                                         "--depths", "2,4"], env=WIDE)
+    assert result.exit_code == 0, result.output
+    assert "prior" in result.output and "screen" in result.output
+    assert "4 jobs carry a rank verdict" in result.output
+    assert "understates" in result.output  # the selection-bias caveat
+
+
+def test_audit_prior_says_so_when_nothing_is_ranked(data_dir) -> None:
+    db = data_dir / "jobs.db"
+    Store(db).close()
+    result = runner.invoke(cli_mod.app, ["--db", str(db), "audit-prior"], env=WIDE)
+    assert result.exit_code == 0, result.output
+    assert "nothing to measure" in result.output
+
+
+def test_audit_prior_rejects_an_unreadable_depth_list(data_dir) -> None:
+    db = data_dir / "jobs.db"
+    build_ranked_db(db)
+    result = runner.invoke(cli_mod.app, ["--db", str(db), "audit-prior", "--depths", "20,soon"])
+    assert result.exit_code != 0
+
+
+@pytest.mark.parametrize("depths", ["", "0", "20,-5"])
+def test_audit_prior_rejects_depths_that_are_not_positive_numbers(data_dir, depths: str) -> None:
+    db = data_dir / "jobs.db"
+    build_ranked_db(db)
+    result = runner.invoke(cli_mod.app, ["--db", str(db), "audit-prior", "--depths", depths])
+    assert result.exit_code != 0
+
+
+def test_audit_prior_is_documented_in_the_cli_help() -> None:
+    assert "audit-prior" in cli_mod.__doc__

@@ -131,6 +131,7 @@ from jobscraper.ai.schemas import Ranking, Refinement, Screening  # noqa: E402
 from jobscraper.config import load_settings, paths  # noqa: E402
 from jobscraper.http import Http  # noqa: E402
 from jobscraper.models import AIVerdict, Job  # noqa: E402
+from jobscraper.prior import queue_prior  # noqa: E402
 from jobscraper.report import (  # noqa: E402
     RANK_TOP_WATCH,
     effective_top,
@@ -385,7 +386,8 @@ def export_rank(chunk: int, max_chars: int, top: int | None, window: int | None,
     """Export ONE rank window from the queue, and say where the round's stop rule stands.
 
     The queue is every screen survivor the rule filter still keeps that has no rank verdict yet,
-    best screen score first. A window is ``ai.rank_window`` jobs — the first one of a round
+    ordered by the lexical prior (:mod:`jobscraper.prior`, ``ai.rank_order``) rather than by the
+    screen score, which does not sort. A window is ``ai.rank_window`` jobs — the first one of a round
     ``ai.rank_top_n``, since nothing has been ranked to stop on — and ``--window``/``--top``
     override that. ``import rank`` records what the window did to the effective top N, so the
     next export can tell whether the round is still paying for itself.
@@ -398,7 +400,8 @@ def export_rank(chunk: int, max_chars: int, top: int | None, window: int | None,
     ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
     queue = rank_queue(jobs, filters,
                        store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS), ranked,
-                       min_score=ai.prefilter_min_score)
+                       min_score=ai.prefilter_min_score,
+                       prior=queue_prior(jobs, settings.profile))
     state = _read_rank_state()
     if reset_round or not state:
         state = _new_rank_state()
@@ -455,10 +458,12 @@ def _record_rank_window(store: Store, imported: list[str]) -> None:
         {"ranked": imported, "entered": entered_top(set(state.get("top_before") or []), after, imported)})
     state["exported"], state["top_before"] = [], after
     _write_rank_state(state)
-    queue = rank_queue(store.jobs(seen_within_days=30), filters,
+    jobs = store.jobs(seen_within_days=30)
+    queue = rank_queue(jobs, filters,
                        store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS),
                        store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
-                       min_score=settings.profile.ai.prefilter_min_score)
+                       min_score=settings.profile.ai.prefilter_min_score,
+                       prior=queue_prior(jobs, settings.profile))
     reason, misses, newly = _rank_stop(state, len(queue), settings.profile.ai)
     state["stop_reason"] = reason
     _write_rank_state(state)

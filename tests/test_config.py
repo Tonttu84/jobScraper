@@ -61,3 +61,11 @@ def test_missing_yaml_without_example_is_a_plain_error(tmp_path):
     with pytest.raises(FileNotFoundError) as exc:
         config.load_settings(tmp_path)
     assert "copy" not in str(exc.value)
+
+
+def test_rank_order_defaults_to_the_lexical_prior():
+    """The queue is ordered by the free prior unless a profile asks for the old screen order."""
+    from jobscraper.config import AIPolicy
+
+    assert AIPolicy().rank_order == "prior"
+    assert AIPolicy(rank_order="screen").rank_order == "screen"

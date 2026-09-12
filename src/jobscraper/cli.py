@@ -4,6 +4,7 @@
     jobscraper scrape [SOURCE ...]  # fetch everything from enabled sources into data/jobs.db
     jobscraper filter               # rule filter over jobs seen in the last N days
     jobscraper audit-drops          # sample rule-dropped jobs to label by hand (--score grades them)
+    jobscraper audit-prior          # does the queue's lexical prior order better than the screen score?
     jobscraper prefilter            # Sonnet pass over rule survivors (--batch: half price, async)
     jobscraper rank                 # Opus pass in windows, until the top stops gaining entrants
     jobscraper refine               # one request that ranks the shortlist against itself
@@ -285,6 +286,67 @@ def audit_drops(
                   f"{path.name}", soft_wrap=True)
 
 
+def _rho(value: float | None) -> str:
+    return "—" if value is None else f"{value:+.2f}"
+
+
+def _parse_depths(text: str) -> tuple[int, ...]:
+    """``"20,40,60"`` → ``(20, 40, 60)``; anything else is a usage error, not a traceback."""
+    try:
+        depths = tuple(int(part) for part in text.split(",") if part.strip())
+    except ValueError as exc:
+        raise typer.BadParameter(f"--depths takes a comma-separated list of numbers: {text!r}") from exc
+    if not depths or any(d < 1 for d in depths):
+        raise typer.BadParameter(f"--depths takes positive numbers: {text!r}")
+    return depths
+
+
+@app.command("audit-prior")
+def audit_prior(
+    days: int = 30,
+    top: int | None = typer.Option(None, "--top", help="Width of the effective top to look for (default: profile ai.refine_top_n)"),
+    depths: str = typer.Option("20,40,60", "--depths", help="How deep into the queue to count, comma-separated"),
+) -> None:
+    """Was ordering the rank queue by the lexical prior better than ordering it by the screen score?
+
+    Replays both orderings over the jobs that already carry a rank verdict and prints, side by
+    side, their Spearman against the rank score and how deep each one buries the current
+    effective top N. The ordering decides what the owner ever sees — only ~90 of ~1 600 screen
+    survivors are ranked per round — so it is worth a number rather than an opinion.
+    """
+    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
+    from jobscraper.audit import prior_comparison
+    from jobscraper.report import RANK_TOP_WATCH
+
+    settings = load_settings()
+    cuts = _parse_depths(depths)
+    store = Store()
+    jobs, filters = _load_state(store, days)
+    width = top or settings.profile.ai.refine_top_n or RANK_TOP_WATCH
+    out = prior_comparison(jobs, filters,
+                           store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS),
+                           store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
+                           store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS),
+                           settings.profile, top=width, depths=cuts)
+    if not out["sample"]:
+        console.print("audit-prior: nothing to measure — no job in this database carries a rank "
+                      "verdict under the current prompt versions", soft_wrap=True)
+        return
+
+    console.print(f"audit-prior: {out['sample']} jobs carry a rank verdict; the effective top "
+                  f"{len(out['top'])} is what each ordering is asked to reach", soft_wrap=True)
+    table = Table("ordering", "pairs", "Spearman vs rank score",
+                  *[f"top-{len(out['top'])} in first {d}" for d in cuts], "median position")
+    for name, row in out["orderings"].items():
+        table.add_row(name, str(row["n"]), _rho(row["spearman"]),
+                      *[f"{row['at'][d]}/{row['found']}" for d in cuts],
+                      "—" if row["median_position"] is None else f"{row['median_position']:.1f}")
+    console.print(table)
+    console.print("Caveat: only jobs that already carry a rank verdict can be measured, and those "
+                  "were selected by the screen ordering itself — the comparison understates any "
+                  "new ordering's advantage.", soft_wrap=True)
+
+
 def _load_state(store: Store, days: int) -> tuple[list[Job], dict]:
     jobs = store.jobs(seen_within_days=days)
     filters = store.filter_results()
@@ -355,7 +417,11 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
     the Opus-80+ jobs sat within five screen points of the old cut: the cut was close to a random
     sample of some 1 600 survivors, so strong jobs were simply never being looked at.
 
-    Instead the queue (:func:`jobscraper.report.rank_queue`) is read in windows of
+    The screen is a gate now, not a sorter: the queue is ordered by the free lexical prior in
+    :mod:`jobscraper.prior` (``ai.rank_order``), which beat the screen score on the same stored
+    verdicts. ``jobscraper audit-prior`` re-measures both orderings against this database.
+
+    The queue (:func:`jobscraper.report.rank_queue`) is read in windows of
     ``ai.rank_window`` — the first one ``ai.rank_top_n`` deep, because a fresh round has no
     evidence to stop on — and after every window the effective top ``ai.refine_top_n`` is
     rebuilt. The round ends when the queue runs out, when ``ai.rank_patience`` jobs in a row have
@@ -368,6 +434,7 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
     _setup_logging(verbose)
     from jobscraper.ai.client import AIStage, estimate_cost
     from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS, rank_anchor_block
+    from jobscraper.prior import queue_prior
     from jobscraper.report import (
         RANK_TOP_WATCH,
         effective_top,
@@ -384,7 +451,9 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
     pre = store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS)
     ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
     refined = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)  # fixed for the whole round
-    queue = rank_queue(jobs, filters, pre, {} if force else ranked, min_score=ai.prefilter_min_score)
+    queue = rank_queue(jobs, filters, pre, {} if force else ranked,
+                       min_score=ai.prefilter_min_score,
+                       prior=queue_prior(jobs, settings.profile))
     if not queue:
         console.print("rank: nothing to rank — every screen survivor already carries a rank "
                       "verdict (--force re-scores them)", soft_wrap=True)
