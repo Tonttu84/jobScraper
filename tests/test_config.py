@@ -69,3 +69,12 @@ def test_rank_order_defaults_to_the_lexical_prior():
 
     assert AIPolicy().rank_order == "prior"
     assert AIPolicy(rank_order="screen").rank_order == "screen"
+
+
+def test_gone_after_misses_defaults_to_one_complete_run():
+    """One complete run of a source that misses a posting is enough to call it taken down."""
+    from jobscraper.config import Profile
+
+    profile = Profile(name="x", summary="y")
+    assert profile.gone_after_misses == 1
+    assert Profile(name="x", summary="y", gone_after_misses=0).gone_after_misses == 0

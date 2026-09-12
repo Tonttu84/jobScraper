@@ -98,8 +98,18 @@ class SourceContext:
 class Source(Protocol):
     name: str
     description: str
+    #: This adapter enumerates the source's whole listing, so a posting that does not come back
+    #: has been taken down. False for a keyword search (LinkedIn, Indeed), where a posting
+    #: missing from today's results means nothing at all. Adapters are duck-typed, so read it
+    #: through :func:`enumerates_listing` rather than as an attribute.
+    complete_listing: bool = True
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]: ...
+
+
+def enumerates_listing(source: Source) -> bool:
+    """Whether a posting this source did not return can be called taken down (default: yes)."""
+    return bool(getattr(source, "complete_listing", True))
 
 
 _REGISTRY: dict[str, Source] = {}

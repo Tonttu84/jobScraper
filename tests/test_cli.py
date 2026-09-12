@@ -384,12 +384,17 @@ def _ai_config(monkeypatch, **values):
 
 
 def _queued_jobs(count: int) -> list:
-    """``count`` rule-kept jobs with descending screen scores, so the queue order is known."""
+    """``count`` rule-kept jobs with descending screen scores, so the queue order is known.
+
+    Their source is one these tests never scrape: a scrape of ``arbeitnow`` enumerates that
+    board whole, and postings written straight into the database are not on it, so they would
+    (correctly) be marked as no longer listed and leave the queue.
+    """
     from datetime import UTC, datetime
 
     from jobscraper.models import Job
 
-    jobs = [Job(source="arbeitnow", source_id=f"q-{i:02d}", title=f"Queued Developer {i:02d}",
+    jobs = [Job(source="teamtailor", source_id=f"q-{i:02d}", title=f"Queued Developer {i:02d}",
                 url=f"https://jobs.example.test/q-{i:02d}", company="Example Oy",
                 description="We build backend services in Python.", country="FI",
                 remote="hybrid", posted_at=datetime.now(UTC))
@@ -1369,3 +1374,117 @@ def test_stats_public_without_any_rows_says_so(data_dir, stats_dir):
     result = runner.invoke(cli_mod.app, ["stats", "--public"])
     assert result.exit_code == 0, result.output
     assert "no runs recorded yet" in result.output.lower()
+
+
+# ------------------------------------------- postings a board no longer lists
+
+
+def _ghost_job(source: str = "arbeitnow"):
+    """A posting already in the database that the next scrape will not bring back."""
+    from jobscraper.models import Job
+
+    job = Job(source=source, source_id="ghost", url="https://jobs.example.test/ghost",
+              title="Vanished Developer", company="Example Oy")
+    store = store_mod.Store()
+    try:
+        store.upsert_jobs([job])
+    finally:
+        store.close()
+    return job
+
+
+def _misses(job_id: str) -> int:
+    store = store_mod.Store()
+    try:
+        row = store.conn.execute("SELECT missed_runs FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return row["missed_runs"]
+    finally:
+        store.close()
+
+
+def test_scrape_counts_a_posting_its_source_stopped_listing(data_dir, fake_http):
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
+    ghost = _ghost_job()
+
+    result = runner.invoke(cli_mod.app, ["scrape", "-v", "arbeitnow"])
+    assert result.exit_code == 0, result.output
+    assert _misses(ghost.id) == 1
+
+    store = store_mod.Store()
+    try:
+        assert store.gone_ids(1) == {ghost.id}
+        # everything the fetch brought back is stamped with the run that brought it
+        listed = {j.id for j in store.jobs()} - {ghost.id}
+        assert listed and not (listed & store.gone_ids(1))
+    finally:
+        store.close()
+
+
+def test_a_limited_scrape_marks_nothing_missing(data_dir, fake_http):
+    """``--limit`` fetches part of the listing on purpose; the rest is not gone."""
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
+    ghost = _ghost_job()
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow", "--limit", "1"]).exit_code == 0
+    assert _misses(ghost.id) == 0
+
+
+def test_a_failed_source_marks_nothing_missing(data_dir, fake_http, monkeypatch):
+    from jobscraper.sources.base import get_source
+
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
+    ghost = _ghost_job()
+
+    def boom(ctx):
+        raise RuntimeError("the board is down")
+
+    monkeypatch.setattr(get_source("arbeitnow"), "fetch", boom)
+    result = runner.invoke(cli_mod.app, ["scrape", "arbeitnow"])
+    assert result.exit_code == 0, result.output
+    assert _misses(ghost.id) == 0
+
+    store = store_mod.Store()
+    try:
+        assert store.latest_runs()[0]["error"] == "RuntimeError: the board is down"
+    finally:
+        store.close()
+
+
+def test_a_source_that_fetched_nothing_marks_nothing_missing(data_dir, fake_http, monkeypatch):
+    from jobscraper.sources.base import get_source
+
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
+    ghost = _ghost_job()
+    monkeypatch.setattr(get_source("arbeitnow"), "fetch", lambda ctx: iter([]))
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
+    assert _misses(ghost.id) == 0
+
+
+def test_a_keyword_search_source_marks_nothing_missing(data_dir, fake_http, monkeypatch):
+    """LinkedIn and Indeed search by keyword: absence from today's results means nothing."""
+    from jobscraper.sources.base import get_source
+
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
+    ghost = _ghost_job()
+    monkeypatch.setattr(get_source("arbeitnow"), "complete_listing", False, raising=False)
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
+    assert _misses(ghost.id) == 0
+
+
+def test_the_report_leaves_out_a_posting_that_is_no_longer_listed(data_dir, fake_http):
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
+    ghost = _ghost_job()
+    assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
+    assert runner.invoke(cli_mod.app, ["filter"]).exit_code == 0
+
+    result = runner.invoke(cli_mod.app, ["report"])
+    assert result.exit_code == 0, result.output
+    store = store_mod.Store()
+    try:
+        snap = store.report()
+        assert snap.counts["gone"] == 1
+        assert ghost.id not in {i.job_id for i in snap.items}
+        assert store.jobs(ids=[ghost.id])  # the row is kept, it is only not a candidate
+    finally:
+        store.close()
+    text = (data_dir / "results").glob("report-*.md")
+    assert "Left out: 1 posting no longer listed on their board" in next(text).read_text(encoding="utf-8")

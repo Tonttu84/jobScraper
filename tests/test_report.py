@@ -16,6 +16,7 @@ from jobscraper.report import (
     effective_top,
     entered_top,
     export_jsonl,
+    gone_line,
     miss_run,
     previous_report,
     rank_anchors,
@@ -323,7 +324,7 @@ def test_build_snapshot_counts_match_the_markdown_header(tmp_path, state):
     jobs, filters, prefilter, ranked = state
     snap = build_snapshot(jobs, filters, prefilter, ranked, days=3, prompt_version="v1")
     assert snap.counts == {"jobs": 3, "keep": 2, "review": 1, "drop": 0,
-                           "prefiltered": 2, "ranked": 1}
+                           "prefiltered": 2, "ranked": 1, "gone": 0}
 
     text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text("utf-8")
     assert f"Jobs in DB: {snap.counts['jobs']}" in text
@@ -1074,3 +1075,30 @@ def test_miss_run_counts_the_rankings_since_the_last_entrant():
     assert miss_run([(15, 1), (15, 0), (15, 0)]) == 30
     assert miss_run([(15, 0), (15, 2)]) == 0        # an entrant resets the run
     assert miss_run([(15, 0), (0, 0)]) == 15        # a window that scored nothing adds nothing
+
+
+# ------------------------------------ postings a board no longer lists
+
+
+def test_write_report_owns_up_to_the_postings_it_left_out(tmp_path, state):
+    """The shortlist shrinks for a reason, and the report says which one."""
+    jobs, filters, prefilter, ranked = state
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md", gone=2).read_text(
+        encoding="utf-8")
+    assert "Left out: 2 postings no longer listed on their board" in text
+
+    quiet = write_report(jobs, filters, prefilter, ranked, tmp_path / "q.md").read_text(
+        encoding="utf-8")
+    assert "Left out:" not in quiet
+
+
+def test_gone_line_counts_one_posting_in_the_singular():
+    assert gone_line(1) == "Left out: 1 posting no longer listed on their board"
+    assert gone_line(0) == ""
+
+
+def test_build_snapshot_counts_the_postings_left_out(state):
+    jobs, filters, prefilter, ranked = state
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1", gone=3)
+    assert snap.counts["gone"] == 3
+    assert snap.counts["jobs"] == 3  # the jobs that are still listed, as everywhere else

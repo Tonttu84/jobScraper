@@ -1468,3 +1468,33 @@ def test_stability_follows_the_profile(profile_dirs, monkeypatch, capsys):
     assert [e["job_id"] for e in _chunk_entries(out / "run-a")] == [job.id]
     assert not (profile_dirs / "data" / "exports").exists()
     assert "1 jobs" in capsys.readouterr().out
+
+
+def _mark_gone(gone: Job, back: list[Job]) -> None:
+    """One complete run of the source that brought ``back`` and did not bring ``gone``."""
+    store = store_mod.Store()
+    try:
+        run_id = store.start_run(gone.source)
+        store.upsert_jobs(back, run_id)
+        store.mark_missing(gone.source, run_id)
+    finally:
+        store.close()
+
+
+def test_export_prefilter_skips_a_posting_the_board_no_longer_lists(data_dir, monkeypatch, capsys):
+    """A posting nobody can apply to must not cost a screening call."""
+    jobs = [_job(1, "Junior Go Developer"), _job(2, "Graduate Backend Engineer")]
+    _seed(jobs, ["keep", "keep"])
+    _mark_gone(jobs[1], [jobs[0]])
+
+    _run(monkeypatch, "export", "prefilter", "--chunk", "50")
+
+    out = data_dir / "exports" / "ai" / "prefilter"
+    assert [e["job_id"] for e in _chunk_entries(out)] == [jobs[0].id]
+    # the row is untouched: a lookup by id still finds it, with its filter result
+    store = store_mod.Store()
+    try:
+        assert [j.id for j in store.jobs(ids=[jobs[1].id])] == [jobs[1].id]
+        assert jobs[1].id in store.filter_results()
+    finally:
+        store.close()

@@ -251,6 +251,7 @@ class Profile(BaseModel):
     ai: AIPolicy = Field(default_factory=AIPolicy)
     web: WebPolicy = Field(default_factory=WebPolicy)
     max_age_days: int = 45  # postings older than this are dropped by the rule filter (unknown dates stay)
+    gone_after_misses: int = 1  # consecutive complete runs of its source that must miss a posting before it counts as taken down; 0 = off
 
 
 class SourceConfig(BaseModel):

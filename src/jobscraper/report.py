@@ -286,9 +286,16 @@ def prefilter_row(job: Job, score: int | None) -> str:
     return f"| {score} | [{job.title}]({job.url}) | {job.company or ''} | {job.location_raw or ''} / {job.remote} | {job.source} |"
 
 
+def gone_line(gone: int) -> str:
+    """How the report owns up to the postings it left out (empty when there are none)."""
+    if not gone:
+        return ""
+    return f"Left out: {gone} posting{'s' if gone != 1 else ''} no longer listed on their board"
+
+
 def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
                  ranked: dict[str, AIVerdict], path: Path | None = None, cost: dict | None = None,
-                 refine: dict[str, AIVerdict] | None = None) -> Path:
+                 refine: dict[str, AIVerdict] | None = None, gone: int = 0) -> Path:
     refine = refine or {}
     path = path or paths().results / f"report-{datetime.now(UTC):%Y-%m-%d}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -302,6 +309,8 @@ def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: d
     lines.append(f"Jobs in DB: {len(jobs)} · rule-kept: {sum(f.status == 'keep' for f in filters.values())} · "
                  f"review: {sum(f.status == 'review' for f in filters.values())} · dropped: {sum(f.status == 'drop' for f in filters.values())} · "
                  f"prefiltered: {len(prefilter)} · ranked: {len(ranked)}")
+    if gone:
+        lines.append(gone_line(gone))
     if cost:
         lines.append(f"Estimated API cost this state: ${cost.get('total', 0):.2f} " + " ".join(f"({m}: ${c:.2f})" for m, c in cost.items() if m != 'total'))
     lines.append("")
@@ -342,7 +351,7 @@ def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: d
 def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
                    ranked: dict[str, AIVerdict], *, days: int, cost: dict | None = None,
                    path: Path | None = None, prompt_version: str,
-                   refine: dict[str, AIVerdict] | None = None) -> ReportSnapshot:
+                   refine: dict[str, AIVerdict] | None = None, gone: int = 0) -> ReportSnapshot:
     """The same content as :func:`write_report`, in structured form for the DB and the web UI.
 
     Sections and their ordering mirror the markdown exactly: ranked by effective score desc
@@ -385,6 +394,8 @@ def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter:
         "drop": sum(f.status == "drop" for f in filters.values()),
         "prefiltered": len(prefilter),
         "ranked": len(ranked),
+        # Postings their board has stopped listing: not in `jobs`, and not in any section.
+        "gone": gone,
     }
     return ReportSnapshot(days=days, prompt_version=prompt_version, counts=counts,
                           cost=dict(cost or {}), path=str(path) if path else None, items=items,

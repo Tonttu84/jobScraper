@@ -142,13 +142,23 @@ from jobscraper.report import (  # noqa: E402
     refine_shortlist,
 )
 from jobscraper.sources import linkedin  # noqa: E402
-from jobscraper.store import Store  # noqa: E402
+from jobscraper.store import Store, still_listed  # noqa: E402
 
 MODEL = {"prefilter": "claude-sonnet-5 (subagent)", "rank": "claude-opus-5 (subagent)",
          "refine": "claude-fable-5-1 (subagent)"}
 
 # Module-level indirection so tests can replace the network call.
 fetch_description = linkedin.fetch_description
+
+
+def _listed(store: Store, settings) -> list[Job]:
+    """Recent postings their board still lists — what every stage here may spend a call on.
+
+    A posting the source has stopped returning keeps its row and its verdicts, it just stops
+    being a candidate (``profile.gone_after_misses``, 0 turns that off).
+    """
+    return still_listed(store.jobs(seen_within_days=30), store,
+                        settings.profile.gone_after_misses)
 
 
 def _out_dir(stage: str) -> Path:
@@ -185,7 +195,7 @@ def hydrate_top_linkedin(top: int, max_fetch: int) -> None:
     """
     settings = load_settings()
     store = Store()
-    jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
+    jobs = {j.id: j for j in _listed(store, settings)}
     survivors = _survivors(store, settings, store.filter_results())
     ranks = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
     log = _hydration_log()
@@ -304,7 +314,7 @@ def export(stage: str, chunk: int, max_chars: int, export_all: bool = False, sam
     """The prefilter export: every rule-filter survivor that has not been screened yet."""
     settings = load_settings()
     store = Store()
-    jobs = {j.id: j for j in store.jobs(seen_within_days=30)}
+    jobs = {j.id: j for j in _listed(store, settings)}
     filters = store.filter_results()
     # Refill semantics: rule-filter survivors that don't already carry a prefilter verdict under
     # the current prompt version, so a hydration round only re-screens the jobs it cleared.
@@ -374,7 +384,7 @@ def _print_rank_stop(reason: str, misses: int, newly: int, ai) -> None:
 
 def _rank_top_ids(store: Store, settings, filters: dict) -> list[str]:
     """The effective top ``ai.refine_top_n`` as it stands in the database right now."""
-    ids, _edge = effective_top(store.jobs(seen_within_days=30), filters,
+    ids, _edge = effective_top(_listed(store, settings), filters,
                                store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
                                store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS),
                                top=settings.profile.ai.refine_top_n or RANK_TOP_WATCH)
@@ -396,7 +406,7 @@ def export_rank(chunk: int, max_chars: int, top: int | None, window: int | None,
     ai = settings.profile.ai
     store = Store()
     filters = store.filter_results()
-    jobs = store.jobs(seen_within_days=30)
+    jobs = _listed(store, settings)
     ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
     queue = rank_queue(jobs, filters,
                        store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS), ranked,
@@ -458,7 +468,7 @@ def _record_rank_window(store: Store, imported: list[str]) -> None:
         {"ranked": imported, "entered": entered_top(set(state.get("top_before") or []), after, imported)})
     state["exported"], state["top_before"] = [], after
     _write_rank_state(state)
-    jobs = store.jobs(seen_within_days=30)
+    jobs = _listed(store, settings)
     queue = rank_queue(jobs, filters,
                        store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS),
                        store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
@@ -490,7 +500,7 @@ def export_refine(top: int | None, max_chars: int, force: bool = False) -> None:
     filters = store.filter_results()
     n = top or settings.profile.ai.refine_top_n
     placed = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
-    shortlist, _offset = refine_shortlist(store.jobs(seen_within_days=30), filters,
+    shortlist, _offset = refine_shortlist(_listed(store, settings), filters,
                                           store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS), placed,
                                           top=n, first_pass=top or settings.profile.ai.refine_first_pass)
     refined = {} if force else placed

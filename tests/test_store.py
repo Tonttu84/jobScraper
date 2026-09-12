@@ -17,7 +17,7 @@ from jobscraper.models import (
     ReportItem,
     ReportSnapshot,
 )
-from jobscraper.store import Store
+from jobscraper.store import Store, still_listed
 
 
 def make_job(source: str = "arbeitnow", source_id: str = "1", **kw) -> Job:
@@ -590,3 +590,175 @@ def test_new_jobs_since_counts_by_first_seen(store):
     assert store.new_jobs_since(None) == 3
     assert store.new_jobs_since(cut) == 3  # the boundary row itself counts (>=)
     assert store.new_jobs_since(datetime.now(UTC) + timedelta(days=1)) == 0
+
+
+# ------------------------------------------------ postings a board no longer lists
+
+
+def test_start_run_returns_an_id_before_the_jobs_are_stored(store):
+    """The run row has to exist first: its id is what the jobs are stamped with."""
+    run_id = store.start_run("arbeitnow")
+    row = store.conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+    assert (row["source"], row["fetched"], row["new"], row["error"]) == ("arbeitnow", 0, 0, None)
+    assert row["started_at"]
+
+    store.finish_run(run_id, fetched=7, new=3)
+    row = store.conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+    assert (row["fetched"], row["new"], row["error"]) == (7, 3, None)
+
+
+def test_finish_run_records_the_error_of_a_failed_source(store):
+    run_id = store.start_run("jobly")
+    store.finish_run(run_id, 0, 0, "SourceHTTPError: 503")
+    row = store.conn.execute("SELECT fetched, new, error FROM runs WHERE id=?", (run_id,)).fetchone()
+    assert tuple(row) == (0, 0, "SourceHTTPError: 503")
+
+
+def test_log_run_still_writes_one_completed_row(store):
+    """`log_run` is start+finish, so a caller that only wants the record keeps working."""
+    run_id = store.log_run("arbeitnow", 5, 2)
+    row = store.conn.execute("SELECT source, fetched, new, error FROM runs WHERE id=?", (run_id,)).fetchone()
+    assert tuple(row) == ("arbeitnow", 5, 2, None)
+
+
+def _gone_columns(store, job_id):
+    row = store.conn.execute("SELECT last_run_id, missed_runs FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return (row["last_run_id"], row["missed_runs"])
+
+
+def test_upsert_without_a_run_id_leaves_the_run_columns_alone(store):
+    job = make_job(source_id="1")
+    store.upsert_jobs([job])
+    assert _gone_columns(store, job.id) == (None, 0)
+
+    run_id = store.start_run("arbeitnow")
+    store.upsert_jobs([job], run_id)
+    store.mark_missing("arbeitnow", store.start_run("arbeitnow"))
+    assert _gone_columns(store, job.id) == (run_id, 1)
+
+    store.upsert_jobs([job])  # a caller that knows nothing about runs must not reset the counter
+    assert _gone_columns(store, job.id) == (run_id, 1)
+
+
+def test_upsert_with_a_run_id_stamps_new_and_known_jobs(store):
+    run_id = store.start_run("arbeitnow")
+    job = make_job(source_id="1")
+    assert store.upsert_jobs([job], run_id) == 1
+    assert _gone_columns(store, job.id) == (run_id, 0)
+
+    later = store.start_run("arbeitnow")
+    assert store.upsert_jobs([job], later) == 0
+    assert _gone_columns(store, job.id) == (later, 0)
+
+
+def test_mark_missing_counts_only_the_jobs_of_that_source(store):
+    first = store.start_run("arbeitnow")
+    kept = make_job(source="arbeitnow", source_id="1")
+    dropped = make_job(source="arbeitnow", source_id="2")
+    other = make_job(source="teamtailor", source_id="3")
+    store.upsert_jobs([kept, dropped], first)
+    store.upsert_jobs([other], store.start_run("teamtailor"))
+
+    second = store.start_run("arbeitnow")
+    store.upsert_jobs([kept], second)
+    assert store.mark_missing("arbeitnow", second) == 1
+
+    assert _gone_columns(store, kept.id) == (second, 0)
+    assert _gone_columns(store, dropped.id) == (first, 1)
+    assert _gone_columns(store, other.id)[1] == 0  # another source's run says nothing about it
+
+
+def test_mark_missing_counts_a_job_that_predates_the_mechanism(store):
+    """A row written before ``last_run_id`` existed reads as NULL, which is not this run."""
+    job = make_job(source_id="1")
+    store.upsert_jobs([job])
+    assert store.mark_missing("arbeitnow", store.start_run("arbeitnow")) == 1
+    assert _gone_columns(store, job.id) == (None, 1)
+
+
+def test_a_job_that_comes_back_starts_counting_from_zero_again(store):
+    job = make_job(source_id="1")
+    store.upsert_jobs([job], store.start_run("arbeitnow"))
+    for _ in range(2):
+        store.mark_missing("arbeitnow", store.start_run("arbeitnow"))
+    assert store.gone_ids(1) == {job.id}
+
+    back = store.start_run("arbeitnow")
+    store.upsert_jobs([job], back)
+    assert _gone_columns(store, job.id) == (back, 0)
+    assert store.gone_ids(1) == set()
+
+
+def test_gone_ids_at_the_threshold_and_with_the_mechanism_off(store):
+    once = make_job(source_id="1")
+    twice = make_job(source_id="2")
+    store.upsert_jobs([once, twice], store.start_run("arbeitnow"))
+    for _ in range(2):  # two complete runs that only `once` came back in
+        run_id = store.start_run("arbeitnow")
+        store.upsert_jobs([once], run_id)
+        store.mark_missing("arbeitnow", run_id)
+
+    assert store.gone_ids(1) == {twice.id}
+    assert store.gone_ids(2) == {twice.id}
+    assert store.gone_ids(3) == set()
+    assert store.gone_ids(0) == set()   # 0 turns the mechanism off
+    assert store.gone_ids(-1) == set()
+
+
+def test_still_listed_keeps_everything_the_board_still_shows(store):
+    here = make_job(source_id="1")
+    gone = make_job(source_id="2")
+    store.upsert_jobs([here, gone], store.start_run("arbeitnow"))
+    store.mark_missing("arbeitnow", store.start_run("arbeitnow"))
+    store.upsert_jobs([here], store.start_run("arbeitnow"))
+
+    jobs = store.jobs()
+    assert {j.id for j in still_listed(jobs, store, 1)} == {here.id}
+    assert {j.id for j in still_listed(jobs, store, 0)} == {here.id, gone.id}
+    # the row itself is untouched: a lookup by id still finds it
+    assert [j.id for j in store.jobs(ids=[gone.id])] == [gone.id]
+
+
+#: The jobs table as it was before postings could be marked as no longer listed.
+_PRE_GONE_SCHEMA = """
+CREATE TABLE jobs (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    company TEXT,
+    country TEXT,
+    city TEXT,
+    remote TEXT,
+    posted_at TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+"""
+
+
+def test_an_older_database_gains_the_gone_columns_when_it_is_opened(tmp_path):
+    """`CREATE TABLE IF NOT EXISTS` cannot widen a table that exists: the open migrates it."""
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(_PRE_GONE_SCHEMA)
+    job = make_job(source_id="1")
+    conn.execute(
+        "INSERT INTO jobs (id, source, source_id, url, title, first_seen, last_seen, data)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (job.id, job.source, job.source_id, job.url, job.title, "2026-09-01T00:00:00+00:00",
+         "2026-09-01T00:00:00+00:00", job.model_dump_json()),
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+    try:
+        assert _gone_columns(store, job.id) == (None, 0)
+        assert store.gone_ids(1) == set()
+        assert store.mark_missing("arbeitnow", store.start_run("arbeitnow")) == 1
+        assert store.gone_ids(1) == {job.id}
+    finally:
+        store.close()

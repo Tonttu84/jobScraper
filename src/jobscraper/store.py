@@ -36,7 +36,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     posted_at TEXT,
     first_seen TEXT NOT NULL,
     last_seen TEXT NOT NULL,
-    data TEXT NOT NULL
+    data TEXT NOT NULL,
+    -- Which scrape last brought this posting back, and how many complete runs of its source
+    -- have missed it since (see Store.mark_missing / Store.gone_ids).
+    last_run_id INTEGER,
+    missed_runs INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS jobs_source ON jobs(source);
 CREATE INDEX IF NOT EXISTS jobs_last_seen ON jobs(last_seen);
@@ -125,7 +129,11 @@ CREATE INDEX IF NOT EXISTS report_items_report ON report_items(report_id, sectio
 
 #: Columns added to :data:`SCHEMA` after databases already existed, as (table, column, type).
 #: :meth:`Store._migrate` adds each of them to a database that predates it.
-_ADDED_COLUMNS = (("reports", "refine_offset", "REAL"),)
+_ADDED_COLUMNS = (
+    ("reports", "refine_offset", "REAL"),
+    ("jobs", "last_run_id", "INTEGER"),
+    ("jobs", "missed_runs", "INTEGER NOT NULL DEFAULT 0"),
+)
 
 
 def _now() -> str:
@@ -252,23 +260,32 @@ class Store:
             raise
 
     # ------------------------------------------------------------------ jobs
-    def upsert_jobs(self, jobs: list[Job]) -> int:
-        """Insert new jobs, refresh last_seen for known ones. Returns number of new jobs."""
+    def upsert_jobs(self, jobs: list[Job], run_id: int | None = None) -> int:
+        """Insert new jobs, refresh last_seen for known ones. Returns number of new jobs.
+
+        ``run_id`` (from :meth:`start_run`) records *which* scrape saw each posting and clears
+        its miss counter, which is what :meth:`mark_missing` later reads. Without one the two
+        columns are left exactly as they were, so a caller that is not a scrape — a LinkedIn
+        description top-up, say — cannot make a posting look freshly seen.
+        """
         new = 0
         now = _now()
         with self.tx() as c:
             for job in jobs:
                 row = c.execute("SELECT id FROM jobs WHERE id=?", (job.id,)).fetchone()
                 data = job.model_dump_json()
-                if row:
+                if row and run_id is None:
                     c.execute("UPDATE jobs SET last_seen=?, data=?, title=?, url=? WHERE id=?", (now, data, job.title, job.url, job.id))
+                elif row:
+                    c.execute("UPDATE jobs SET last_seen=?, data=?, title=?, url=?, last_run_id=?, missed_runs=0 WHERE id=?",
+                              (now, data, job.title, job.url, run_id, job.id))
                 else:
                     new += 1
                     c.execute(
-                        "INSERT INTO jobs (id, source, source_id, url, title, company, country, city, remote, posted_at, first_seen, last_seen, data)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO jobs (id, source, source_id, url, title, company, country, city, remote, posted_at, first_seen, last_seen, data, last_run_id)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (job.id, job.source, job.source_id, job.url, job.title, job.company, job.country, job.city, job.remote,
-                         job.posted_at.isoformat() if job.posted_at else None, now, now, data),
+                         job.posted_at.isoformat() if job.posted_at else None, now, now, data, run_id),
                     )
         return new
 
@@ -485,9 +502,52 @@ class Store:
             return c.execute(sql, args).rowcount
 
     # ------------------------------------------------------------------- runs
-    def log_run(self, source: str, fetched: int, new: int, error: str | None = None) -> None:
+    def start_run(self, source: str) -> int:
+        """Open a ``runs`` row for a scrape that is about to start, and return its id.
+
+        The id has to exist before the jobs are upserted, because that is what stamps each
+        posting with the run that saw it. Timestamps cannot stand in for the link: the row used
+        to be written *after* the jobs, so every posting looked older than its own run.
+        """
         with self.tx() as c:
-            c.execute("INSERT INTO runs (started_at, source, fetched, new, error) VALUES (?,?,?,?,?)", (_now(), source, fetched, new, error))
+            cur = c.execute("INSERT INTO runs (started_at, source, fetched, new) VALUES (?,?,0,0)", (_now(), source))
+        return cur.lastrowid
+
+    def finish_run(self, run_id: int, fetched: int, new: int, error: str | None = None) -> None:
+        """Fill in what the run ended up doing (or the error that ended it)."""
+        with self.tx() as c:
+            c.execute("UPDATE runs SET fetched=?, new=?, error=? WHERE id=?", (fetched, new, error, run_id))
+
+    def log_run(self, source: str, fetched: int, new: int, error: str | None = None) -> int:
+        """One completed ``runs`` row, for a caller that has nothing to stamp jobs with."""
+        run_id = self.start_run(source)
+        self.finish_run(run_id, fetched, new, error)
+        return run_id
+
+    def mark_missing(self, source: str, run_id: int) -> int:
+        """Count one miss against every posting of ``source`` that ``run_id`` did not bring back.
+
+        Only call this for a run that actually enumerated the whole listing (see
+        ``Source.complete_listing``): a failed, empty or limited fetch says nothing about what
+        the board still shows. A row that predates the mechanism has ``last_run_id`` NULL, which
+        is not this run, so it starts counting from its first complete run. Returns rows touched.
+        """
+        with self.tx() as c:
+            cur = c.execute(
+                "UPDATE jobs SET missed_runs = missed_runs + 1"
+                " WHERE source=? AND (last_run_id IS NULL OR last_run_id != ?)",
+                (source, run_id),
+            )
+        return cur.rowcount
+
+    def gone_ids(self, min_misses: int) -> set[str]:
+        """Postings missed by at least ``min_misses`` complete runs of their source in a row.
+
+        ``min_misses <= 0`` turns the whole mechanism off and returns nothing.
+        """
+        if min_misses <= 0:
+            return set()
+        return {r["id"] for r in self.conn.execute("SELECT id FROM jobs WHERE missed_runs >= ?", (min_misses,))}
 
     def latest_runs(self) -> list[dict]:
         """The newest ``runs`` row per source — one line per source of the last scrape."""
@@ -519,6 +579,21 @@ class Store:
 
     def close(self) -> None:
         self.conn.close()
+
+
+def partition_listed(jobs: list[Job], store: Store, min_misses: int) -> tuple[list[Job], list[Job]]:
+    """Split ``jobs`` into the ones their board still lists and the ones it has dropped.
+
+    Nothing is deleted: a posting that is gone keeps its row, its verdicts and its history, it
+    just stops being a candidate for the AI stages and the report.
+    """
+    gone = store.gone_ids(min_misses)
+    return [j for j in jobs if j.id not in gone], [j for j in jobs if j.id in gone]
+
+
+def still_listed(jobs: list[Job], store: Store, min_misses: int) -> list[Job]:
+    """Only the postings their board still lists — see :func:`partition_listed`."""
+    return partition_listed(jobs, store, min_misses)[0]
 
 
 def dumps(obj) -> str:  # small helper used by exports

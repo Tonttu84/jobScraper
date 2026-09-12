@@ -131,6 +131,8 @@ def parse_row(rec: dict[str, Any], queried_location: str | None = None) -> Job |
 class LinkedIn:
     name = NAME
     description = "LinkedIn public job search (via python-jobspy)"
+    # Keyword searches, not a listing: a posting missing from today's results says nothing.
+    complete_listing = False
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]:
         queries = [str(q).strip() for q in (ctx.opt("queries") or []) if str(q).strip()]

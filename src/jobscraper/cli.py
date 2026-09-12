@@ -47,8 +47,21 @@ from jobscraper.facets import compute_all
 from jobscraper.filters import RULES_VERSION, apply_rules, dedupe
 from jobscraper.http import Http
 from jobscraper.models import Job
-from jobscraper.sources.base import SourceContext, all_sources, get_source, take
-from jobscraper.store import Store, copy_db, default_db_path, new_run_db
+from jobscraper.sources.base import (
+    SourceContext,
+    all_sources,
+    enumerates_listing,
+    get_source,
+    take,
+)
+from jobscraper.store import (
+    Store,
+    copy_db,
+    default_db_path,
+    new_run_db,
+    partition_listed,
+    still_listed,
+)
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help=__doc__)
 console = Console()
@@ -169,14 +182,23 @@ def scrape(names: list[str] | None = typer.Argument(None), verbose: bool = typer
             ctx = SourceContext(http=http, profile=settings.profile, options=cfg.options if cfg else {}, limit=limit,
                                 browser=browser)
             t0 = time.monotonic()
+            # The run row is opened first: its id is what stamps every posting this fetch
+            # brings back, and the postings that keep an older id are the ones the source has
+            # stopped listing.
+            run_id = store.start_run(name)
             try:
                 jobs = list(take(src.fetch(ctx), limit))
             except Exception as exc:
                 console.print(f"[red]✗ {name}[/red]: {type(exc).__name__}: {exc}")
-                store.log_run(name, 0, 0, f"{type(exc).__name__}: {exc}")
+                store.finish_run(run_id, 0, 0, f"{type(exc).__name__}: {exc}")
                 continue
-            new = store.upsert_jobs(jobs)
-            store.log_run(name, len(jobs), new)
+            new = store.upsert_jobs(jobs, run_id)
+            store.finish_run(run_id, len(jobs), new)
+            # Only a run that really enumerated the whole listing may call anything gone: an
+            # empty fetch, a keyword-search source and a --limit'ed fetch all say nothing.
+            if jobs and limit is None and enumerates_listing(src):
+                log.debug("%s: %d posting(s) did not come back in this run", name,
+                          store.mark_missing(name, run_id))
             console.print(f"[green]✓ {name}[/green]: {len(jobs)} jobs, {new} new ({time.monotonic() - t0:.0f}s)")
     finally:
         if browser is not None:
@@ -348,7 +370,15 @@ def audit_prior(
 
 
 def _load_state(store: Store, days: int) -> tuple[list[Job], dict]:
-    jobs = store.jobs(seen_within_days=days)
+    """The jobs every stage after the rule filter works on, and their filter results.
+
+    A posting its board has stopped listing is left out here, once, so no stage below spends a
+    rank call or a report line on something nobody can apply to. Its row, verdicts and history
+    stay in the database; only the rule filter still sees it, because dropping it there would
+    rewrite history rather than the shortlist.
+    """
+    jobs = still_listed(store.jobs(seen_within_days=days), store,
+                        load_settings().profile.gone_after_misses)
     filters = store.filter_results()
     return jobs, filters
 
@@ -644,16 +674,18 @@ def report(days: int = 30, out: Path | None = None) -> None:
     )
 
     store = Store()
-    jobs, filters = _load_state(store, days)
+    jobs, gone = partition_listed(store.jobs(seen_within_days=days), store,
+                                  load_settings().profile.gone_after_misses)
+    filters = store.filter_results()
     pre = store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS)
     ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
     refined = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
     cost = estimate_cost(list(pre.values()) + list(ranked.values()) + list(refined.values()))
-    path = write_report(jobs, filters, pre, ranked, out, cost, refine=refined)
+    path = write_report(jobs, filters, pre, ranked, out, cost, refine=refined, gone=len(gone))
     jsonl = export_jsonl([j for j in jobs if filters.get(j.id) and filters[j.id].status != "drop"], filters, {**pre, **ranked},
                          config.paths().data / "exports" / "filtered.jsonl")
     snap = store.save_report(build_snapshot(jobs, filters, pre, ranked, days=days, cost=cost, path=path,
-                                            prompt_version=PROMPT_VERSION, refine=refined))
+                                            prompt_version=PROMPT_VERSION, refine=refined, gone=len(gone)))
 
     # The web UI needs facets for everything it shows; fill in whatever `filter` never saw.
     item_ids = list(dict.fromkeys(i.job_id for i in snap.items))

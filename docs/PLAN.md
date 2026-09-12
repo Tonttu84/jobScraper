@@ -56,7 +56,8 @@ the first real run; expect a few to need small parser fixes.
 - **Normalized `Job`** (`models.py`): source, source_id, url, title, company, description (plain
   text), location_raw, country (ISO2), city, remote (remote/hybrid/onsite/unknown), remote_region
   (free text), seniority_raw, employment_type, salary_text, tags, posted_at, raw payload.
-- **Store** (`store.py`): `jobs` (first/last seen), `filter_results`, `ai_verdicts`, `runs`.
+- **Store** (`store.py`): `jobs` (first/last seen, and the run that last saw them —
+  see "Postings a board no longer lists"), `filter_results`, `ai_verdicts`, `runs`.
 - **Rules** (`filters/rules.py`): role gate on title (broad regex list, description gets one chance);
   seniority by title terms + "N years" extraction near experience words; posting language via
   lingua; language requirements via sentence classification (required vs plus); location tiers;
@@ -330,6 +331,42 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
    working manual (setup, commands, what the AI stages need). The showcase version adds: funnel
    table, the eval numbers from item 4, cost per run, an architecture diagram, and a sample
    report generated from an anonymised profile.
+
+## Postings a board no longer lists (2026-09-12)
+Nothing in the pipeline knew when a posting had been taken down: jobs were loaded with
+`seen_within_days=30`, so a posting stayed a rank candidate and a report entry for 30 days after
+its board dropped it. Measured on the owner's default database: `ats_boards` was scraped on 09-07
+and again on 09-10, and 427 of its 4 439 postings (10%) did not come back in those three days —
+one round of the Opus budget (90 calls) partly spent on jobs nobody can apply to.
+
+The signal was already there, only the link was missing. The `runs` row is now opened *before* the
+source is fetched (`store.start_run` / `finish_run`; `log_run` is the two of them together), every
+posting the fetch brings back is stamped with that run id (`jobs.last_run_id`), and
+`store.mark_missing` counts one miss (`jobs.missed_runs`) against every posting of that source
+that kept an older id. Timestamps could not have done this: the run row used to be written *after*
+its jobs, so every posting looked older than its own run. `store.gone_ids(n)` reads the counter,
+and the jobs are filtered out once, where the pipeline loads them (`_load_state` in `cli.py`, the
+report's own load, the export points in `scripts/ai_batches.py`). Nothing is deleted: a gone
+posting keeps its row, its verdicts and its history, and the rule filter still sees it — it simply
+stops being a candidate. The report says so rather than shrinking quietly ("Left out: N postings no
+longer listed on their board", also `counts["gone"]` in the snapshot).
+
+Three guards against calling a posting gone when it is not:
+- **A run that failed** finishes with its error and marks nothing.
+- **A run that fetched nothing**, or a `--limit`ed one (probe-style caps), marks nothing: a
+  partial fetch is not a purge.
+- **A source that never enumerates a listing** — `linkedin` and `indeed` go through python-jobspy
+  keyword searches, where absence from today's results means nothing — carries
+  `complete_listing = False` and is skipped. (525 of 852 LinkedIn rows in the live database would
+  otherwise have been mislabelled.)
+
+`profile.gone_after_misses` (default 1, 0 turns the mechanism off) is how many consecutive complete
+runs of its source must miss a posting before it counts as taken down.
+
+Known limitation: `ats_boards` is one `runs` row covering 81 company boards, so if one board 500s
+its postings count as missed although they are not gone. At the default threshold of 1 that means
+one flaky board can hide its jobs for a round; they come back the moment the board answers again.
+Raise `gone_after_misses` to 2 if that ever bites.
 
 ## Rule and prompt candidates raised by the ranking agents (2026-09-10, owner to decide)
 - **University-enrolment gate.** German/Romanian "Werkstudent" and mandatory-internship
