@@ -134,6 +134,15 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   timing win is a pool across sources, not inside one. Totals: 16 044 jobs in the DB, 4 166 new;
   `filter` → keep 2 451 / review 610 / drop 11 234; 1 033 survivors unscreened → Sonnet. Log:
   `data/scrape-2026-09-13.log` (15 MB with `-v`; the DEBUG httpcore lines are 78 000 of them).
+  Round finished the same evening: 11 + 1 Sonnet chunks (hydration cleared 64 verdicts), 3 rank
+  windows to the 90 budget (stop: patience), refine 10 new vs 12 anchored, report #10 (216
+  ranked, 90 new), published `full-2026-09-13.db`. `audit-prior` after it (236 rank verdicts):
+  prior ordering puts 10/21 of the effective top in its first 60 vs 6/21 for the screen
+  ordering, median position 62 vs 117, Spearman +0.12 vs +0.07 — the prior is the better queue,
+  with the selection-bias caveat the command prints. Two things the rankers noticed are chips
+  for separate sessions: the years-of-experience extractor read 1 from a "minimum 6 years"
+  posting, and cross-source duplicates with different company strings (VOIS/Vodafone,
+  Academic Work/Academic Work Finland Oy) each cost two Opus verdicts.
   Original note: `valtiolle`, `kuntarekry`,
   40 more `ats_boards` (121 in all) and 8 more Teamtailor tenants (22). Time the run — the last
   full `ats_boards` pass was 27 min for 81 boards, sequential; with `workers: 4` and 121 boards
