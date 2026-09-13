@@ -521,6 +521,9 @@ def _board_results(
 
 class ATSBoards:
     name = NAME
+    #: Every board's full listing is walked (title filters drop, they do not page), so a
+    #: posting that does not come back is gone from that board.
+    complete_listing = True
     description = "Company career boards (Greenhouse/Lever/Ashby/Workday/… via ats-scrapers)"
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]:

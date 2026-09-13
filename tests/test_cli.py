@@ -1402,7 +1402,30 @@ def _misses(job_id: str) -> int:
         store.close()
 
 
-def test_scrape_counts_a_posting_its_source_stopped_listing(data_dir, fake_http):
+@pytest.fixture
+def whole_listing(monkeypatch):
+    """arbeitnow as a board that walks its whole listing.
+
+    The real adapter pages with a cap, so it is (rightly) not one; the gone-detection tests
+    need a source whose misses count, and the fixture is small enough to stand in."""
+    from jobscraper.sources.base import get_source
+
+    monkeypatch.setattr(get_source("arbeitnow"), "complete_listing", True, raising=False)
+
+
+def test_only_sources_that_walk_their_whole_listing_count_misses():
+    """The registry's own answer to "whose absence means taken down".
+
+    A source that runs fixed keyword queries, or stops at a page cap, can fail to re-see a
+    posting that is still live — it slid past the cap as newer ones arrived — so it must never
+    count a miss. Only the adapters that provably enumerate everything qualify."""
+    from jobscraper.sources.base import all_sources, enumerates_listing
+
+    complete = {name for name, src in all_sources().items() if enumerates_listing(src)}
+    assert complete == {"ats_boards", "teamtailor", "devitjobs", "remoteok", "weworkremotely"}
+
+
+def test_scrape_counts_a_posting_its_source_stopped_listing(data_dir, fake_http, whole_listing):
     assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
     ghost = _ghost_job()
 
@@ -1459,18 +1482,16 @@ def test_a_source_that_fetched_nothing_marks_nothing_missing(data_dir, fake_http
     assert _misses(ghost.id) == 0
 
 
-def test_a_keyword_search_source_marks_nothing_missing(data_dir, fake_http, monkeypatch):
-    """LinkedIn and Indeed search by keyword: absence from today's results means nothing."""
-    from jobscraper.sources.base import get_source
-
+def test_a_source_that_does_not_walk_its_whole_listing_marks_nothing_missing(data_dir, fake_http):
+    """The default. arbeitnow pages with a cap, like most adapters: a posting past the cap is
+    not seen and not gone, so absence from today's fetch must mean nothing."""
     assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
     ghost = _ghost_job()
-    monkeypatch.setattr(get_source("arbeitnow"), "complete_listing", False, raising=False)
     assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
     assert _misses(ghost.id) == 0
 
 
-def test_the_report_leaves_out_a_posting_that_is_no_longer_listed(data_dir, fake_http):
+def test_the_report_leaves_out_a_posting_that_is_no_longer_listed(data_dir, fake_http, whole_listing):
     assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0
     ghost = _ghost_job()
     assert runner.invoke(cli_mod.app, ["scrape", "arbeitnow"]).exit_code == 0

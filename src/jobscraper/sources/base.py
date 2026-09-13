@@ -99,17 +99,20 @@ class Source(Protocol):
     name: str
     description: str
     #: This adapter enumerates the source's whole listing, so a posting that does not come back
-    #: has been taken down. False for a keyword search (LinkedIn, Indeed), where a posting
-    #: missing from today's results means nothing at all. Adapters are duck-typed, so read it
-    #: through :func:`enumerates_listing` rather than as an attribute.
-    complete_listing: bool = True
+    #: has been taken down. Off by default, and deliberately so: most adapters run a fixed list
+    #: of keyword queries, or stop at ``max_pages``, and a posting that is still live can slide
+    #: past either as newer ones arrive — its absence from today's fetch means nothing. Only an
+    #: adapter that provably walks everything (a company board's full jobs feed, a whole-site
+    #: JSON dump) sets this to True and lets the gone-posting counter act on its runs. Adapters
+    #: are duck-typed, so read it through :func:`enumerates_listing` rather than as an attribute.
+    complete_listing: bool = False
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]: ...
 
 
 def enumerates_listing(source: Source) -> bool:
-    """Whether a posting this source did not return can be called taken down (default: yes)."""
-    return bool(getattr(source, "complete_listing", True))
+    """Whether a posting this source did not return can be called taken down (default: no)."""
+    return bool(getattr(source, "complete_listing", False))
 
 
 _REGISTRY: dict[str, Source] = {}

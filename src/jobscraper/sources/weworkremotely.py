@@ -130,6 +130,8 @@ def parse_record(item: ET.Element) -> Job | None:
 
 class WeWorkRemotely:
     name = "weworkremotely"
+    #: The category feeds carry every live posting in their category.
+    complete_listing = True
     description = "weworkremotely.com category RSS feeds (remote-only, worldwide)"
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]:

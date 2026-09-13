@@ -214,6 +214,8 @@ def fetch_tenant(ctx: SourceContext, slug: str) -> list[Job]:
 
 class Teamtailor:
     name = NAME
+    #: jobs.json is the tenant's whole listing.
+    complete_listing = True
     description = "Teamtailor career sites (jobs.json JSON Feed, jobs.rss fallback)"
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]:

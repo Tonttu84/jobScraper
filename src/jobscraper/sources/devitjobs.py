@@ -249,6 +249,8 @@ def parse_record(rec: dict[str, Any], *, site: str, detail: dict[str, Any] | Non
 
 class DevITJobs:
     name = "devitjobs"
+    #: /api/jobsLight is the whole site in one response.
+    complete_listing = True
     description = "devitjobs boards (germantechjobs.de, swissdevjobs.ch, devitjobs.nl/uk/com)"
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]:

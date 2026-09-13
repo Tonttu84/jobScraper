@@ -122,6 +122,8 @@ def test_guess_country_uses_the_first_text_that_resolves():
 def test_guess_remote_and_cloudflare_still_work():
     assert guess_remote("Remote - Europe") == "remote"
     assert guess_remote("Hybrid, Helsinki") == "hybrid"
+    assert guess_remote("Hybridityö Helsingissä") == "hybrid"  # Finnish compound
+    assert guess_remote("Meillä on hybridimalli") == "hybrid"
     assert guess_remote("Helsinki", flag=False) == "onsite"
     assert guess_remote("Helsinki") == "unknown"
     assert is_cloudflare_challenge("<title>Just a moment...</title>") is True

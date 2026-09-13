@@ -121,6 +121,8 @@ def parse_record(rec: dict[str, Any]) -> Job | None:
 
 class RemoteOK:
     name = "remoteok"
+    #: The API answers with every live posting.
+    complete_listing = True
     description = "remoteok.com public JSON API (remote-only tech jobs, worldwide)"
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]:

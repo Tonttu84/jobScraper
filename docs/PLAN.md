@@ -360,10 +360,13 @@ Three guards against calling a posting gone when it is not:
 - **A run that failed** finishes with its error and marks nothing.
 - **A run that fetched nothing**, or a `--limit`ed one (probe-style caps), marks nothing: a
   partial fetch is not a purge.
-- **A source that never enumerates a listing** — `linkedin` and `indeed` go through python-jobspy
-  keyword searches, where absence from today's results means nothing — carries
-  `complete_listing = False` and is skipped. (525 of 852 LinkedIn rows in the live database would
-  otherwise have been mislabelled.)
+- **A source that does not walk its whole listing** is skipped — and that is the default
+  (`complete_listing = False`, changed 2026-09-13 the same day it shipped). `linkedin` and `indeed`
+  are keyword searches where absence means nothing (525 of 852 LinkedIn rows would have been
+  mislabelled), but so, less obviously, is every adapter that runs a fixed query list or stops at
+  `max_pages`: a live posting slides past the cap as newer ones arrive. Only `ats_boards`,
+  `teamtailor`, `devitjobs`, `remoteok` and `weworkremotely` provably enumerate everything and opt
+  in; `tests/test_cli.py` pins that set.
 
 `profile.gone_after_misses` (default 1, 0 turns the mechanism off) is how many consecutive complete
 runs of its source must miss a posting before it counts as taken down.

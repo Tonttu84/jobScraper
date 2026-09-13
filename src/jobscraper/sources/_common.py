@@ -127,7 +127,7 @@ _STATE_CODE_IS_COUNTRY: dict[str, str] = {"de": "DE", "in": "IN"}
 
 # "etäty\w*" so the Finnish stem matches inflected forms too ("etätyönä", "etätyömahdollisuus").
 _REMOTE_RE = re.compile(r"\b(remote|etäty\w*|etänä|home ?office|fully distributed|work from anywhere|telecommute)\b", re.I)
-_HYBRID_RE = re.compile(r"\b(hybrid|hybridi)\b", re.I)
+_HYBRID_RE = re.compile(r"\bhybrid\w*", re.I)  # hybrid, hybridi and the Finnish compounds (hybridityo, hybridimalli)
 
 #: Country and state names as patterns, longest name first: that is what keeps "New Mexico"
 #: out of Mexico and "South Dakota" out of Dakota, whatever order the dicts were written in.
