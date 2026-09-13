@@ -15,6 +15,7 @@ dist/
 .coverage
 data/probe.log
 data/*.log
+data/*.err
 .claude/worktrees/
 results/
 data/runs/

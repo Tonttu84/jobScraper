@@ -144,6 +144,7 @@
 
     <h2>Country</h2>
     <select id="f-country" multiple></select>
+    <div id="multi-note" class="muted note-line">click to toggle — same for remote and decision</div>
 
     <h2>Remote</h2>
     <select id="f-remote" multiple></select>
@@ -254,6 +255,22 @@ function selectedValues(select) {
   var out = [];
   for (var i = 0; i < select.options.length; i++) { if (select.options[i].selected) out.push(select.options[i].value); }
   return out;
+}
+
+// A <select multiple> opens with several options selected, but a plain click collapses that to
+// the one option clicked — the selection is gone with no way back short of a reload. Preventing
+// the default and flipping the option under the cursor makes a click a toggle instead; the
+// change event is the one the filter handlers already listen for. Ctrl, meta and shift keep
+// their native meaning (add, extend a range), so those clicks pass straight through.
+function toggleOnClick(select) {
+  select.addEventListener("mousedown", function (event) {
+    if (event.ctrlKey || event.metaKey || event.shiftKey) { return; }
+    var option = event.target;
+    if (!option || option.tagName !== "OPTION") { return; }
+    event.preventDefault();
+    option.selected = !option.selected;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 }
 
 function query(extra) {
@@ -730,6 +747,13 @@ function wire() {
   $("f-score").addEventListener("input", reload);
   $("f-country").addEventListener("change", reload);
   $("f-remote").addEventListener("change", reload);
+  // Mouse only: a touch browser draws a multiple-select as its own picker, which already toggles
+  // per tap — taking the mousedown over there would break it.
+  if (window.matchMedia("(pointer: fine)").matches) {
+    [$("f-country"), $("f-remote"), $("f-decision")].forEach(function (select) {
+      toggleOnClick(select);
+    });
+  }
   $("f-langs").addEventListener("change", function () {
     store("jobscraper.langs", checkedValues($("f-langs")).join(","));
     reload();

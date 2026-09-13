@@ -77,9 +77,9 @@ def tailored_site(tmp_path):
 
 
 @contextmanager
-def _visiting(browser, base_url):
+def _visiting(browser, base_url, **context_options):
     """A fresh browser context (own localStorage) on ``base_url``; fails on any JS error."""
-    context = browser.new_context(base_url=base_url)
+    context = browser.new_context(base_url=base_url, **context_options)
     page = context.new_page()
     errors: list[str] = []
     page.on("pageerror", lambda err: errors.append(str(err)))
@@ -762,3 +762,103 @@ def test_decision_selection_survives_a_reload_and_reset_restores_the_default(pag
     # and the restored default is what a reload brings back
     page.reload()
     assert selected_of(page, "f-decision") == DEFAULT_DECISIONS
+
+
+# ------------------------------------------------------------------ plain-click toggling
+#
+# A native <select multiple> collapses to the one option clicked unless the click carries ctrl
+# or shift, so the boxes that open with several options selected could not be added to with the
+# mouse. The page turns a plain click into a toggle; ``force=True`` skips Playwright's hit-target
+# check (the <select> covers its options) but still sends a real mouse click, so these tests see
+# the browser's own default behaviour as well as the page's handler.
+
+
+def option_of(page, select_id, value):
+    return page.locator(f'#{select_id} option[value="{value}"]')
+
+
+def test_clicking_a_second_country_keeps_the_first_one_selected(page, site):
+    _, jobs = site
+    option_of(page, "f-country", "FI").click(force=True)
+    assert selected_of(page, "f-country") == ["FI"]
+    expect(count(page)).to_have_text("1 of 1")
+
+    option_of(page, "f-country", "PT").click(force=True)
+    assert selected_of(page, "f-country") == ["FI", "PT"]
+    # the toggle re-queried the API: both countries' jobs are on the page now
+    expect(count(page)).to_have_text("2 of 2")
+    expect(card(page, jobs["web"])).to_have_count(1)
+    expect(card(page, jobs["py"])).to_have_count(1)
+
+
+def test_clicking_a_selected_country_deselects_only_that_one(page, site):
+    _, jobs = site
+    option_of(page, "f-country", "FI").click(force=True)
+    option_of(page, "f-country", "PT").click(force=True)
+    expect(count(page)).to_have_text("2 of 2")
+
+    option_of(page, "f-country", "FI").click(force=True)
+    assert selected_of(page, "f-country") == ["PT"]
+    expect(count(page)).to_have_text("1 of 1")
+    expect(card(page, jobs["web"])).to_have_count(0)
+
+    # the last one off is no country filter at all, not an empty list
+    option_of(page, "f-country", "PT").click(force=True)
+    assert selected_of(page, "f-country") == []
+    expect(count(page)).to_have_text("3 of 3")
+
+
+def test_the_remote_box_toggles_the_same_way(page, site):
+    _, jobs = site
+    option_of(page, "f-remote", "hybrid").click(force=True)
+    option_of(page, "f-remote", "remote").click(force=True)
+    assert selected_of(page, "f-remote") == ["hybrid", "remote"]
+    expect(count(page)).to_have_text("2 of 2")
+    expect(card(page, jobs["rev"])).to_have_count(0)
+
+
+def test_clicking_a_decision_off_leaves_the_rest_and_is_remembered(page):
+    """The box that starts with five selected: the complaint that started this."""
+    page.locator("#user").fill("tonttu")
+    page.locator("#user").press("Enter")
+    assert selected_of(page, "f-decision") == DEFAULT_DECISIONS
+
+    option_of(page, "f-decision", "applied").click(force=True)
+    assert selected_of(page, "f-decision") == ["none", "interested", "interview", "offer"]
+    option_of(page, "f-decision", "skipped").click(force=True)
+    assert selected_of(page, "f-decision") == [
+        "none", "skipped", "interested", "interview", "offer"]
+
+    # the change event reached the saving handler, so the choice survives a reload
+    page.reload()
+    assert selected_of(page, "f-decision") == [
+        "none", "skipped", "interested", "interview", "offer"]
+
+
+def test_ctrl_click_is_left_to_the_browser(page):
+    """Not intercepted, and not toggled twice: ctrl+click keeps its native meaning."""
+    option_of(page, "f-country", "FI").click(force=True)
+    option_of(page, "f-country", "PT").click(modifiers=["Control"], force=True)
+    assert selected_of(page, "f-country") == ["FI", "PT"]
+    option_of(page, "f-country", "FI").click(modifiers=["Control"], force=True)
+    assert selected_of(page, "f-country") == ["PT"]
+
+
+def test_shift_click_still_selects_a_range(page):
+    # ctrl+click first so the range anchor is the browser's own, then extend to the fourth option
+    option_of(page, "f-country", "FI").click(modifiers=["Control"], force=True)
+    option_of(page, "f-country", "SE").click(modifiers=["Shift"], force=True)
+    assert selected_of(page, "f-country") == ["FI", "DE", "PT", "SE"]
+
+
+def test_a_touch_browser_keeps_its_own_picker(browser, site):
+    """A coarse pointer gets the browser's picker, which already toggles per tap: hands off."""
+    with _visiting(browser, site[0], has_touch=True) as page:
+        assert page.evaluate("() => matchMedia('(pointer: coarse)').matches")
+        option_of(page, "f-country", "FI").click(force=True)
+        option_of(page, "f-country", "PT").click(force=True)
+        assert selected_of(page, "f-country") == ["PT"]
+
+
+def test_a_muted_line_says_the_boxes_toggle(page):
+    expect(page.locator("#multi-note")).to_have_text("click to toggle — same for remote and decision")
