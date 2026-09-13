@@ -251,7 +251,7 @@ def test_meta_reports_counts_facets_and_users(seeded):
     assert meta["evergreen"] == 1  # the talent-pool leftover, for the sidebar's count
     assert meta["users"] == ["ada"]
     assert set(meta["decision_statuses"]) == {
-        "interested", "applied", "skipped", "interview", "rejected", "offer"
+        "interested", "applied", "skipped", "interview", "rejected", "offer", "closed"
     }
     assert meta["facets_version"] == FACETS_VERSION
 

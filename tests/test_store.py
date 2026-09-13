@@ -302,6 +302,18 @@ def test_save_decision_round_trip_and_replace(store):
     assert later.updated_at >= stored.updated_at
 
 
+def test_save_decision_round_trip_for_a_closed_vacancy(store):
+    """"closed" is a fact about the posting, not a verdict — it must survive the round trip
+    like any other status so the eval set can tell it apart from a real "skipped"."""
+    stored = store.save_decision(Decision(job_id="a", user="tont", status="closed",
+                                          note="no longer accepting applications"))
+    assert stored.status == "closed"
+
+    (only,) = store.decisions(user="tont")
+    assert only.status == "closed"
+    assert only.note == "no longer accepting applications"
+
+
 def test_save_decision_stamps_updated_at_now(store):
     stale = datetime(2020, 1, 1, tzinfo=UTC)
     stored = store.save_decision(Decision(job_id="a", user="tont", status="skipped",

@@ -705,11 +705,13 @@ def test_choosing_a_country_by_its_name_filters_like_the_code_did(page, site):
 DEFAULT_DECISIONS = ["none", "applied", "interested", "interview", "offer"]
 
 
-def test_decision_multi_select_defaults_to_everything_but_skipped_and_rejected(page):
+def test_decision_multi_select_defaults_to_everything_but_skipped_closed_and_rejected(page):
     expect(page.locator("#f-decision")).to_have_attribute("multiple", "")
+    # the box builds itself from /api/meta's decision_statuses, so "closed" appears here
+    # without the filter ever naming it — only the card-button order places it after "skipped".
     assert options_of(page, "f-decision") == [
-        "none|no decision", "applied|applied", "skipped|skipped", "interested|interested",
-        "interview|interview", "rejected|rejected", "offer|offer",
+        "none|no decision", "applied|applied", "skipped|skipped", "closed|closed",
+        "interested|interested", "interview|interview", "rejected|rejected", "offer|offer",
     ]
     assert selected_of(page, "f-decision") == DEFAULT_DECISIONS
 
@@ -742,6 +744,34 @@ def test_marking_a_job_skipped_hides_it_on_the_next_reload_but_not_under_the_cur
 
     # asking for only the skipped ones brings it back
     page.locator("#f-decision").select_option("skipped")
+    expect(count(page)).to_have_text("1 of 1")
+    expect(card(page, jobs["py"])).to_have_count(1)
+
+
+def test_a_filled_vacancy_is_marked_closed_next_to_skipped_and_drops_out_of_the_list(page, site):
+    """"closed" is the button for a vacancy that stopped accepting applications. It sits next
+    to "skipped" (the one it is mistaken for) and, like it, is off the default view."""
+    base_url, jobs = site
+    page.locator("#user").fill("tonttu")
+    page.locator("#user").press("Enter")
+
+    py = card(page, jobs["py"])
+    buttons = py.locator("button.act")
+    order = buttons.evaluate_all("els => els.map(el => el.dataset.status)")
+    assert order == ["applied", "skipped", "closed", "interested", "interview",
+                     "rejected", "offer", ""]
+
+    py.locator('button.act[data-status="closed"]').click()
+    expect(py.locator("button.act.on")).to_have_attribute("data-status", "closed")
+    expect(py.locator(".badge")).to_have_text("closed")
+    stored = page.request.get(f"{base_url}/api/jobs/{jobs['py'].id}?user=tonttu").json()
+    assert stored["decision"]["status"] == "closed"
+
+    # a filled vacancy leaves the list the way a skipped one does
+    page.reload()
+    expect(count(page)).to_have_text("2 of 2")
+    expect(card(page, jobs["py"])).to_have_count(0)
+    page.locator("#f-decision").select_option("closed")
     expect(count(page)).to_have_text("1 of 1")
     expect(card(page, jobs["py"])).to_have_count(1)
 

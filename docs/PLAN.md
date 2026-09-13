@@ -315,7 +315,10 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:
    Sonnet screen precision/recall and Opus precision@10/20 against those decisions, and reuse
    the best cases as prompt anchors (lever 2 under "Improving match quality"). Every rule or
-   prompt change then carries a before/after number in its commit message.
+   prompt change then carries a before/after number in its commit message. The `closed` status
+   (the vacancy stopped accepting applications) is a fact about the posting, not a verdict on
+   the fit: exclude it from both the positive and the negative side of the eval and from the
+   anchors — a strong match that was merely filled must never count as a rejection.
 5. - [ ] **Public run statistics** — a committed `stats/runs.jsonl` (one row per report: jobs
    in the DB, new since last run, per-source counts, rule keep/review/drop, drops per reason
    category, screened/passed, ranked, models + prompt versions, tokens and API-list-price cost

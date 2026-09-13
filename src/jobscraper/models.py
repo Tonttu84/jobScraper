@@ -106,7 +106,16 @@ class AIVerdict(BaseModel):
     )
 
 
-DecisionStatus = Literal["interested", "applied", "skipped", "interview", "rejected", "offer"]
+# Two kinds of status live in one list, and anything that learns from decisions has to keep
+# them apart. ``applied``/``interview``/``offer`` and ``skipped``/``rejected`` are the
+# candidate's own verdict on the fit — the positive and negative sides of the labelled
+# evaluation set (docs/PLAN.md item 4) and the source of the worked examples in the ranking
+# prompt. ``closed`` is not a verdict: the vacancy stopped accepting applications, which says
+# nothing about whether the job suited anyone. It must be excluded from *both* sides — counted
+# as a "skip" it would teach the ranker that a good match was a bad one.
+DecisionStatus = Literal[
+    "interested", "applied", "skipped", "closed", "interview", "rejected", "offer"
+]
 
 
 class Decision(BaseModel):

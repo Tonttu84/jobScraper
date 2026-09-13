@@ -181,9 +181,11 @@ var UI = { preset: "student", default_languages: ["en"], web_dev_toggle: true };
 
 // The decision statuses in the order the cards show their buttons; /api/meta lists the same
 // set, and its order is mapped onto this one so both rows read alike.
-var STATUSES = ["applied", "skipped", "interested", "interview", "rejected", "offer"];
+// "closed" (the vacancy stopped accepting applications) sits next to "skipped" on purpose:
+// it is the button people reach for by mistake when the posting is simply gone.
+var STATUSES = ["applied", "skipped", "closed", "interested", "interview", "rejected", "offer"];
 // Marked as dead ends: still selectable, just not part of the default view.
-var DECISIONS_OFF_BY_DEFAULT = ["skipped", "rejected"];
+var DECISIONS_OFF_BY_DEFAULT = ["skipped", "closed", "rejected"];
 
 // ISO-3166 alpha-2 → the name to show. The API keeps receiving the code (the option value);
 // this only decides what the reader sees. Europe in full, plus the places the sources reach.

@@ -2,8 +2,14 @@
 
 `jobscraper serve` starts a small FastAPI app over `data/jobs.db`. It shows the latest
 report (ranked → prefilter survivors → rule-review) and lets each user mark jobs as
-**applied / skipped / interested / interview / rejected / offer**. Several students can share one
-instance: each picks a handle in the UI and decisions are stored per (job, user).
+**applied / skipped / closed / interested / interview / rejected / offer**. Several students can
+share one instance: each picks a handle in the UI and decisions are stored per (job, user).
+
+`closed` means the vacancy is no longer accepting applications — a fact about the posting, not a
+judgement of fit. It is the one status that says nothing about the candidate's opinion, so the
+future labelled evaluation set (`docs/PLAN.md` item 4) leaves it out of both the positive
+(`applied`, `interview`, `offer`) and the negative (`skipped`, `rejected`) side. Use `skipped`
+only when you passed on the job yourself.
 
 There is no authentication. Keep it on localhost or behind a reverse proxy / tunnel with
 basic auth when sharing it.
@@ -46,7 +52,7 @@ or repeated parameters.
 | method + path | purpose |
 |---|---|
 | `GET /api/meta` | latest report meta, facet values with counts (posting languages, required languages, stacks, countries, remote kinds, sources, sections), known users, decision statuses, `languages_offered` (the codes the page turns into "languages you speak" boxes) and `ui` (how the page presents its profile-fact controls — see below) |
-| `GET /api/jobs` | list `JobView`s (see below) from a report, filtered and sorted by score desc. Params: `report_id` (default latest; if the DB has no report yet the view is built on the fly from the current state), `section`, `langs` (languages the viewer speaks; a job passes when its posting language is unknown or spoken, and every required language is spoken), `stack` (any-of), `web_dev` (`true`/`false`; the UI sends `false` only, when the viewer says they have not done Full Stack Open, and omits it otherwise), `country`, `remote`, `source`, `min_score`, `q` (title/company substring), `user` (whose decisions to attach), `decision` (any-of, comma-separated or repeated: `none` and/or statuses — a job passes when its status, or `none` when this user never decided on it, is in the set; requires `user`; the page sends everything except `skipped` and `rejected` by default), `limit` (default 200), `offset`. Response `{ "total": n, "items": [...] }` |
+| `GET /api/jobs` | list `JobView`s (see below) from a report, filtered and sorted by score desc. Params: `report_id` (default latest; if the DB has no report yet the view is built on the fly from the current state), `section`, `langs` (languages the viewer speaks; a job passes when its posting language is unknown or spoken, and every required language is spoken), `stack` (any-of), `web_dev` (`true`/`false`; the UI sends `false` only, when the viewer says they have not done Full Stack Open, and omits it otherwise), `country`, `remote`, `source`, `min_score`, `q` (title/company substring), `user` (whose decisions to attach), `decision` (any-of, comma-separated or repeated: `none` and/or statuses — a job passes when its status, or `none` when this user never decided on it, is in the set; requires `user`; the page sends everything except `skipped`, `closed` and `rejected` by default), `limit` (default 200), `offset`. Response `{ "total": n, "items": [...] }` |
 | `GET /api/jobs/{id}` | one `JobView` including `description`; `?user=` attaches that user's decision |
 | `PUT /api/jobs/{id}/decision` | body `{ "user": "...", "status": "applied", "note": "..." }` → stored `Decision` |
 | `DELETE /api/jobs/{id}/decision?user=...` | clear a decision → 204 |
