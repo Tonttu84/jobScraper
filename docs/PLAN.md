@@ -126,6 +126,12 @@ Launch from the desktop; tick items off here (or delete the section) as they are
     wall time should approach the slowest board (JPMorgan / Hitachi). Time the next full run
     and record it here; also watch `probe --limit`, which may pause briefly at exit while
     in-flight boards finish.
+- [ ] **First scrape with the 2026-09-13 sources** (added 2026-09-13): `valtiolle`, `kuntarekry`,
+  40 more `ats_boards` (121 in all) and 8 more Teamtailor tenants (22). Time the run — the last
+  full `ats_boards` pass was 27 min for 81 boards, sequential; with `workers: 4` and 121 boards
+  the wall time is the open question. Watch `-v` for boards that error: a board that 500s marks
+  its postings as missed under `complete_listing`, so a flaky new entry is the first thing to
+  disable. Then `filter`, and `jobscraper audit-prior` once the next rank round adds verdicts.
 - [ ] **Decide on the big-tech boards** (`ats: google|amazon|tesla|tiktok|apple`). The dataset
   ranks Google at 204 tech postings in our countries, TikTok 110, Amazon 64, Tesla 53 — worth
   having, but they list 10 000+ jobs each and mostly cannot fetch a description per posting, so
