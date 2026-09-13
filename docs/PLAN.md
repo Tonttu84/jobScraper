@@ -120,13 +120,21 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   redirect, which wrote UTF-16 and mangled the rest): 663 of 2 578 description fetches skipped
   (26%), 421 of them on JPMorgan alone. Log scrapes with `--log-file` or a plain `>` from bash,
   not `*>` from PowerShell.
-  - [ ] **Re-time with parallel boards** (added 2026-09-10 evening): `ats_boards` now fetches
+  - [x] **Re-time with parallel boards** — done 2026-09-13, see the next item (524 s for 121 boards). Original note: `ats_boards` now fetches
     boards through a thread pool (`workers: 4` in `config/sources.yaml`, `1` = the old
     sequential path) and the polite client throttles per host under a per-host lock, so the
     wall time should approach the slowest board (JPMorgan / Hitachi). Time the next full run
     and record it here; also watch `probe --limit`, which may pause briefly at exit while
     in-flight boards finish.
-- [ ] **First scrape with the 2026-09-13 sources** (added 2026-09-13): `valtiolle`, `kuntarekry`,
+- [x] **First scrape with the 2026-09-13 sources** — done 2026-09-13 15:13–16:18 UTC. Whole `scrape`:
+  **3 897 s (65 min)** for 26 sources run one after another; `ats_boards` alone **524 s (8.7 min)**
+  for all 121 boards with `workers: 4` (was 1 627 s for 81 boards sequential), 4 188 jobs, 364 new.
+  Every board answered, none errored. The slow ones are now `linkedin` 1 059 s, `thehub` 343 s,
+  `sapoemprego` 243 s, `justjoin` 205 s — the sources themselves run sequentially, so the next
+  timing win is a pool across sources, not inside one. Totals: 16 044 jobs in the DB, 4 166 new;
+  `filter` → keep 2 451 / review 610 / drop 11 234; 1 033 survivors unscreened → Sonnet. Log:
+  `data/scrape-2026-09-13.log` (15 MB with `-v`; the DEBUG httpcore lines are 78 000 of them).
+  Original note: `valtiolle`, `kuntarekry`,
   40 more `ats_boards` (121 in all) and 8 more Teamtailor tenants (22). Time the run — the last
   full `ats_boards` pass was 27 min for 81 boards, sequential; with `workers: 4` and 121 boards
   the wall time is the open question. Watch `-v` for boards that error: a board that 500s marks
