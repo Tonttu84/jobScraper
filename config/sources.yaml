@@ -66,7 +66,18 @@ sources:
     # Teamtailor tenant slugs: https://<slug>.teamtailor.com/jobs.json . Add companies you care about.
     # Verified 2026-09-07: only these slugs answer jobs.json (the others 404 — most big
     # Finnish/Estonian companies use their own ATS). nordea answers but lists 0 jobs.
-    tenants: [upcloud, siili, vismafinland, vincitoyj, huuva, huaweifinlandrnd, twoday, netum, qvik, evermade, monese, starship, mintos, nordea]
+    # Added 2026-09-13 (jobs.json count in brackets): comodule [3], milrem [3] and fractory [10]
+    # in Estonia; iqm [22], qutwo [11] and liikennevirtaoy (Virta) [5] in Finland;
+    # keskosenukaidigital [15] and luminorbank [61] cover the Baltics from Tallinn.
+    # Tried the same day and 404: solita, gofore (gofore.teamtailor.com redirects to gofore.com),
+    # supermetrics, sievo, framery, withsecure, nixu, efecte, basware, varjo, swappie, yousician,
+    # rovio, metacore, unity, iceye, relex, tietoevry, elisa, posti, kesko, fortum, neste, valmet,
+    # vaisala, kone, konecranes, metso, veikkaus, alko, dna, sanoma, yle, almamedia, verkkokauppa,
+    # tokmanni, mustigroup, marimekko, fiskars, bittium; glia, pactum, katana, salv, nortal,
+    # helmes, playtech, lhv, skeleton, cleveron, guardtime, cybernetica, testlio, icefire,
+    # codeborne, thorgate, mooncascade, xolo, ampler, zonemedia, telia, eestienergia, enefit.
+    tenants: [upcloud, siili, vismafinland, vincitoyj, huuva, huaweifinlandrnd, twoday, netum, qvik, evermade, monese, starship, mintos, nordea,
+              comodule, milrem, fractory, iqm, qutwo, liikennevirtaoy, keskosenukaidigital, luminorbank]
   ats_boards:
     enabled: true
     # Any careers URL supported by ats-scrapers (Greenhouse, Lever, Ashby, Workable, Personio,
@@ -442,6 +453,166 @@ sources:
         slug: https://op-careers.fi
         company: OP-Palvelut
         country: FI
+
+      # ========================================================================================
+      # Finnish and Estonian company career sites, found and verified live 2026-09-13 (the job
+      # boards left in these two countries are dead, login-walled or re-lists of what we already
+      # scrape, so the lever is the employers themselves). Per-entry comment: postings listed /
+      # after the default title filter, then what the listing said about FI/EE. A board at 0 is
+      # kept when the tenant resolves and the employer plainly hires software people — polling
+      # one is cheap, and 0 today is not 0 next week.
+      #
+      # Tried the same day and NOT resolvable (don't re-try without new evidence):
+      #   Bolt — careers.bolt.eu still fronts its own ATS, no ATS fingerprint anywhere in the
+      #     page; the 2026-09-07 note stands, and Bolt is the one that hurts.
+      #   Pactum, Cleveron — join.com boards; ats-scrapers' join_com scraper is answered HTTP 422
+      #     by join.com's own API for both tenants.
+      #   SEB — jobs.eu.lever.co/seb is on Lever's EU shard; get_scraper_for_url builds a plain
+      #     LeverScraper, which 404s against api.lever.co.
+      #   Danske Bank — its Oracle CX endpoint (ejqi.fa.em2) exhausts the scraper's retries.
+      #   Gofore — no Lever slug, and gofore.teamtailor.com redirects to gofore.com.
+      #   Futurice — the Ashby slug 404s and the careers page names no ATS.
+      #   Xolo — a Workable embed whose account does not exist any more.
+      #   No ATS fingerprint in the careers page at all (JS-rendered listing or an in-house tool):
+      #     Cybernetica, Guardtime, Icefire, Codeborne, Thorgate, Mooncascade, Zone Media,
+      #     Ampler, Tallink, Omniva, Elering, Utilitas, Coop Pank, Selver, Tele2 EE, Swedbank EE,
+      #     Derivco, Enefit/Eesti Energia; Metso, Vaisala, Cargotec/Kalmar, Fortum, Kesko,
+      #     VR Group, Fingrid, Orion, Nokian Tyres (its own rekrytointi.com), Ponsse, Planmeca,
+      #     Kempower, Patria, Bittium, WithSecure, Basware, Efecte (now Matrix42), Sievo,
+      #     Framery. Solita, Swappie and Nixu answer 403 to any client.
+      #   Neste — career012.successfactors.eu?company=C0008491343P answers, with 0 postings, but
+      #     the company id is a guess, so it is left out rather than added blind.
+      # Two gotchas worth keeping: a Workday tenant lives on one pod only (storaenso, if and sok
+      # are wd502, upm/metsagroup/valmet/mehilainen/finnair wd103 — the wd3 spelling answers
+      # HTTP 422), and apply.workable.com answers 200 with an empty list for a slug that does not
+      # exist, so a Workable board at 0 was confirmed against the widget account endpoint.
+
+      # ---- Estonia
+      - url: https://jobs.ashbyhq.com/glia                    # Glia (Tallinn)  23 / 2, EE 3
+        company: Glia
+      - url: https://jobs.ashbyhq.com/katana                  # Katana (Tallinn)  2 / 0, both CA
+        company: Katana
+      - url: https://salv.jobs.personio.com                   # Salv (Tallinn)  1 / 1
+        company: Salv
+        country: EE
+      - url: https://job-boards.greenhouse.io/testlio         # Testlio (Tallinn)  18 / 4 — freelance testers worldwide
+        company: Testlio
+      - url: https://job-boards.greenhouse.io/nortal          # Nortal  36 / 1 — no row parses a country (EE/DE/US mixed)
+        company: Nortal
+      - url: https://apply.workable.com/helmes                # Helmes  0 on 2026-09-13 (account resolves)
+        company: Helmes
+      - url: https://apply.workable.com/skeleton-technologies # Skeleton Technologies  0 on 2026-09-13
+        company: Skeleton Technologies
+      - url: https://careers.smartrecruiters.com/Playtech     # Playtech  127 / 39, EE 18 (BG 29, UA 24)
+        company: Playtech
+        countries: *target_countries
+      - url: https://job-boards.eu.greenhouse.io/lhvbank      # LHV Bank EE  0 on 2026-09-13
+        company: LHV Bank
+        country: EE
+      - url: https://job-boards.eu.greenhouse.io/lhvuk        # LHV Bank UK  12 / 0, EE 1 (Tallinn tech, UK licence)
+        company: LHV Bank UK
+
+      # ---- Finland
+      - url: https://jobs.ashbyhq.com/reaktor                 # Reaktor  16 / 7, FI 13
+        company: Reaktor
+      - url: https://apply.workable.com/nitor                 # Nitor  11 / 0, FI 10 (Finnish-language consultant titles)
+        company: Nitor
+        country: FI
+      - url: https://job-boards.greenhouse.io/relex           # RELEX Solutions  49 / 5, FI 9
+        company: RELEX Solutions
+      - url: https://jobs.ashbyhq.com/hoxhunt                 # Hoxhunt  14 / 2, FI 9
+        company: Hoxhunt
+      - url: https://job-boards.greenhouse.io/alphasense      # AlphaSense (Helsinki R&D)  221 / 14, FI 13
+        company: AlphaSense
+        countries: *target_countries
+      - url: https://jobs.ashbyhq.com/skylo                   # Skylo Technologies (Espoo)  50 / 1, FI 9
+        company: Skylo Technologies
+        countries: *target_countries
+      - url: https://job-boards.greenhouse.io/supermetricsoy  # Supermetrics  11 / 2, FI 4
+        company: Supermetrics
+      - url: https://apply.workable.com/varjo-1               # Varjo  2 / 0, FI 2
+        company: Varjo
+        country: FI
+      - url: https://jobs.lever.co/rovio-2                    # Rovio  1 / 0 (SE) — the board is nearly always this small
+        company: Rovio
+      - url: https://job-boards.eu.greenhouse.io/metacore     # Metacore (Helsinki)  0 on 2026-09-13
+        company: Metacore
+        country: FI
+      - url: https://job-boards.greenhouse.io/yousician       # Yousician  1 / 0 (DE)
+        company: Yousician
+      - url: https://apply.workable.com/iceye                 # ICEYE (Espoo)  0 on 2026-09-13 (account resolves)
+        company: ICEYE
+        country: FI
+      - url: https://job-boards.greenhouse.io/twilio          # Twilio (Tallinn + Helsinki on a global board)  149 / 22, FI/EE 5
+        company: Twilio
+        countries: *target_countries
+      - ats: workday                                          # Telia Company (Telia Finland/Estonia)  93 / 15, FI 3 EE 2, LT 28
+        slug: https://teliacompany.wd3.myworkdayjobs.com/Telia_careers
+        company: Telia Company
+        countries: *target_countries
+      - ats: workday                                          # Tietoevry  32 / 5, FI 10 (LV 6, SE 5, NO 5)
+        slug: https://tieto.wd3.myworkdayjobs.com/Tieto_Careers_External_Site
+        company: Tietoevry
+        countries: *target_countries
+      - ats: workday                                          # KONE  904 / 69, FI/EE 12 — hence its own include
+        slug: https://kone.wd3.myworkdayjobs.com/Careers
+        company: KONE
+        include: *software_titles
+        countries: *target_countries
+      - url: https://careers.smartrecruiters.com/Konecranes   # Konecranes  401 / 55, FI 15 (US 129, IN 57)
+        company: Konecranes
+        include: *software_titles
+        countries: *target_countries
+      - ats: workday                                          # Valmet  179 / 42, FI 6 (US 63, IN 22)
+        slug: https://valmet.wd103.myworkdayjobs.com/External
+        company: Valmet
+        countries: *target_countries
+      - ats: successfactors                                   # Outokumpu  90 / 18, FI 10 (PL 28, SE 11)
+        slug: https://careers.outokumpu.com
+        company: Outokumpu
+        countries: *target_countries
+      - ats: workday                                          # Stora Enso  86 / 1, FI 8 EE 1
+        slug: https://storaenso.wd502.myworkdayjobs.com/Stora_Enso_site_opportunities
+        company: Stora Enso
+        countries: *target_countries
+      - ats: workday                                          # UPM  56 / 2, FI 4
+        slug: https://upm.wd103.myworkdayjobs.com/Careers
+        company: UPM
+        countries: *target_countries
+      - ats: workday                                          # Metsä Group  42 / 4, FI 3
+        slug: https://metsagroup.wd103.myworkdayjobs.com/MetsaGroup_Careers
+        company: Metsä Group
+        countries: *target_countries
+      - ats: workday                                          # If (P&C insurance, Nordics + EE)  47 / 6, FI 5 EE 2, SE 12
+        slug: https://if.wd502.myworkdayjobs.com/Careers
+        company: If
+      - ats: workday                                          # S Group / SOK  110 / 2, FI 13 (95 rows name no country)
+        slug: https://sok.wd502.myworkdayjobs.com/S-ryhman-avoimet-tyopaikat
+        company: S Group
+        country: FI
+      - ats: workday                                          # Posti  3 / 0, FI 1
+        slug: https://posti.wd3.myworkdayjobs.com/external
+        company: Posti
+        country: FI
+      - ats: workday                                          # Finnair  5 / 0, FI 2 EE 2
+        slug: https://finnair.wd103.myworkdayjobs.com/finnair
+        company: Finnair
+      - ats: workday                                          # Mehiläinen  137 / 1, FI 58 — healthcare group, its own IT
+        slug: https://mehilainen.wd103.myworkdayjobs.com/tyomarkkinatori_careers
+        company: Mehiläinen
+        country: FI
+      - ats: oracle                                           # Veikkaus  5 / 0, FI 5
+        slug: https://fa-exdl-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2
+        company: Veikkaus
+        country: FI
+      - ats: oracle                                           # KPMG Finland  9 / 8, FI 9 — a trainee board, almost all of it
+        slug: https://iabdgs.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/Finland
+        company: KPMG Finland
+        country: FI
+      - ats: workday                                          # Unity (Helsinki office on a global board)  124 / 15, FI/EE 0 today
+        slug: https://unitytech.wd1.myworkdayjobs.com/Unity
+        company: Unity
+        countries: *target_countries
 
       # ---- France / Luxembourg (mostly French-language postings; the language filter drops
       #      those, but these tenants also carry the DE/NL/ES/PT/Nordic offices)
