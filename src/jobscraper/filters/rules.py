@@ -257,8 +257,13 @@ def dedupe(jobs: list[Job], location: LocationPolicy | None = None) -> tuple[lis
         return f"{c}|{t}"
 
     # Prefer direct company boards over aggregators when the same job appears twice.
-    priority = {"teamtailor": 0, "ats_boards": 0, "duunitori": 1, "thehub": 1, "tyomarkkinatori": 2,
-                "cvee": 2, "cvkeskus": 2, "linkedin": 5, "indeed": 5}
+    # valtiolle/kuntarekry outrank Työmarkkinatori although TMT carries the same public-sector
+    # postings: those two serve the whole advert on the posting page with no rate limit, while
+    # the TMT detail endpoint 403s after a few hundred calls and is capped at 150 per run, so
+    # most of its copies reach the AI stage with no description at all.
+    priority = {"teamtailor": 0, "ats_boards": 0, "duunitori": 1, "thehub": 1, "valtiolle": 1,
+                "kuntarekry": 1, "tyomarkkinatori": 2, "cvee": 2, "cvkeskus": 2,
+                "linkedin": 5, "indeed": 5}
 
     tiers = [{c.upper() for c in t} for t in (location.tier1, location.tier2, location.tier3)] if location else []
 

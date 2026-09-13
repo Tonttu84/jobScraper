@@ -24,6 +24,25 @@ sources:
     max_pages: 5
     fetch_details: true      # detail endpoint gives full description; rate-limited (403 after a few hundred)
     max_details: 150
+  # valtiolle.fi and kuntarekry.fi are the same application (Grade Solutions Oy's platform), so
+  # one parser serves both and the options are the same. Both overlap tyomarkkinatori, but they
+  # serve the *whole* advert on the posting page and never rate-limit, so dedupe prefers them
+  # (filters/rules.py). country is not a key here: the adapter hard-codes FI, both being
+  # Finland-only boards. Hit counts verified live 2026-09-13 (?desc=<term>, 24 per page):
+  #   valtiolle   ohjelmisto 15 · kehittäjä 6 · harjoittelija 19 · ict 35 · data 41 · web 7
+  #   kuntarekry  ohjelmisto 27 · kehittäjä 23 · harjoittelija 25 · ict 16 · data 187 · web 23
+  valtiolle:
+    enabled: true
+    queries: ["ohjelmisto", "kehittäjä", "software", "harjoittelija", "ict", "web", "python", "devops"]
+    max_pages: 10
+    fetch_details: true      # the posting page has the requirements; the JSON-LD does not
+    max_details: 250
+  kuntarekry:
+    enabled: true
+    queries: ["ohjelmisto", "kehittäjä", "software", "harjoittelija", "ict", "web", "python", "devops"]
+    max_pages: 10
+    fetch_details: true
+    max_details: 250
   thehub:
     enabled: true
     countries: [FI, SE, "NO", DK]   # "NO" quoted: bare NO is YAML for false

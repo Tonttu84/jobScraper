@@ -333,6 +333,20 @@ def test_dedupe_prefers_direct_board_over_aggregator():
     assert dups == {teamtailor.id: [linkedin.id]}
 
 
+@pytest.mark.parametrize("board", ["valtiolle", "kuntarekry"])
+def test_dedupe_prefers_the_finnish_board_that_serves_the_whole_description(board):
+    """Both boards are syndicated into Työmarkkinatori, whose detail endpoint 403s after a few
+    hundred calls and is capped at 150 per run — so most TMT copies carry no body at all. The
+    board's own copy always does, and must be the one that survives."""
+    tmt = make_job(source="tyomarkkinatori", source_id="tmt-1", title="Lead Developer, Helsinki",
+                   company="Tulli", description=None, url="https://tyomarkkinatori.fi/1")
+    own = make_job(source=board, source_id="303390", title="Lead Developer, Helsinki",
+                   company="Tulli", url=f"https://{board}.fi/fi/tyopaikat/lead-developer-24357/")
+    unique, dups = dedupe([tmt, own])
+    assert [j.source for j in unique] == [board]
+    assert dups == {own.id: [tmt.id]}
+
+
 def test_dedupe_never_merges_jobs_without_a_company():
     a = make_job(source="linkedin", source_id="li-2", title="Junior Software Developer",
                  company=None)
