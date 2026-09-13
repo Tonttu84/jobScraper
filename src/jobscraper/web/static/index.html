@@ -100,7 +100,9 @@
   .actions button:hover { border-color: var(--accent); color: var(--accent); }
   .actions button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .actions button.toggle { color: var(--muted); }
-  .actions input.note { flex: 1; min-width: 160px; }
+  /* 120, not 160: with seven status buttons the row has ~157px left, and a wider minimum
+     pushed the note onto a second line on every card. */
+  .actions input.note { flex: 1; min-width: 120px; }
   .badge {
     font-size: 11px; border-radius: 999px; padding: 1px 8px;
     background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe;

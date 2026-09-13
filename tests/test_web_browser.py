@@ -776,6 +776,22 @@ def test_a_filled_vacancy_is_marked_closed_next_to_skipped_and_drops_out_of_the_
     expect(card(page, jobs["py"])).to_have_count(1)
 
 
+def test_the_action_row_keeps_the_note_box_on_one_line(page, site):
+    """Seven status buttons plus Details, clear and the note still fit one row.
+
+    The note input is ``flex: 1`` with a minimum width, and the seventh button (``closed``)
+    left it three pixels short of the 160px it used to ask for — so it wrapped, and every card
+    on a page you scroll a lot grew by a row. 120px is what fits; this is the guard.
+    """
+    _base_url, jobs = site
+    row = card(page, jobs["py"]).locator(".actions")
+    box = row.bounding_box()
+    note = row.locator("input.note").bounding_box()
+    assert box is not None and note is not None
+    # One line: the row is no taller than the note box plus the flex row's own padding.
+    assert box["height"] < note["height"] + 12, f"action row wrapped: {box['height']}px"
+
+
 def test_decision_selection_survives_a_reload_and_reset_restores_the_default(page):
     page.locator("#user").fill("tonttu")
     page.locator("#user").press("Enter")
