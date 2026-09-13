@@ -113,7 +113,11 @@
   .muted { color: var(--muted); }
   .hint, .card-hint { color: #b91c1c; font-size: 13px; }
   #more { display: block; width: 100%; padding: 8px; border: 1px solid var(--line); background: #fff; border-radius: 8px; cursor: pointer; }
-  #count { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .count-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  #count { color: var(--muted); font-size: 13px; }
+  #refresh { font-size: 12px; padding: 2px 8px; border: 1px solid var(--line);
+             border-radius: 4px; background: #fff; color: var(--muted); cursor: pointer; }
+  #refresh:hover { border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -165,7 +169,10 @@
   </aside>
 
   <main>
-    <div id="count"></div>
+    <div class="count-row">
+      <div id="count"></div>
+      <button id="refresh" type="button" title="Re-run the query: apply decisions made since the list was loaded">Refresh</button>
+    </div>
     <div id="list"></div>
     <button id="more" hidden>Load more</button>
   </main>
@@ -748,6 +755,9 @@ function wire() {
     reload();
   });
   $("f-q").addEventListener("input", reload);
+  // Saving a decision deliberately leaves the card in place, so a misclick can be taken
+  // back before the list moves under the reader. This is how they ask for the catch-up.
+  $("refresh").addEventListener("click", function () { load(false); });
   $("f-score").addEventListener("input", reload);
   $("f-country").addEventListener("change", reload);
   $("f-remote").addEventListener("change", reload);

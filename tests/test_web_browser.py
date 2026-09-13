@@ -776,6 +776,25 @@ def test_a_filled_vacancy_is_marked_closed_next_to_skipped_and_drops_out_of_the_
     expect(card(page, jobs["py"])).to_have_count(1)
 
 
+def test_refresh_applies_a_decision_that_the_filters_now_exclude(page, site):
+    """Saving a decision leaves the card where it is — a misclick has to be undoable — so the
+    list only catches up when the reader asks. That is what the Refresh button is for."""
+    _base_url, jobs = site
+    page.locator("#user").fill("tonttu")
+    page.locator("#user").press("Enter")
+
+    py = card(page, jobs["py"])
+    py.locator('button.act[data-status="skipped"]').click()
+    expect(py.locator("button.act.on")).to_have_attribute("data-status", "skipped")
+    # still there: "skipped" is off in the decision filter, but the list has not re-queried
+    expect(card(page, jobs["py"])).to_have_count(1)
+    expect(count(page)).to_have_text("3 of 3")
+
+    page.locator("#refresh").click()
+    expect(count(page)).to_have_text("2 of 2")
+    expect(card(page, jobs["py"])).to_have_count(0)
+
+
 def test_the_action_row_keeps_the_note_box_on_one_line(page, site):
     """Seven status buttons plus Details, clear and the note still fit one row.
 
