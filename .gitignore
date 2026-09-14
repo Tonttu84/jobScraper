@@ -33,3 +33,6 @@ data/browser/
 
 # The owner's own profile holds a CV; it lives in the private repo (scripts/sync_private.sh).
 config/profile.yaml
+
+# transfer archives built for the owner's laptop (see README-restore.txt inside)
+/jobscraper-owner-*.zip
