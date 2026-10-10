@@ -197,7 +197,13 @@ sources:
       #   - {ats: google, slug: google, company: Google}
       #   - {ats: apple, slug: apple, company: Apple}
       # The dataset ranks Google 204 / TikTok 110 / Amazon 64 / Tesla 53 tech postings in our
-      # countries, so they are worth the probe — but not before someone has watched one run.
+      # countries. Probed 2026-10-10 (docs/PLAN.md): tesla reads country + city and answers in
+      # 89 s, so it is on; amazon follows once `guess_country` reads its ISO-3 codes; google
+      # carries no location in its listing and apple needs a 28-minute stealth-browser crawl.
+      - ats: tesla                                    # Tesla: 8 365 listed, 2 885 software titles worldwide (2026-10-10)
+        slug: tesla
+        company: Tesla
+        countries: *target_countries
       #
       # ========================================================================================
       # Boards picked from the ats-scrapers `jobhive` dataset (2026-09-09) and verified live

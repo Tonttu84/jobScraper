@@ -97,7 +97,10 @@ Launch from the desktop; tick items off here (or delete the section) as they are
 - [x] **Check the diff output** — verified 2026-09-10: `jobscraper diff` between reports #1 and
   #2 listed 4 new / 4 dropped ranked jobs, and `jobscraper report` (#3) wrote
   `results/diff-2026-09-10.md` plus the "New since report #2" section.
-- [ ] **Schedule it**: `scripts/scheduled_run.sh` is a cron/bash script; on this Windows machine
+- [ ] **Schedule it** — parked 2026-10-10 (owner): runs happen on request in a Claude session
+  (the AI stages go through subagents anyway; no API key on this machine), so no Task Scheduler
+  entry for now. `scripts/scheduled_run.sh` falls back to `python -m uv` / the venv's
+  `jobscraper` when `uv` is not on PATH. Original note: `scripts/scheduled_run.sh` is a cron/bash script; on this Windows machine
   it needs Task Scheduler running it through Git Bash, or the self-hosted-runner route with
   the repository variable `SCHEDULED_RUNS=true` for `.github/workflows/scheduled-run.yml`.
   See docs/SCHEDULING.md. Also decide which profiles the schedule covers (`--profile felipe`
@@ -153,6 +156,23 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   ranks Google at 204 tech postings in our countries, TikTok 110, Amazon 64, Tesla 53 — worth
   having, but they list 10 000+ jobs each and mostly cannot fetch a description per posting, so
   enable one at a time and watch the first run. They are commented out in `config/sources.yaml`.
+  **Probed 2026-10-10** (`scripts/probe_boards.py` on a temporary config, title filter only, the
+  country skip not applied):
+
+  | board | listed | title survivors | time | what the adapter reads |
+  |---|---|---|---|---|
+  | google | 3 224 | 1 438 | 84 s | no location at all (country/city/location_raw empty) — the country skip cannot trim it, so all 1 438 would reach the rule filter as "unknown country" and most of them Sonnet |
+  | amazon | 34 576 | 10 714 | 36 s | `location_raw` is an ISO-3 code ("SGP"); `guess_country` reads ISO-2 only, so the skip is blind until ISO-3 is mapped — one small change, then it should work |
+  | apple | 6 102 | 4 181 | **1 676 s (28 min)** | country parsed ("China"), but ats-scrapers drives it through a third-party stealth Chromium (CloakBrowser, downloaded on first use) — too slow and too much machinery |
+  | tesla | 8 365 | 2 885 | 89 s | country and city parsed ("Palo Alto, California" → US), descriptions in the listing — the country skip would work as is |
+
+  Reading: `tesla` can be enabled as it stands; `amazon` after an ISO-3 → ISO-2 mapping in
+  `guess_country`; `google` needs a location source first (none in the listing payload); `apple`
+  is not worth it. All four carry the description in the listing, so none pays a request per
+  posting.
+  **Decided 2026-10-10 (owner):** `tesla` enabled the same day; `amazon` once ISO-3 codes are
+  read (`guess_country`); google and apple stay out. **Watch the first run:** Tesla's 2 885
+  software titles minus the country skip is the open number.
 
 - [x] **Felipe: incremental round done 2026-09-10** — 7,635 new jobs from 81 boards + jobly,
   1,595 rule survivors screened by Sonnet subagents, 37 newly ranked by Opus, report #8
@@ -207,7 +227,7 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
 1. **Drop audit** — `jobscraper audit-drops` samples rule-dropped jobs per drop reason for hand
    labelling and `--score` turns the labels into a per-reason false-negative rate (how many good
    jobs the rules kill). Labels live in `data/labels/` (private repo).
-   - [ ] **Label the first sample** (owner): `data/labels/drop-audit-2026-09-10.jsonl` holds
+   - [ ] **Label the first sample** (owner; skipped for now, 2026-10-10): `data/labels/drop-audit-2026-09-10.jsonl` holds
      150 rows, 15 per drop category out of 6 590 drops (seed 1). Set `label` to `good` /
      `bad` / `unsure` per row (a `note` is optional), then
      `jobscraper audit-drops --score drop-audit-2026-09-10.jsonl` prints the per-category

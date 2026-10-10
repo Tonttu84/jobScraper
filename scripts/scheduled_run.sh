@@ -23,7 +23,21 @@ if [ -f .env ]; then
   set +a
 fi
 
-uv run jobscraper run "$@"
-uv run jobscraper diff
+# `uv run` when uv is on PATH, else `python -m uv` (the owner's Windows machine has uv only as a
+# module of the system Python), else the project venv's own `jobscraper` entry point.
+if command -v uv >/dev/null 2>&1; then
+  JOBSCRAPER=(uv run jobscraper)
+elif python -m uv --version >/dev/null 2>&1; then
+  JOBSCRAPER=(python -m uv run jobscraper)
+else
+  BIN=""
+  for candidate in .venv/bin/jobscraper .venv/Scripts/jobscraper.exe; do
+    [ -x "$candidate" ] && BIN="$candidate" && break
+  done
+  JOBSCRAPER=("${BIN:-jobscraper}")
+fi
+
+"${JOBSCRAPER[@]}" run "$@"
+"${JOBSCRAPER[@]}" diff
 # Keep the reports and decisions in the private repo (no-op if there is no private clone yet).
 ./scripts/sync_private.sh || echo "private sync skipped"
