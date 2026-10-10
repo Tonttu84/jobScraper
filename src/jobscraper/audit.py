@@ -14,6 +14,11 @@ round, so the ordering is most of the product. :func:`prior_comparison` replays 
 orderings — the lexical prior (:mod:`jobscraper.prior`) and the Sonnet screen score — against
 the rank verdicts the database already holds, and reports how much sooner each of them would
 have reached the jobs that ended up in the effective top N.
+
+*Both AI stages against the owner's own verdicts.* :func:`decision_eval` reads the web UI's
+decisions (applied, skipped, ...) as labels and grades the Sonnet screen (precision/recall of its
+gate) and the Opus ranking (precision@k on the report's effective score) — ``jobscraper eval``,
+whose one-line summary goes into the commit message of every rule or prompt change.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ from collections.abc import Collection, Sequence
 from pathlib import Path
 
 from jobscraper.config import Profile
-from jobscraper.models import AIVerdict, FilterResult, Job
+from jobscraper.models import AIVerdict, Decision, FilterResult, Job
 from jobscraper.store import Store
 
 #: Reason template (as built in ``filters/rules.py`` and by ``cli.filter``) → category slug.
@@ -291,3 +296,193 @@ def prior_comparison(jobs: list[Job], filters: dict[str, FilterResult],
         "depths": tuple(int(d) for d in depths),
         "orderings": orderings,
     }
+
+
+# ------------------------------------------- the screen and the ranker against the owner's verdicts
+
+#: What each web-UI decision says about fit. ``True`` = the owner wanted the job: applied,
+#: interview, offer and *rejected* all mean they chose to apply ("rejected" is the employer's
+#: verdict, not the owner's), and "interested" is the same yes before the application went out.
+#: ``False`` = the owner looked and passed. Every status in ``models.DecisionStatus`` is either
+#: here or in :data:`EXCLUDED_STATUSES` (``tests/test_eval.py`` checks).
+DECISION_LABELS: dict[str, bool] = {
+    "interested": True,
+    "applied": True,
+    "interview": True,
+    "offer": True,
+    "rejected": True,
+    "skipped": False,
+}
+
+#: Statuses that are no verdict on fit and count on neither side. "closed" means the vacancy
+#: stopped taking applications — a fact about the posting, not about whether it suited the owner.
+EXCLUDED_STATUSES: tuple[str, ...] = ("closed",)
+
+
+def latest_decisions(decisions: Sequence[Decision]) -> dict[str, Decision]:
+    """One decision per job: when several users decided the same job, the latest one wins.
+
+    A tie on ``updated_at`` goes to the alphabetically later user, so the result never depends
+    on the order the rows came back in.
+    """
+    out: dict[str, Decision] = {}
+    for d in decisions:
+        seen = out.get(d.job_id)
+        if seen is None or (d.updated_at, d.user) > (seen.updated_at, seen.user):
+            out[d.job_id] = d
+    return out
+
+
+def screen_passes(v: AIVerdict, min_score: int) -> bool:
+    """The screen's gate, as ``cli prefilter`` counts it and ``report.rank_queue`` applies it."""
+    return v.relevant and v.score >= min_score
+
+
+def _ratio(part: int, whole: int) -> float | None:
+    return part / whole if whole else None
+
+
+def _mean(values: Sequence[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def decision_eval(jobs: list[Job], filters: dict[str, FilterResult],
+                  prefilter: dict[str, AIVerdict], rank: dict[str, AIVerdict],
+                  refine: dict[str, AIVerdict], decisions: Sequence[Decision], profile: Profile,
+                  *, top_ks: Sequence[int] = (10, 20)) -> dict:
+    """Grade the Sonnet screen and the Opus ranking against the owner's own decisions.
+
+    ``jobs`` is the day window the report reads (it only bounds the *global* effective top);
+    every other view works off the verdict dicts, so a decided job that has aged out of the
+    window still counts. The result is plain JSON-serialisable data:
+
+    * ``counts`` — decisions read, how many were superseded by another user's later one, closed
+      (excluded), usable = positives + negatives, labelled jobs with no verdict from any stage,
+      and labelled jobs outside the window.
+    * ``screen`` — over labelled jobs with a prefilter verdict: precision and recall of the gate
+      (relevant and score >= ``ai.prefilter_min_score``), and the positives the screen never saw,
+      split into rule-dropped (by :func:`reason_category` of the first reason) and never screened.
+    * ``rank`` — the effective score exactly as the report computes it
+      (:func:`~jobscraper.report.effective_score` with the
+      :func:`~jobscraper.report.refine_offset` calibration): the database's effective top-k split
+      by label (``global``), and precision@k over the labelled jobs alone, best first, with k
+      capped at how many there are (``labelled``), plus the mean score of each side and Spearman
+      between score and label.
+    """
+    from jobscraper.report import effective_score, effective_top, refine_offset
+
+    merged = latest_decisions(decisions)
+    labels = {job_id: DECISION_LABELS[d.status] for job_id, d in merged.items()
+              if d.status in DECISION_LABELS}
+    closed = {job_id for job_id, d in merged.items() if d.status in EXCLUDED_STATUSES}
+    positives = sorted(i for i, good in labels.items() if good)
+    in_window = {j.id for j in jobs}
+
+    counts = {
+        "decisions_read": len(decisions),
+        "jobs_decided": len(merged),
+        "superseded": len(decisions) - len(merged),
+        "closed": len(closed),
+        "usable": len(labels),
+        "positives": len(positives),
+        "negatives": len(labels) - len(positives),
+        "without_verdict": sum(1 for i in labels
+                               if i not in prefilter and i not in rank and i not in refine),
+        "outside_window": sum(1 for i in labels if i not in in_window),
+    }
+
+    # --- the screen
+    min_score = profile.ai.prefilter_min_score
+    screened = [i for i in labels if i in prefilter]
+    passed = [i for i in screened if screen_passes(prefilter[i], min_score)]
+    positives_screened = [i for i in screened if labels[i]]
+    positives_passed = [i for i in passed if labels[i]]
+    dropped: dict[str, int] = defaultdict(int)
+    never_screened = 0
+    for job_id in positives:
+        if job_id in prefilter:
+            continue
+        result = filters.get(job_id)
+        if result is not None and result.status == "drop":
+            dropped[reason_category(result.reasons[0] if result.reasons else "")] += 1
+        else:
+            never_screened += 1
+    screen = {
+        "min_score": min_score,
+        "screened": len(screened),
+        "passed": len(passed),
+        "positives_screened": len(positives_screened),
+        "positives_passed": len(positives_passed),
+        "negatives_passed": len(passed) - len(positives_passed),
+        "precision": _ratio(len(positives_passed), len(passed)),
+        "recall": _ratio(len(positives_passed), len(positives_screened)),
+        "unscreened_positives": {
+            "rule_dropped": dict(sorted(dropped.items())),
+            "rule_dropped_total": sum(dropped.values()),
+            "never_screened": never_screened,
+        },
+    }
+
+    # --- the ranking, on the report's own effective score
+    offset = refine_offset(rank, refine)
+    global_view = []
+    for k in top_ks:
+        ids, _edge = effective_top(jobs, filters, rank, refine, top=int(k))
+        ids = ids[:int(k)]  # effective_top keeps a tie at the boundary; this is a cut at k
+        global_view.append({
+            "k": int(k),
+            "size": len(ids),
+            "positive": sum(1 for i in ids if labels.get(i) is True),
+            "negative": sum(1 for i in ids if labels.get(i) is False),
+            "unlabelled": sum(1 for i in ids if i not in labels and i not in closed),
+            "excluded": sum(1 for i in ids if i in closed),
+        })
+
+    effective = {i: effective_score(rank.get(i), refine.get(i), offset) for i in labels}
+    scored = {i: s for i, s in effective.items() if s is not None}
+
+    def order_key(job_id: str) -> tuple:
+        # The report's ordering (report.rank_order): effective score, refine position, rank score.
+        r = refine.get(job_id)
+        position = r.position if r is not None and r.position is not None else 10 ** 6
+        rank_score = rank[job_id].score if job_id in rank else 0
+        return -scored[job_id], position, -rank_score, job_id
+
+    order = sorted(scored, key=order_key)
+    at = []
+    for k in top_ks:
+        head = order[:int(k)]
+        hits = sum(1 for i in head if labels[i])
+        at.append({"k": int(k), "k_used": len(head), "positives": hits,
+                   "precision": _ratio(hits, len(head))})
+    ranked = {
+        "offset": offset,
+        "global": global_view,
+        "labelled": {
+            "scored": len(order),
+            "order": order,
+            "at": at,
+            "mean_positive": _mean([scored[i] for i in order if labels[i]]),
+            "mean_negative": _mean([scored[i] for i in order if not labels[i]]),
+            "spearman": spearman([float(scored[i]) for i in order],
+                                 [1.0 if labels[i] else 0.0 for i in order]),
+        },
+    }
+    return {"counts": counts, "screen": screen, "rank": ranked}
+
+
+def _fmt(value: float | None) -> str:
+    return "—" if value is None else f"{value:.2f}"
+
+
+def eval_summary(out: dict) -> str:
+    """The one line to paste into the commit message of a rule or prompt change.
+
+    A precision@k whose k had to be capped at the number of labelled jobs says so: ``(k=4)``.
+    """
+    screen = out["screen"]
+    cuts = " ".join(
+        f"P@{a['k']} {_fmt(a['precision'])}" + (f" (k={a['k_used']})" if a["k_used"] < a["k"] else "")
+        for a in out["rank"]["labelled"]["at"])
+    return (f"eval: {out['counts']['usable']} decisions — screen P {_fmt(screen['precision'])} / "
+            f"R {_fmt(screen['recall'])}, rank {cuts}")

@@ -8,6 +8,7 @@ Everything up to ``report`` runs for real against a temporary SQLite file.
 from __future__ import annotations
 
 import json
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +17,7 @@ from typer.testing import CliRunner
 from jobscraper import cli as cli_mod
 from jobscraper import store as store_mod
 from jobscraper.browser import BrowserFactory
+from jobscraper.filters import rules as rules_mod
 from jobscraper.models import FilterResult
 from tests.conftest import FakeBrowser, FakeHttp
 
@@ -32,9 +34,15 @@ def data_dir(tmp_path, monkeypatch):
     return tmp_path
 
 
+#: The arbeitnow fixture was captured on 2026-09-07; the rule filter drops postings older than
+#: the profile's ``max_age_days``, so the pipeline tests count from a day the fixture is fresh on.
+FIXTURE_TODAY = date(2026, 9, 10)
+
+
 @pytest.fixture
 def fake_http(monkeypatch):
-    """Serve the arbeitnow fixture instead of hitting the network."""
+    """Serve the arbeitnow fixture instead of hitting the network, and freeze the rules' clock."""
+    monkeypatch.setattr(rules_mod, "today_utc", lambda: FIXTURE_TODAY)
     http = FakeHttp({"job-board-api": "arbeitnow.json"})
     monkeypatch.setattr(cli_mod, "_http", lambda settings: http)
     return http
@@ -1219,6 +1227,133 @@ def test_scrape_logs_a_failing_source_and_carries_on(data_dir, monkeypatch):
     finally:
         store.close()
     assert rows == [("arbeitnow", 0, 0)]
+
+
+# ------------------------------------------------------------------ the pool across sources
+
+
+def _pool_settings(monkeypatch, workers: int):
+    """Pin ``scrape.workers`` for one test, whatever the repo's sources.yaml says."""
+    settings = cli_mod.load_settings()
+    settings.scrape = {"workers": workers}
+    monkeypatch.setattr(cli_mod, "load_settings", lambda *a, **kw: settings)
+    return settings
+
+
+def _postings(source: str, count: int) -> list:
+    from jobscraper.models import Job
+
+    return [Job(source=source, source_id=f"{source}-{n}", url=f"https://jobs.example.test/{source}/{n}",
+                title=f"Developer {n}", company="Example Oy") for n in range(count)]
+
+
+def _run_rows() -> dict:
+    store = store_mod.Store()
+    try:
+        rows = store.conn.execute("SELECT source, fetched, new, error FROM runs")
+        return {r["source"]: (r["fetched"], r["new"], r["error"]) for r in rows}
+    finally:
+        store.close()
+
+
+def test_scrape_workers_default_to_three_and_never_drop_below_one():
+    assert cli_mod._workers(SimpleNamespace(scrape={})) == 3
+    assert cli_mod._workers(SimpleNamespace(scrape={"workers": "2"})) == 2
+    assert cli_mod._workers(SimpleNamespace(scrape={"workers": 0})) == 1
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_scrape_books_every_source_of_the_pool_and_logs_the_one_that_failed(data_dir, monkeypatch, workers):
+    from jobscraper.sources.base import get_source
+
+    _pool_settings(monkeypatch, workers)
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: None)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({}))
+    monkeypatch.setattr(get_source("remotive"), "fetch", lambda ctx: iter(_postings("remotive", 2)))
+    monkeypatch.setattr(get_source("himalayas"), "fetch", lambda ctx: iter(_postings("himalayas", 1)))
+
+    def boom(ctx):
+        raise RuntimeError("the board is down")
+
+    monkeypatch.setattr(get_source("jobicy"), "fetch", boom)
+
+    result = runner.invoke(cli_mod.app, ["scrape", "remotive", "jobicy", "himalayas"])
+    assert result.exit_code == 0, result.output
+    assert "✗ jobicy: RuntimeError: the board is down" in result.output
+    assert "✓ remotive: 2 jobs, 2 new" in result.output
+    assert "✓ himalayas: 1 jobs, 1 new" in result.output
+    assert _run_rows() == {
+        "remotive": (2, 2, None),
+        "himalayas": (1, 1, None),
+        "jobicy": (0, 0, "RuntimeError: the board is down"),
+    }
+    store = store_mod.Store()
+    try:
+        assert {j.source for j in store.jobs()} == {"remotive", "himalayas"}
+    finally:
+        store.close()
+
+
+def test_scrape_fetches_sources_at_the_same_time(data_dir, monkeypatch):
+    """Two workers: both fetches must be in flight at once, or the barrier breaks."""
+    import threading
+
+    from jobscraper.sources.base import get_source
+
+    _pool_settings(monkeypatch, 2)
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: None)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({}))
+    barrier = threading.Barrier(2, timeout=10)
+
+    def meeting(name):
+        def fetch(ctx):
+            barrier.wait()
+            return iter(_postings(name, 1))
+        return fetch
+
+    for name in ("remotive", "himalayas"):
+        monkeypatch.setattr(get_source(name), "fetch", meeting(name))
+
+    result = runner.invoke(cli_mod.app, ["scrape", "remotive", "himalayas"])
+    assert result.exit_code == 0, result.output
+    assert _run_rows() == {"remotive": (1, 1, None), "himalayas": (1, 1, None)}
+
+
+@pytest.mark.parametrize("browser_on", [True, False])
+def test_browser_sources_run_on_the_main_thread_after_the_pool(data_dir, monkeypatch, browser_on):
+    """Playwright's sync objects belong to the thread that made them: a pooled fetch gets no
+    browser at all, and a source that drives one runs afterwards on the main thread."""
+    import threading
+
+    from jobscraper.sources.base import get_source
+
+    factory = _FakeFactory({}) if browser_on else None
+    _pool_settings(monkeypatch, 2)
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: factory)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({}))
+    seen: list = []
+
+    def recorder(name):
+        def fetch(ctx):
+            seen.append((name, threading.current_thread(), ctx.browser))
+            return iter(_postings(name, 1))
+        return fetch
+
+    for name in ("remotive", "himalayas", "jobly"):
+        monkeypatch.setattr(get_source(name), "fetch", recorder(name))
+    monkeypatch.setattr(get_source("himalayas"), "uses_browser", True, raising=False)
+
+    result = runner.invoke(cli_mod.app, ["scrape", "jobly", "remotive", "himalayas"])
+    assert result.exit_code == 0, result.output
+    by_name = {name: (thread, browser) for name, thread, browser in seen}
+    pooled_thread, pooled_browser = by_name["remotive"]
+    assert pooled_thread is not threading.main_thread() and pooled_browser is None
+    assert by_name["jobly"] == (threading.main_thread(), factory)
+    assert by_name["himalayas"] == (threading.main_thread(), factory)
+    assert seen[0][0] == "remotive"  # the pool is drained before the browser sources start
+    assert _run_rows() == {name: (1, 1, None) for name in ("remotive", "himalayas", "jobly")}
+    if factory is not None:
+        assert factory.closed is True
 
 
 def test_filter_marks_duplicates_as_drops(data_dir, fake_http):

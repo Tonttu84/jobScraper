@@ -8,6 +8,7 @@ unambiguous signals; anything softer becomes ``review`` with the signal recorded
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import defaultdict
 from datetime import UTC, date, datetime
 
@@ -18,7 +19,7 @@ from jobscraper.filters.language import detect_language, find_language_requireme
 from jobscraper.models import FilterResult, Job
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-09-10d"
+RULES_VERSION = "2026-10-10a"
 
 #: A deadline this near is worth putting in front of the reader (report bullet, UI tag).
 CLOSING_SOON_DAYS = 7
@@ -51,16 +52,20 @@ def _compile_terms(terms: list[str]) -> re.Pattern[str] | None:
 
 
 def _years_required(text: str) -> int | None:
-    """Smallest 'N years' figure that appears next to experience words. None if none found."""
-    found: list[int] = []
+    """First 'N years' figure (in document order) next to experience words. None if none found.
+
+    Postings state the headline requirement first ("Minimum 5 years of engineering experience")
+    and per-tool figures after it ("1 year of experience with LangSmith"); taking the smallest
+    figure read such a posting as a 1-year role. A range ("1-3 years") yields its lower bound.
+    """
     for m in _YEARS_RE.finditer(text):
         window = text[max(0, m.start() - 80): m.end() + 80]
         if not _EXPERIENCE_CONTEXT.search(window):
             continue
         n = int(m.group(1))
         if 0 < n <= 20:
-            found.append(n)
-    return min(found) if found else None
+            return n
+    return None
 
 
 _MID_LABEL_RE = re.compile(r"(mid|middle|medior|regular|intermediate|experienced)", re.I)
@@ -100,13 +105,18 @@ def _location_tier(job: Job, profile: Profile) -> int | None:
     return _country_tier(job.country, profile)
 
 
+def today_utc() -> date:
+    """The date every age and deadline rule counts from (tests freeze it here)."""
+    return datetime.now(UTC).date()
+
+
 def evaluate(job: Job, profile: Profile, today: date | None = None) -> FilterResult:
     reasons: list[str] = []
     review: list[str] = []
     signals: dict = {}
     title = job.title or ""
     text = job.text
-    today = today or datetime.now(UTC).date()
+    today = today or today_utc()
 
     # ---------------------------------------------------------------- role
     role = profile.role
@@ -207,7 +217,7 @@ def evaluate(job: Job, profile: Profile, today: date | None = None) -> FilterRes
     # ------------------------------------------------------------- staleness
     if job.posted_at is not None:
         posted = job.posted_at if job.posted_at.tzinfo else job.posted_at.replace(tzinfo=UTC)
-        age_days = (datetime.now(UTC) - posted).days
+        age_days = (today - posted.date()).days
         signals["age_days"] = age_days
         if age_days > profile.max_age_days:
             reasons.append(f"posting is {age_days} days old (max {profile.max_age_days})")
@@ -237,8 +247,53 @@ def evaluate(job: Job, profile: Profile, today: date | None = None) -> FilterRes
     return FilterResult(job_id=job.id, status=status, reasons=reasons + review, signals=signals, location_tier=tier)
 
 
-def dedupe(jobs: list[Job], location: LocationPolicy | None = None) -> tuple[list[Job], dict[str, list[str]]]:
+#: Legal forms dropped from the end of a company name (and "oy"/"oyj" from its start too, as in
+#: "Oy Hartwall Ab") before dedupe compares it. Multi-word forms are the tokens left after
+#: punctuation is turned into spaces ("A/S" -> "a s", "Sp. z o.o." -> "sp z o o").
+COMPANY_LEGAL_FORMS: tuple[str, ...] = (
+    "oy", "oyj", "ab", "ltd", "limited", "gmbh", "ag", "se", "kg", "inc", "llc", "corp",
+    "corporation", "co", "as", "a s", "aps", "sa", "sas", "sarl", "srl", "sro", "s r o",
+    "sp z o o", "bv", "nv", "plc", "ou", "group", "holding",
+)
+#: Country or region words dropped from the end of a company name ("Academic Work Finland Oy").
+COMPANY_REGION_WORDS: tuple[str, ...] = (
+    "finland", "suomi", "sweden", "sverige", "norway", "norge", "denmark", "danmark", "estonia",
+    "eesti", "germany", "deutschland", "nordics", "nordic", "baltics", "europe", "international",
+    "global", "uk",
+)
+_COMPANY_LEADING_FORMS: tuple[str, ...] = ("oy", "oyj")
+_COMPANY_TRAILING = sorted((tuple(w.split()) for w in COMPANY_LEGAL_FORMS + COMPANY_REGION_WORDS),
+                           key=len, reverse=True)
+
+
+def company_key(name: str | None) -> str:
+    """Normalized company name for dedupe: lowercase ASCII words, legal forms and a trailing
+    country/region word removed. Never strips the last word, so a name is never emptied."""
+    ascii_name = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode()
+    words = re.sub(r"[^a-z0-9]+", " ", ascii_name.lower()).split()
+    while len(words) > 1 and words[0] in _COMPANY_LEADING_FORMS:
+        words = words[1:]
+    stripped = True
+    while stripped:
+        stripped = False
+        for form in _COMPANY_TRAILING:
+            if len(words) > len(form) and tuple(words[-len(form):]) == form:
+                words = words[:-len(form)]
+                stripped = True
+                break
+    return " ".join(words)
+
+
+def dedupe(jobs: list[Job], location: LocationPolicy | None = None, *,
+           aliases: dict[str, str] | None = None) -> tuple[list[Job], dict[str, list[str]]]:
     """Collapse the same posting seen on several boards. Returns (unique_jobs, {kept_id: [dup_ids]}).
+
+    Boards spell one employer differently ("Academic Work" / "Academic Work Finland Oy", "VOIS" /
+    "Vodafone"), and on 2026-09-13 that cost two Opus verdicts for one job. So the company is
+    normalized (legal forms, a trailing country word), mapped through ``aliases`` (the
+    ``company_aliases:`` section of sources.yaml), and under the same title a longer name merges
+    into one that is its word-prefix — but only when that shorter name has two words or more:
+    "Polar" and "Polar Squad", "HSB" and "HSB Technical" are different employers.
 
     Where the job is comes before which board it came from, because dedupe runs *before* the rule
     filter: the losers are marked duplicates and never looked at again, so a copy kept for its
@@ -250,11 +305,12 @@ def dedupe(jobs: list[Job], location: LocationPolicy | None = None) -> tuple[lis
     reach; a remote posting is kept whatever its country says, when the profile keeps all remote.
     With no location given every copy ranks the same and the source priority decides, as before.
     """
-    def key(j: Job) -> str:
+    alias_map = {company_key(k): company_key(v) for k, v in (aliases or {}).items()}
+
+    def key(j: Job) -> tuple[str, ...]:
         t = re.sub(r"[^a-z0-9]+", " ", (j.title or "").lower()).strip()
-        c = re.sub(r"[^a-z0-9]+", " ", (j.company or "").lower()).strip()
-        c = re.sub(r"\b(oy|ab|oyj|ltd|gmbh|inc|llc|as|sa|bv|plc)\b", "", c).strip()
-        return f"{c}|{t}"
+        c = company_key(j.company)
+        return alias_map.get(c, c), t
 
     # Prefer direct company boards over aggregators when the same job appears twice.
     # valtiolle/kuntarekry outrank Työmarkkinatori although TMT carries the same public-sector
@@ -278,12 +334,32 @@ def dedupe(jobs: list[Job], location: LocationPolicy | None = None) -> tuple[lis
             return 3
         return 4
 
-    groups: dict[str, list[Job]] = defaultdict(list)
+    groups: dict[tuple[str, ...], list[Job]] = defaultdict(list)
     for j in jobs:
-        groups[key(j) if j.company else j.id].append(j)
+        groups[key(j) if j.company else (j.id,)].append(j)
+
+    # Prefix merge, compared only among groups that share a title. Sorted, a parent name comes
+    # before the longer names that extend it; a one-word name is never a parent (the guard).
+    by_title: dict[str, list[str]] = defaultdict(list)
+    for k in groups:
+        if len(k) == 2:
+            by_title[k[1]].append(k[0])
+    parent_of: dict[tuple[str, ...], tuple[str, ...]] = {}
+    for title, companies in by_title.items():
+        parents: list[str] = []
+        for c in sorted(companies):
+            parent = next((p for p in parents if c.startswith(p + " ")), None)
+            if parent is not None:
+                parent_of[(c, title)] = (parent, title)
+            elif " " in c:
+                parents.append(c)
+    merged: dict[tuple[str, ...], list[Job]] = {}
+    for k, members in groups.items():
+        merged.setdefault(parent_of.get(k, k), []).extend(members)
+
     unique: list[Job] = []
     dups: dict[str, list[str]] = {}
-    for members in groups.values():
+    for members in merged.values():
         members.sort(key=lambda j: (tier_rank(j), priority.get(j.source, 3), j.id))
         unique.append(members[0])
         if len(members) > 1:

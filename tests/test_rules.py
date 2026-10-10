@@ -199,6 +199,46 @@ def test_six_years_experience_is_dropped(settings):
     assert res.signals["years_required"] == 6
 
 
+# Real postings (2026-09-13): headline requirement first, per-tool figures after it. The old
+# extractor took the smallest figure and let these through as 1-year roles.
+_HEADLINE_THEN_TOOL = [
+    ("What You'll Bring\nMinimum 5 years of engineering experience, preferably including Python..\n\n"
+     "1 year of experience with LangSmith or other comparable LLM/agent frameworks", 5),
+    ("Basic Qualifications:\n\nAt least 4 years of experience in software engineering (Internship "
+     "experience does not apply)\n\nAt least 1 year experience with cloud computing (AWS, Microsoft Azure)", 4),
+    ("What You Will Bring As An IT Support Supervisor\n\nMinimum of 5 years' experience supporting IT.\n\n"
+     "1+ year of experience leading or supervising a technical support team.", 5),
+]
+
+
+@pytest.mark.parametrize(("excerpt", "years"), _HEADLINE_THEN_TOOL, ids=["langsmith", "cloud", "it-support"])
+def test_headline_years_requirement_wins_over_later_tool_figures(settings, excerpt, years):
+    job = make_job(title="Software Developer", description=excerpt + "\n\n" + ENGLISH_DESC,
+                   location_raw="Tallinn, Estonia", country="EE")
+    res = evaluate(job, settings.profile)
+    assert res.signals["years_required"] == years
+    assert res.status == "drop"
+    assert f"asks for {years}+ years of experience" in res.reasons
+
+
+def test_a_per_tool_figure_after_the_headline_never_lowers_it(settings):
+    job = make_job(
+        title="Software Developer",
+        description="Requirements: 6+ years of professional experience in backend development. "
+        "2 years of experience with Kubernetes and 1 year of experience with Terraform. " + ENGLISH_DESC,
+        country="FI",
+    )
+    assert evaluate(job, settings.profile).signals["years_required"] == 6
+
+
+def test_a_lone_one_year_requirement_is_still_kept(settings):
+    job = make_job(title="Junior Software Developer", country="FI",
+                   description="1+ years of experience with JavaScript is a plus. " + ENGLISH_DESC)
+    res = evaluate(job, settings.profile)
+    assert res.signals["years_required"] == 1
+    assert res.status == "keep"
+
+
 # ------------------------------------------------------------------ language
 
 
@@ -365,6 +405,95 @@ def test_dedupe_keeps_unrelated_jobs_apart():
     unique, dups = dedupe([a, b])
     assert len(unique) == 2
     assert dups == {}
+
+
+# --------------------------------------------------- dedupe: company name variants
+
+
+def test_dedupe_merges_a_configured_alias_and_not_without_it():
+    """VOIS is Vodafone Intelligent Solutions: no string rule can know that, an alias can."""
+    vois = make_job(source="linkedin", source_id="li-vois", title="Junior Software Developer",
+                    company="VOIS", country="RO")
+    vodafone = make_job(source="ats_boards", source_id="ats-vf", title="Junior Software Developer",
+                        company="Vodafone", country="RO")
+    unique, dups = dedupe([vois, vodafone], aliases={"vois": "vodafone"})
+    assert [j.id for j in unique] == [vodafone.id]
+    assert dups == {vodafone.id: [vois.id]}
+    unique, dups = dedupe([vois, vodafone])
+    assert len(unique) == 2 and dups == {}
+
+
+def test_dedupe_applies_aliases_after_normalization():
+    vois = make_job(source="linkedin", source_id="li-vois2", company="Vois Oy")
+    vodafone = make_job(source="ats_boards", source_id="ats-vf2", company="VODAFONE GmbH")
+    _, dups = dedupe([vois, vodafone], aliases={"VOIS Ltd": "Vodafone AG"})
+    assert dups == {vodafone.id: [vois.id]}
+
+
+def test_dedupe_strips_a_trailing_country_and_legal_form():
+    duunitori = make_job(source="duunitori", source_id="du-aw", title="DevOps Engineer, Tampere",
+                         company="Academic Work")
+    tmt = make_job(source="tyomarkkinatori", source_id="tmt-aw", title="DevOps Engineer, Tampere",
+                   company="Academic Work Finland Oy")
+    unique, dups = dedupe([tmt, duunitori])
+    assert [j.source for j in unique] == ["duunitori"]
+    assert dups == {duunitori.id: [tmt.id]}
+
+
+@pytest.mark.parametrize("short,long", [
+    ("Starship Technologies", "Starship Technologies OÜ"),
+    ("Deutsche Bahn", "Deutsche Bahn AG"),
+    ("Kone", "KONE Oyj"),
+    ("Maersk", "Maersk A/S"),
+    ("Comarch", "Comarch Sp. z o.o."),
+    ("Kiwi", "Kiwi s.r.o."),
+    ("Acme", "Acme Holding Group Nordics"),
+    ("Hartwall", "Oy Hartwall Ab"),
+])
+def test_dedupe_normalizes_legal_forms_away(short, long):
+    a = make_job(source="teamtailor", source_id=f"tt-{short}", company=short)
+    b = make_job(source="linkedin", source_id=f"li-{short}", company=long)
+    _, dups = dedupe([b, a])
+    assert dups == {a.id: [b.id]}
+
+
+def test_dedupe_merges_a_longer_name_that_starts_with_a_two_word_company():
+    """The board names the unit, the other copy only the parent: same posting."""
+    parent = make_job(source="teamtailor", source_id="tt-db", company="Deutsche Bahn")
+    unit = make_job(source="linkedin", source_id="li-db", company="Deutsche Bahn Fernverkehr")
+    other = make_job(source="linkedin", source_id="li-db2", company="Deutsche Bahn Fernverkehr Süd")
+    unique, dups = dedupe([unit, other, parent])
+    assert [j.id for j in unique] == [parent.id]
+    assert set(dups[parent.id]) == {unit.id, other.id}
+
+
+@pytest.mark.parametrize("short,long", [("Polar", "Polar Squad"), ("HSB", "HSB Technical"),
+                                        ("Collo", "Collo Atalent")])
+def test_dedupe_never_prefix_merges_a_one_word_company(short, long):
+    """Polar (the watch maker) and Polar Squad (the consultancy) are different employers."""
+    a = make_job(source="teamtailor", source_id=f"tt-1w-{short}", company=short)
+    b = make_job(source="linkedin", source_id=f"li-1w-{short}", company=long)
+    unique, dups = dedupe([a, b])
+    assert len(unique) == 2 and dups == {}
+
+
+def test_dedupe_prefix_merge_needs_a_word_boundary_and_the_same_title():
+    a = make_job(source="teamtailor", source_id="tt-wb", company="Academic Work")
+    b = make_job(source="linkedin", source_id="li-wb", company="Academic Workers Union")
+    c = make_job(source="linkedin", source_id="li-wb2", company="Academic Work Solutions",
+                 title="Junior Backend Developer")
+    unique, dups = dedupe([a, b, c])
+    assert len(unique) == 3 and dups == {}
+
+
+def test_dedupe_never_reduces_a_company_to_nothing():
+    """A name made only of strippable words keeps its last word, so it never matches everything."""
+    group = make_job(source="teamtailor", source_id="tt-grp", company="Group AG")
+    group2 = make_job(source="linkedin", source_id="li-grp", company="GROUP")
+    finland = make_job(source="linkedin", source_id="li-fin", company="Finland Oy")
+    unique, dups = dedupe([group, group2, finland])
+    assert dups == {group.id: [group2.id]}
+    assert len(unique) == 2
 
 
 # --------------------------------------------------- dedupe: location preference

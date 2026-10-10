@@ -1,10 +1,11 @@
 """Command-line interface.
 
     jobscraper probe [SOURCE ...]   # fetch a few jobs per source, show normalized samples, report failures
-    jobscraper scrape [SOURCE ...]  # fetch everything from enabled sources into data/jobs.db
+    jobscraper scrape [SOURCE ...]  # fetch enabled sources into data/jobs.db (scrape.workers at once)
     jobscraper filter               # rule filter over jobs seen in the last N days
     jobscraper audit-drops          # sample rule-dropped jobs to label by hand (--score grades them)
     jobscraper audit-prior          # does the queue's lexical prior order better than the screen score?
+    jobscraper eval                 # screen P/R and rank P@k against the web UI's applied/skipped decisions
     jobscraper prefilter            # Sonnet pass over rule survivors (--batch: half price, async)
     jobscraper rank                 # Opus pass in windows, until the top stops gaining entrants
     jobscraper refine               # one request that ranks the shortlist against itself
@@ -25,7 +26,10 @@ from __future__ import annotations
 import logging
 import shutil
 import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 import typer
@@ -48,10 +52,12 @@ from jobscraper.filters import RULES_VERSION, apply_rules, dedupe
 from jobscraper.http import Http
 from jobscraper.models import Job
 from jobscraper.sources.base import (
+    Source,
     SourceContext,
     all_sources,
     enumerates_listing,
     get_source,
+    needs_browser,
     take,
 )
 from jobscraper.store import (
@@ -176,34 +182,73 @@ def scrape(names: list[str] | None = typer.Argument(None), verbose: bool = typer
     browser = _browser(settings)
     store = Store()
     try:
-        for name in _enabled(settings, names or []):
-            src = get_source(name)
+        enabled = [(name, get_source(name)) for name in _enabled(settings, names or [])]
+
+        def context(name: str, with_browser: BrowserFactory | None) -> SourceContext:
             cfg = settings.sources.get(name)
-            ctx = SourceContext(http=http, profile=settings.profile, options=cfg.options if cfg else {}, limit=limit,
-                                browser=browser)
-            t0 = time.monotonic()
-            # The run row is opened first: its id is what stamps every posting this fetch
-            # brings back, and the postings that keep an older id are the ones the source has
-            # stopped listing.
-            run_id = store.start_run(name)
-            try:
-                jobs = list(take(src.fetch(ctx), limit))
-            except Exception as exc:
-                console.print(f"[red]✗ {name}[/red]: {type(exc).__name__}: {exc}")
-                store.finish_run(run_id, 0, 0, f"{type(exc).__name__}: {exc}")
-                continue
-            new = store.upsert_jobs(jobs, run_id)
-            store.finish_run(run_id, len(jobs), new)
-            # Only a run that really enumerated the whole listing may call anything gone: an
-            # empty fetch, a keyword-search source and a --limit'ed fetch all say nothing.
-            if jobs and limit is None and enumerates_listing(src):
-                log.debug("%s: %d posting(s) did not come back in this run", name,
-                          store.mark_missing(name, run_id))
-            console.print(f"[green]✓ {name}[/green]: {len(jobs)} jobs, {new} new ({time.monotonic() - t0:.0f}s)")
+            return SourceContext(http=http, profile=settings.profile, options=cfg.options if cfg else {},
+                                 limit=limit, browser=with_browser)
+
+        # The store is single-threaded by design (one sqlite connection, one caller at a time):
+        # the pool only fetches, and every store call and console line stays on this thread.
+        # A pooled fetch gets no browser — Playwright objects belong to the thread that made
+        # them — so the sources that drive one run afterwards, here, one after another.
+        pool = ThreadPoolExecutor(max_workers=_workers(settings), thread_name_prefix="source")
+        try:
+            running = {}
+            for name, src in enabled:
+                if needs_browser(src):
+                    continue
+                # The run row is opened first: its id is what stamps every posting this fetch
+                # brings back, and the postings that keep an older id are the ones the source
+                # has stopped listing. The clock starts at submit, so the time a source spent
+                # queued for a free worker is counted in its seconds.
+                booking = (name, src, store.start_run(name), time.monotonic())
+                running[pool.submit(_fetch, src, context(name, None), limit)] = booking
+            for future in as_completed(running):
+                _book_fetch(store, *running[future], limit, future.result)
+        finally:
+            pool.shutdown(cancel_futures=True)
+        for name, src in enabled:
+            if needs_browser(src):
+                booking = (name, src, store.start_run(name), time.monotonic())
+                _book_fetch(store, *booking, limit, partial(_fetch, src, context(name, browser), limit))
     finally:
         if browser is not None:
             browser.close()
     console.print(store.stats())
+
+
+def _workers(settings) -> int:
+    """``scrape.workers`` in ``config/sources.yaml``: sources fetched at once (default 3)."""
+    return max(1, int(settings.scrape.get("workers", 3)))
+
+
+def _fetch(src: Source, ctx: SourceContext, limit: int | None) -> list[Job]:
+    """The whole of one source's fetch — the only part of ``scrape`` that runs in the pool."""
+    return list(take(src.fetch(ctx), limit))
+
+
+def _book_fetch(store: Store, name: str, src: Source, run_id: int, t0: float, limit: int | None,
+                result: Callable[[], list[Job]]) -> None:
+    """Write one finished fetch (``result`` returns its jobs or raises its error) to the store.
+
+    Main thread only: the pooled and the browser sources both end here.
+    """
+    try:
+        jobs = result()
+    except Exception as exc:
+        console.print(f"[red]✗ {name}[/red]: {type(exc).__name__}: {exc}")
+        store.finish_run(run_id, 0, 0, f"{type(exc).__name__}: {exc}")
+        return
+    new = store.upsert_jobs(jobs, run_id)
+    store.finish_run(run_id, len(jobs), new)
+    # Only a run that really enumerated the whole listing may call anything gone: an
+    # empty fetch, a keyword-search source and a --limit'ed fetch all say nothing.
+    if jobs and limit is None and enumerates_listing(src):
+        log.debug("%s: %d posting(s) did not come back in this run", name,
+                  store.mark_missing(name, run_id))
+    console.print(f"[green]✓ {name}[/green]: {len(jobs)} jobs, {new} new ({time.monotonic() - t0:.0f}s)")
 
 
 @app.command("filter")
@@ -213,7 +258,7 @@ def filter_cmd(days: int = 30, verbose: bool = typer.Option(False, "--verbose", 
     settings = load_settings()
     store = Store()
     jobs = store.jobs(seen_within_days=days)
-    unique, dups = dedupe(jobs, settings.profile.location)
+    unique, dups = dedupe(jobs, settings.profile.location, aliases=settings.company_aliases)
     results = apply_rules(unique, settings.profile)
     dup_results = []
     from jobscraper.models import FilterResult
@@ -921,6 +966,99 @@ def stats(public: bool = typer.Option(False, "--public",
         console.print(f"wrote {out}", soft_wrap=True)
         return
     console.print(Store().stats())
+
+
+@app.command("eval")
+def eval_cmd(
+    days: int = 30,
+    user: str | None = typer.Option(None, "--user", help="Only this user's decisions (default: every user; "
+                                                         "the latest decision per job wins)"),
+    min_decisions: int = typer.Option(10, "--min-decisions",
+                                      help="Refuse to grade on fewer usable (non-closed) decisions"),
+    json_out: Path | None = typer.Option(None, "--json", help="Also write the full metrics to this JSON file"),
+    decisions: Path | None = typer.Option(None, "--decisions",
+                                          help="Decisions database to read (default: the web UI's "
+                                               "data/serve/decisions.db when it exists, else this "
+                                               "database's own decisions table)"),
+) -> None:
+    """Grade the Sonnet screen and the Opus ranking against the owner's decisions in the web UI.
+
+    Applied / interview / offer / rejected / interested count as wanted, skipped as not wanted,
+    closed as neither (see ``audit.DECISION_LABELS``). Prints screen precision/recall, precision
+    at 10 and 20 on the report's effective score, and one summary line for the commit message of
+    the rule or prompt change being measured.
+    """
+    import json
+
+    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
+    from jobscraper.audit import decision_eval, eval_summary
+    from jobscraper.web.app import DECISIONS_DB
+
+    if decisions is not None and not decisions.is_file():
+        raise typer.BadParameter(f"{decisions} does not exist")
+    settings = load_settings()
+    sidecar = decisions or config.paths().data / "serve" / DECISIONS_DB
+    store = Store(decisions_path=sidecar if sidecar.is_file() else None)
+    try:
+        jobs, filters = _load_state(store, days)
+        out = decision_eval(jobs, filters,
+                            store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS),
+                            store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
+                            store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS),
+                            store.decisions(user), settings.profile)
+    finally:
+        store.close()
+
+    counts = out["counts"]
+    if counts["usable"] < min_decisions:
+        console.print(f"eval: {counts['usable']} usable decisions (closed ones excluded) — at least "
+                      f"{min_decisions} are needed for a number worth quoting; record more in the "
+                      "web UI or lower --min-decisions", soft_wrap=True)
+        return
+
+    def num(value: float | None) -> str:
+        return "—" if value is None else f"{value:.2f}"
+
+    table = Table("decisions", "count")
+    for key, value in counts.items():
+        table.add_row(key.replace("_", " "), str(value))
+    console.print(table)
+
+    screen = out["screen"]
+    table = Table(f"screen (pass = relevant and score ≥ {screen['min_score']})", "value")
+    for key in ("screened", "passed", "positives_screened", "positives_passed", "negatives_passed"):
+        table.add_row(key.replace("_", " "), str(screen[key]))
+    table.add_row("precision", num(screen["precision"]))
+    table.add_row("recall", num(screen["recall"]))
+    unseen = screen["unscreened_positives"]
+    for category, n in unseen["rule_dropped"].items():
+        table.add_row(f"positive rule-dropped: {category}", str(n))
+    table.add_row("positive never screened", str(unseen["never_screened"]))
+    console.print(table)
+
+    ranked = out["rank"]
+    table = Table("effective top", "jobs", "positive", "negative", "unlabelled", "closed")
+    for row in ranked["global"]:
+        table.add_row(str(row["k"]), str(row["size"]), str(row["positive"]), str(row["negative"]),
+                      str(row["unlabelled"]), str(row["excluded"]))
+    console.print(table)
+
+    labelled = ranked["labelled"]
+    table = Table("labelled only: precision at", "k used", "positives", "precision")
+    for row in labelled["at"]:
+        table.add_row(str(row["k"]), str(row["k_used"]), str(row["positives"]), num(row["precision"]))
+    console.print(table)
+    console.print(f"{labelled['scored']} labelled jobs carry an effective score (k is capped at that); "
+                  f"mean score positive {num(labelled['mean_positive'])} vs negative "
+                  f"{num(labelled['mean_negative'])}, Spearman score vs label {_rho(labelled['spearman'])}, "
+                  f"refine offset {ranked['offset']:+.1f}", soft_wrap=True)
+
+    if json_out is not None:
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        json_out.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+        console.print(f"wrote {json_out}", soft_wrap=True)
+    # One line to paste into the commit message of the change being measured.
+    console.print(eval_summary(out), soft_wrap=True)
 
 
 if __name__ == "__main__":

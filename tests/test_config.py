@@ -78,3 +78,40 @@ def test_gone_after_misses_defaults_to_one_complete_run():
     profile = Profile(name="x", summary="y")
     assert profile.gone_after_misses == 1
     assert Profile(name="x", summary="y", gone_after_misses=0).gone_after_misses == 0
+
+
+def test_the_scrape_section_is_its_own_settings_block(tmp_path):
+    """``scrape:`` (the pool across sources) is popped like ``http:``, not read as a source."""
+    from jobscraper import config
+
+    (tmp_path / "profile.yaml").write_text("name: x\nsummary: y\n", encoding="utf-8")
+    (tmp_path / "sources.yaml").write_text("scrape:\n  workers: 2\nsources: {}\n", encoding="utf-8")
+    settings = config.load_settings(tmp_path)
+    assert settings.scrape == {"workers": 2}
+    assert "scrape" not in settings.sources
+
+
+def test_without_a_scrape_section_the_settings_are_empty(tmp_path):
+    from jobscraper import config
+
+    (tmp_path / "profile.yaml").write_text("name: x\nsummary: y\n", encoding="utf-8")
+    (tmp_path / "sources.yaml").write_text("scrape:\nsources: {}\n", encoding="utf-8")
+    assert config.load_settings(tmp_path).scrape == {}
+    (tmp_path / "sources.yaml").write_text("sources: {}\n", encoding="utf-8")
+    assert config.load_settings(tmp_path).scrape == {}
+
+
+def test_company_aliases_are_their_own_settings_block(tmp_path):
+    """``company_aliases:`` feeds dedupe; absent or empty it is ``{}``, never a source."""
+    from jobscraper import config
+
+    (tmp_path / "profile.yaml").write_text("name: x\nsummary: y\n", encoding="utf-8")
+    (tmp_path / "sources.yaml").write_text("company_aliases:\n  vois: vodafone\nsources: {}\n",
+                                           encoding="utf-8")
+    settings = config.load_settings(tmp_path)
+    assert settings.company_aliases == {"vois": "vodafone"}
+    assert "company_aliases" not in settings.sources
+    (tmp_path / "sources.yaml").write_text("company_aliases:\nsources: {}\n", encoding="utf-8")
+    assert config.load_settings(tmp_path).company_aliases == {}
+    (tmp_path / "sources.yaml").write_text("sources: {}\n", encoding="utf-8")
+    assert config.load_settings(tmp_path).company_aliases == {}

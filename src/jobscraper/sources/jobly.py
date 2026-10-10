@@ -256,6 +256,7 @@ def parse_detail(html: str | None, url: str) -> Job | None:
 class Jobly:
     name = "jobly"
     description = "jobly.fi — Finnish job board behind Cloudflare (headless browser + JSON-LD)"
+    uses_browser = True  # every page goes through ctx.page: keep it on the main thread
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]:
         queries = ctx.opt("queries", DEFAULT_QUERIES) or DEFAULT_QUERIES

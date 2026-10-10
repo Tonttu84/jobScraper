@@ -139,8 +139,8 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   ranked, 90 new), published `full-2026-09-13.db`. `audit-prior` after it (236 rank verdicts):
   prior ordering puts 10/21 of the effective top in its first 60 vs 6/21 for the screen
   ordering, median position 62 vs 117, Spearman +0.12 vs +0.07 — the prior is the better queue,
-  with the selection-bias caveat the command prints. Two things the rankers noticed are chips
-  for separate sessions: the years-of-experience extractor read 1 from a "minimum 6 years"
+  with the selection-bias caveat the command prints. Two things the rankers noticed (both fixed
+  2026-10-10, see "Built 2026-10-10"): the years-of-experience extractor read 1 from a "minimum 6 years"
   posting, and cross-source duplicates with different company strings (VOIS/Vodafone,
   Academic Work/Academic Work Finland Oy) each cost two Opus verdicts.
   Original note: `valtiolle`, `kuntarekry`,
@@ -336,7 +336,8 @@ The engineering side is quantified (test count, coverage gate, funnel counts per
        `COMPATIBLE_PROMPT_VERSIONS` by the owner's decision: no re-ranking, the old verdicts age
        out with their jobs.
 3. **Coverage gate to 97%** (adapter error branches).
-4. - [ ] **Labelled evaluation set** — the owner records applied / skipped decisions in the web UI
+4. - [x] **Labelled evaluation set** — built 2026-10-10 as `jobscraper eval` (see "Built 2026-10-10"
+   below); waits for the owner's first decisions. Original note: the owner records applied / skipped decisions in the web UI
    while applying (the `decisions` table). Once there are a few dozen, add `jobscraper eval`:
    Sonnet screen precision/recall and Opus precision@10/20 against those decisions, and reuse
    the best cases as prompt anchors (lever 2 under "Improving match quality"). Every rule or
@@ -447,6 +448,40 @@ borderline match that slips through is capped instead of graded as a great fit. 
 `deal_breakers` in `config/profile.yaml`.
 
 Trigger: whenever a new CV arrives, offer these (CLAUDE.md → "When the owner hands over a new CV").
+
+## Built 2026-10-10, waiting for the next fresh run (owner's call: no re-scoring of old verdicts)
+Four changes from the open list, each written by an Opus subagent against tests first; the full
+check (ruff + pytest, 99% gate) passed before the commit. Nothing was re-filtered or re-scored on
+the stored data — the owner wants one fresh run once the pending features are in.
+- **Years-of-experience extractor** (`filters/rules.py`, rules `2026-10-10a`): the first "N years"
+  figure next to an experience word wins instead of the smallest. Measured on the stored database:
+  206 postings carried `years_required: 1`, 7 of them stating a 3+ year minimum first ("Minimum 5
+  years of engineering experience … 1 year of experience with LangSmith"). Known trade-off: a
+  per-tool figure written *before* the headline would now win.
+- **Dedupe across company spellings** (`dedupe` in `filters/rules.py`): company names are folded to
+  ASCII, legal forms (oy, ab, gmbh, oü, a/s, sp. z o.o., …) and a trailing country/region word are
+  stripped, `company_aliases:` in `config/sources.yaml` maps one employer's names onto each other
+  (shipped with `vois: vodafone`), and under the same title a longer name merges into a two-word-or-
+  longer word-prefix of it ("Academic Work Finland Oy" → "Academic Work"; "Polar" / "Polar Squad"
+  stay apart). The 2026-09-13 round paid two Opus verdicts each for VOIS/Vodafone and Academic Work.
+- **Sources fetched in parallel** (`scrape.workers: 3` in `config/sources.yaml`): `jobscraper
+  scrape` submits every source to a thread pool and does all store writes on the main thread as
+  fetches finish; a source that may need the headless browser (`uses_browser = True`, today only
+  `jobly`) runs afterwards on the main thread, because Playwright objects belong to the thread that
+  created them. With `ats_boards` keeping its own `workers: 4` the two multiply (up to 4 + 2 hosts in
+  flight; the per-host throttle still holds). Expected effect: the 65-min scrape of 2026-09-13
+  should approach its slowest source (`linkedin`, 18 min). **Time the next run and record it here.**
+- **`jobscraper eval`** (`audit.decision_eval`): grades the screen (precision / recall of "relevant
+  and score ≥ `ai.prefilter_min_score`") and the ranking (positives in the effective top 10 / 20,
+  P@k over the labelled jobs, mean effective score of wanted vs skipped, Spearman) against the web
+  UI's decisions. applied / interview / offer / rejected / interested count as wanted, skipped as
+  not wanted, `closed` as neither; the latest decision per job wins across users. Reads
+  `data/serve/decisions.db` when it exists (`--decisions PATH` otherwise), refuses below
+  `--min-decisions` (10), `--json PATH` dumps everything. Prints one summary line for commit
+  messages: `eval: 24 decisions — screen P 0.71 / R 0.93, rank P@10 0.60 P@20 0.55`.
+- Also: the pipeline tests count from a frozen date (`FIXTURE_TODAY` in `tests/test_cli.py`,
+  `rules.today_utc`) — the arbeitnow fixture is from 2026-09-07 and `max_age_days: 20` had started
+  dropping it, 15 tests failed on 2026-10-10 for no code reason.
 
 ## Later ideas
 - ~~Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.~~

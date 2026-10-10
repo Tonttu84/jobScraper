@@ -263,6 +263,10 @@ class Settings(BaseModel):
     profile: Profile
     sources: dict[str, SourceConfig]
     http: dict[str, Any] = Field(default_factory=dict)
+    #: The top-level ``scrape:`` section (``workers``: sources fetched at once).
+    scrape: dict[str, Any] = Field(default_factory=dict)
+    #: The top-level ``company_aliases:`` section: company name -> the name dedupe treats it as.
+    company_aliases: dict[str, str] = Field(default_factory=dict)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -281,9 +285,12 @@ def load_settings(config_dir: Path | None = None) -> Settings:
     profile_raw = _load_yaml(cfg / "profile.yaml")
     sources_raw = _load_yaml(cfg / "sources.yaml")
     http_raw = sources_raw.pop("http", {}) or {}
+    scrape_raw = sources_raw.pop("scrape", {}) or {}
     sources = {
         name: SourceConfig(**(opts or {})) if isinstance(opts, dict) and set(opts) <= {"enabled", "options"}
         else SourceConfig(enabled=(opts or {}).get("enabled", True), options={k: v for k, v in (opts or {}).items() if k != "enabled"})
         for name, opts in (sources_raw.get("sources") or {}).items()
     }
-    return Settings(profile=Profile(**profile_raw), sources=sources, http=http_raw)
+    aliases = sources_raw.pop("company_aliases", {}) or {}
+    return Settings(profile=Profile(**profile_raw), sources=sources, http=http_raw, scrape=scrape_raw,
+                    company_aliases=aliases)

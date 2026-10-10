@@ -162,3 +162,22 @@ def test_get_source_names_the_sources_it_knows():
     with pytest.raises(KeyError, match="unknown source"):
         get_source("not-a-source")
     assert get_source("arbeitnow").name == "arbeitnow"
+
+
+def test_needs_browser_is_off_unless_the_adapter_says_so():
+    """Duck-typed like ``enumerates_listing``: an adapter without the attribute needs none."""
+    from types import SimpleNamespace
+
+    from jobscraper.sources.base import needs_browser
+
+    assert needs_browser(SimpleNamespace(name="plain")) is False
+    assert needs_browser(SimpleNamespace(name="chromium", uses_browser=True)) is True
+
+
+def test_only_jobly_drives_the_headless_browser():
+    """Playwright's sync objects belong to the thread that made them, so ``scrape`` keeps the
+    sources that call ``ctx.page`` on the main thread. A new adapter that calls it must set
+    ``uses_browser = True`` and join this set."""
+    from jobscraper.sources.base import all_sources, needs_browser
+
+    assert {name for name, src in all_sources().items() if needs_browser(src)} == {"jobly"}

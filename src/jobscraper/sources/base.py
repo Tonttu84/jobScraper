@@ -106,6 +106,11 @@ class Source(Protocol):
     #: JSON dump) sets this to True and lets the gone-posting counter act on its runs. Adapters
     #: are duck-typed, so read it through :func:`enumerates_listing` rather than as an attribute.
     complete_listing: bool = False
+    #: This adapter calls :meth:`SourceContext.page`, so it may drive the headless browser.
+    #: Playwright's sync objects belong to the thread that created them, so ``scrape`` runs
+    #: such a source on the main thread instead of in its pool. Read it through
+    #: :func:`needs_browser`.
+    uses_browser: bool = False
 
     def fetch(self, ctx: SourceContext) -> Iterable[Job]: ...
 
@@ -113,6 +118,11 @@ class Source(Protocol):
 def enumerates_listing(source: Source) -> bool:
     """Whether a posting this source did not return can be called taken down (default: no)."""
     return bool(getattr(source, "complete_listing", False))
+
+
+def needs_browser(source: Source) -> bool:
+    """Whether this source may drive the headless browser (default: no)."""
+    return bool(getattr(source, "uses_browser", False))
 
 
 _REGISTRY: dict[str, Source] = {}

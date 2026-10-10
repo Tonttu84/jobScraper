@@ -12,6 +12,16 @@ http:
   browser_timeout: 45     # seconds per page load
   browser_headless: true  # false to watch what the browser does while fixing a parser
 
+scrape:
+  # Sources fetched at once; 1 = one after another. ats_boards has its own pool (workers: 4
+  # under sources), so the two multiply. A source that drives the headless browser runs on
+  # its own, after the rest.
+  workers: 3
+
+# Dedupe: company names that are the same employer on different boards (spelling is normalized).
+company_aliases:
+  vois: vodafone          # VOIS = Vodafone Intelligent Solutions
+
 sources:
   # ---------------------------------------------------------------- Finland / Estonia / Nordics
   duunitori:

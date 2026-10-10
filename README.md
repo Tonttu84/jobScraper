@@ -81,7 +81,7 @@ uv run jobscraper run --fresh           # start the run from an empty database i
 uv run jobscraper run --batch           # same pipeline with the prefilter sent through the Message Batches API
 uv run jobscraper runs                  # list per-run databases (* = the one commands use by default)
 uv run jobscraper --db data/runs/20260909-101500.db report   # any command against a specific database
-uv run jobscraper scrape linkedin indeed
+uv run jobscraper scrape linkedin indeed      # sources run scrape.workers (sources.yaml) at a time; browser sources afterwards
 uv run jobscraper filter --days 14
 uv run jobscraper prefilter --max-jobs 50     # try the Sonnet pass on a sample first
 uv run jobscraper prefilter --batch           # same verdicts at half price via the Message Batches API (async; --no-wait submits and exits, re-run to collect)
@@ -91,6 +91,7 @@ uv run jobscraper refine                # Fable over the effective top 20 (25 on
 uv run jobscraper report
 uv run jobscraper diff                  # what changed since the previous report — see docs/SCHEDULING.md
 uv run jobscraper stats
+uv run jobscraper eval                  # screen precision/recall and rank P@10/20 against your applied/skipped decisions in the web UI
 uv run jobscraper facets                # backfill the filter facets of an existing DB, no AI re-runs
 uv run jobscraper publish --name week37 # copy the current DB to data/serve/week37.db
 uv run jobscraper serve                 # web UI over data/serve/ → http://127.0.0.1:8000
