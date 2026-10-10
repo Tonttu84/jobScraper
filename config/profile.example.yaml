@@ -29,6 +29,30 @@ interests: [backend, full-stack, DevOps]
 # Leaving this empty keeps both prompts exactly as they are (no cached verdicts are invalidated).
 deal_breakers: []
 
+# Optional, and fed ONLY to the Opus ranking prompt (and the refine pass, which reuses it), never
+# to the Sonnet screen. Leaving either out keeps every prompt exactly as it is.
+#
+# dossier: what the CV has no room for — real project sizes and your role in them, tool
+# proficiency by band, domains you like or avoid, what "junior" means to you, pay floor, company
+# size, working conditions. Where it contradicts a guess from the CV, the dossier wins.
+# Produce it by going through docs/DOSSIER-QUESTIONNAIRE.md. Example:
+# dossier: |
+#   Largest project: a 15k-line Python service built with two classmates; I owned the API layer.
+#   Strong: Python, SQL. Working: TypeScript, Docker. Read-only: Java.
+#   Prefer product companies of 20-500 people; fintech and games are fine, ad-tech is not.
+#   Pay floor 2800 EUR/month gross; hybrid at most 3 office days a week.
+#
+# weights: a scoring rubric, so every rank call balances the criteria the same way. Each
+# criterion is judged 0-100 and combined with these weights (shown as percents of their sum, in
+# this order). Whole numbers >= 0, at least one above 0; a 0 is still listed (a deliberate zero).
+# weights:
+#   stack_fit: 30      # how much of the posting's core stack the CV and dossier cover
+#   level: 20          # whether the seniority and required years fit
+#   domain: 15         # whether the business domain is one the candidate likes
+#   location: 15       # country tier, remote region, office days
+#   pay: 10            # stated or likely pay against the floor
+#   company_type: 10   # product vs consultancy, company size, team setup
+
 languages:
   ok: [en, fi, de]          # can work in these
   weak: [sv]                # a little; flag for review, never auto-drop

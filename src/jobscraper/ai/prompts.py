@@ -174,6 +174,44 @@ def _deal_breakers_block(profile: Profile, stage: str) -> str:
     return f"\nDEAL-BREAKERS (automatic reject)\n{bullets}\n{_DEAL_BREAKER_INSTRUCTIONS[stage]}\n"
 
 
+def _dossier_block(profile: Profile) -> str:
+    """The dossier section, or "" when the profile has none (ranking prompt only).
+
+    Same rule as the deal-breakers: empty has to leave the prompt byte-for-byte unchanged.
+    """
+    dossier = profile.dossier.strip()
+    if not dossier:
+        return ""
+    return ("\nDOSSIER (what the CV does not say — written with the candidate; where it "
+            "contradicts a guess from the CV, the dossier wins)\n" + dossier + "\n")
+
+
+#: Closes the rubric: the weights shape the score, they don't replace the bands or the
+#: deal-breakers.
+_RUBRIC_INSTRUCTION = (
+    "Judge each criterion on its own 0-100, then combine them with these weights into the "
+    "score. The bands keep their meaning (80+ apply this week; below 50 probably skip), a "
+    "deal-breaker still overrides, and a criterion the posting says nothing about is judged "
+    "from what the candidate would most likely find there."
+)
+
+
+def _rubric_block(profile: Profile) -> str:
+    """The scoring rubric, or "" when the profile sets no weights (ranking prompt only).
+
+    One bullet per criterion in the profile's order, its weight as a whole-number percent of
+    the sum (plain rounding: three equal weights read 33% each). A zero weight is still listed —
+    the owner may be recording a deliberate zero. The validator guarantees a positive sum.
+    """
+    weights = profile.weights
+    if not weights:
+        return ""
+    total = sum(weights.values())
+    bullets = "\n".join(f"- {key.replace('_', ' ')}: {round(100 * weight / total)}%"
+                        for key, weight in weights.items())
+    return f"\nSCORING RUBRIC\n{bullets}\n{_RUBRIC_INSTRUCTION}\n"
+
+
 def system_prompt(stage: str, profile: Profile) -> str:
     if stage == "refine":
         # The refine pass judges the same jobs by the same rules; only the shape of the answer
@@ -183,8 +221,12 @@ def system_prompt(stage: str, profile: Profile) -> str:
     template = PREFILTER_SYSTEM if stage == "prefilter" else RANK_SYSTEM
     head = template.replace("{role_label}", profile.prompt.role_label.strip())
     body = _policy_block(profile) + _deal_breakers_block(profile, stage)
-    if stage == "rank" and profile.cv_text.strip():
-        body += "\nFULL CV\n" + profile.cv_text.strip() + "\n"
+    if stage == "rank":
+        if profile.cv_text.strip():
+            body += "\nFULL CV\n" + profile.cv_text.strip() + "\n"
+        # The screen stays short and cheap: the dossier and the rubric are for the ranker only
+        # (and so for refine, which reuses this prompt).
+        body += _dossier_block(profile) + _rubric_block(profile)
     return head + body
 
 

@@ -33,6 +33,8 @@ data/browser/
 
 # The owner's own profile holds a CV; it lives in the private repo (scripts/sync_private.sh).
 config/profile.yaml
+# The owner's answers to docs/DOSSIER-QUESTIONNAIRE.md; condensed into the profile's dossier.
+config/dossier-answers.md
 
 # transfer archives built for the owner's laptop (see README-restore.txt inside)
 /jobscraper-owner-*.zip

@@ -170,9 +170,13 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   `guess_country`; `google` needs a location source first (none in the listing payload); `apple`
   is not worth it. All four carry the description in the listing, so none pays a request per
   posting.
-  **Decided 2026-10-10 (owner):** `tesla` enabled the same day; `amazon` once ISO-3 codes are
-  read (`guess_country`); google and apple stay out. **Watch the first run:** Tesla's 2 885
-  software titles minus the country skip is the open number.
+  **Decided 2026-10-10 (owner):** `tesla` and `amazon` enabled the same day; google and apple
+  stay out. `guess_country` now reads ISO 3166-1 alpha-3 codes (`sources/_iso3.py`, 249 entries)
+  and, in a string of three or more parts, lets a capitalised trailing country code beat the
+  name rule — "Atlanta, Georgia, USA" had resolved to GE (the country), which is in the target
+  list, 189 Amazon rows' worth. Measured on the live Amazon listing: 10 714 software titles →
+  **1 017 in region** after the skip (0 unknown-country rows; 144 IE, 9 remote US). **Watch the
+  first run:** Tesla's 2 885 software titles minus the country skip is the open number.
 
 - [x] **Felipe: incremental round done 2026-09-10** — 7,635 new jobs from 81 boards + jobly,
   1,595 rule survivors screened by Sonnet subagents, 37 newly ranked by Opus, report #8
@@ -445,7 +449,7 @@ Raise `gone_after_misses` to 2 if that ever bites.
   re-filter: default DB 89 of 11 878 postings carry a deadline (0.7%), 11 already passed, 40
   closing within a week; Felipe's 107 of 16 891 (0.6%), 4 passed, 46 closing within a week.
 
-## Improving match quality (agreed levers, not yet built)
+## Improving match quality (agreed levers; 1 and 3 wired 2026-10-10, content pending)
 The CV is a thin signal. Three additions, in order of expected payoff:
 
 1. **AI-only dossier.** A `dossier` section in `config/profile.yaml`, used only by the Opus
@@ -468,6 +472,20 @@ borderline match that slips through is capped instead of graded as a great fit. 
 `deal_breakers` in `config/profile.yaml`.
 
 Trigger: whenever a new CV arrives, offer these (CLAUDE.md → "When the owner hands over a new CV").
+
+**Status 2026-10-10** (owner: "all improvements before the next run"):
+- Lever 1 and 3 are wired: `dossier:` (prose) and `weights:` (criterion → points) in
+  `config/profile.yaml`, rendered into the Opus rank prompt after the CV as a DOSSIER block and a
+  SCORING RUBRIC block (percent of the sum per criterion); the refine pass inherits them, the Sonnet
+  screen never sees them, and an empty field leaves the prompt byte-for-byte as before. No
+  `PROMPT_VERSION` bump (same call as for `extra_rules` and `deal_breakers`): old verdicts age out
+  with their jobs, new jobs are scored with the dossier.
+- The content comes from `docs/DOSSIER-QUESTIONNAIRE.md` (36 questions in 9 groups; section 9 is
+  the weights table). Answers go to `config/dossier-answers.md` (gitignored, mirrored by
+  `sync_private.sh`) or into the chat, and are condensed into the profile by the main session.
+  **Waiting for the owner's answers.**
+- Lever 2 (the owner's verdicts as anchors) needs decisions in the web UI first, so it comes after
+  the next run; `jobscraper eval` is the measurement for it.
 
 ## Built 2026-10-10, waiting for the next fresh run (owner's call: no re-scoring of old verdicts)
 Four changes from the open list, each written by an Opus subagent against tests first; the full

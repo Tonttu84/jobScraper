@@ -12,11 +12,13 @@ from datetime import UTC, datetime
 import pytest
 
 from jobscraper.sources._common import (
+    ISO2_CODES,
     guess_country,
     guess_remote,
     is_cloudflare_challenge,
     parse_date,
 )
+from jobscraper.sources._iso3 import ISO3_TO_ISO2
 
 
 @pytest.mark.parametrize(
@@ -104,6 +106,80 @@ def test_guess_country(text, expected):
 )
 def test_guess_country_ambiguous_codes(text, expected):
     assert guess_country(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Amazon's careers board sends a bare ISO 3166-1 alpha-3 code (probe of 2026-10-10).
+        ("SGP", "SG"),
+        ("FIN", "FI"),
+        ("Seattle, WA, USA", "US"),
+        ("Berlin, DEU", "DE"),
+        ("Dublin, IRL", "IE"),
+        ("London, GBR", "GB"),
+        # Cities the table does not know, so only the code can decide.
+        ("Cork, IRL", "IE"),
+        ("Tartu, EST", "EE"),
+        # "City, ST, CCC": the last token decides, as it does for ISO-2 (BW is Botswana).
+        ("Ulm, BW, DEU", "DE"),
+        ("Somewhere, XX, ARE", "AE"),
+        # Not ISO-3 codes: airport and city abbreviations stay unknown.
+        ("NYC", None),
+        ("LAX", None),
+        ("SFO", None),
+        ("Somewhere, NYC", None),
+        # Only an upper-case token counts: "can" is a word, not Canada.
+        ("can", None),
+        ("Can", None),
+        ("Visa and relocation", None),
+        ("Somewhere, and", None),
+        ("Somewhere, fin", None),
+        # Exactly three letters.
+        ("Somewhere, DEUX", None),
+        ("Somewhere, D3U", None),
+    ],
+)
+def test_guess_country_iso3_codes(text, expected):
+    assert guess_country(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # "City, State, CC": a country code in capitals as the last of three or more parts beats
+        # a place name earlier in the string. Amazon's 189 "…, Georgia, USA" rows were GE.
+        ("Atlanta, Georgia, USA", "US"),
+        ("Atlanta, Georgia, US", "US"),
+        ("Covington, Georgia, USA", "US"),
+        ("Belfast, Northern Ireland, GBR", "GB"),
+        ("Craigavon, Northern Ireland, GB", "GB"),
+        ("Batumi, Adjara, Georgia", "GE"),  # a name as the last part is not a code
+        # Two parts keep the old order: the name decides.
+        ("Tbilisi, Georgia", "GE"),
+        ("Atlanta, Georgia", "GE"),
+        # A last token that is also a US state / Canadian province code is not overriding:
+        # the name rule still runs first, then the codes rule as before.
+        ("Atlanta, Georgia, GA", "GE"),
+        ("Indianapolis, Indiana, IN", "US"),
+        ("Pune, Maharashtra, IN", "IN"),
+        ("Toronto, ON, CA", "CA"),
+        # Only capitals override a name; a lower-case last word is left to the old rules.
+        ("Helsinki, Finland, no", "FI"),
+        # Capitals that are no country code leave the string to the old rules too.
+        ("Helsinki, Finland, QQ", "FI"),
+    ],
+)
+def test_guess_country_trailing_code_beats_place_names(text, expected):
+    assert guess_country(text) == expected
+
+
+def test_iso3_table_is_complete_and_maps_to_real_iso2_codes():
+    assert len(ISO3_TO_ISO2) == 249
+    assert {iso2.lower() for iso2 in ISO3_TO_ISO2.values()} == ISO2_CODES
+    assert all(len(k) == 3 and k.isupper() and k.isalpha() for k in ISO3_TO_ISO2)
+    assert ISO3_TO_ISO2["FIN"] == "FI" and ISO3_TO_ISO2["USA"] == "US"
+    assert "XKX" not in ISO3_TO_ISO2  # Kosovo's code is user-assigned, not ISO
 
 
 def test_guess_country_multi_location_strings():

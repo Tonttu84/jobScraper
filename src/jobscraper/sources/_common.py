@@ -9,6 +9,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 from jobscraper.http import strip_html
+from jobscraper.sources._iso3 import ISO3_TO_ISO2
 
 
 def _words(text: str) -> tuple[str, ...]:
@@ -235,8 +236,14 @@ def _country_from_codes(segment: str) -> str | None:
     ambiguous, so a city we know wins first ("Milano, MI" is Milan, not Michigan). Anything
     else is scanned token by token, which catches the trailing-postcode shape
     ("Utrecht, NL, 3584 AB") while never matching a code inside a word.
+
+    An ISO 3166-1 alpha-3 code ("SGP", "Berlin, DEU") counts only when written in capitals,
+    so the words "can" and "and" never become Canada and Andorra, and only after the
+    two-letter codes found nothing. (As the last of three or more parts it has already
+    been read by ``_trailing_country_code``.)
     """
-    tokens = [t.strip().lower() for t in segment.split(",") if t.strip()]
+    raw = [t.strip() for t in segment.split(",") if t.strip()]
+    tokens = [t.lower() for t in raw]
     if len(tokens) >= 3:
         iso = _iso2(tokens[-1])
         if iso:
@@ -249,7 +256,25 @@ def _country_from_codes(segment: str) -> str | None:
         code = _code_country(token)
         if code:
             return code
-    return None
+    return next((ISO3_TO_ISO2[t] for t in raw if t in ISO3_TO_ISO2), None)
+
+
+def _trailing_country_code(segment: str) -> str | None:
+    """The country of a "City, State, CC" string whose last part is unmistakably a code.
+
+    Read before the place names, so "Atlanta, Georgia, USA" is the US and "Belfast,
+    Northern Ireland, GBR" is the UK. Only three-or-more part strings, only a last part in
+    capitals that is an ISO-2 or ISO-3 code, and never one that is also a US state or
+    Canadian province code ("Atlanta, Georgia, GA") — those keep the old order.
+    """
+    parts = [t.strip() for t in segment.split(",") if t.strip()]
+    if len(parts) < 3 or not parts[-1].isupper():
+        return None
+    last = parts[-1]
+    low = last.lower()
+    if low in _US_STATES or low in _CA_PROVINCES:
+        return None
+    return ISO3_TO_ISO2.get(last) or _iso2(low)
 
 
 def _location_segments(texts: tuple[str | None, ...]) -> list[str]:
@@ -266,11 +291,15 @@ def guess_country(*texts: str | None) -> str | None:
     """Best-effort ISO2 from location strings.
 
     Three rules, each tried against every location string before the next one starts:
-    a country or US state name (or a bare country code), then comma-separated
-    country/state codes, then a well-known city.
+    a country or US state name (or a bare country code, or a capitalised country code
+    closing a "City, State, CC" string), then comma-separated country/state codes, then a
+    well-known city.
     """
     segments = _location_segments(texts)
     for segment in segments:
+        trailing = _trailing_country_code(segment)
+        if trailing:
+            return trailing
         low = segment.lower()
         if len(low) == 2:
             iso = _iso2(low)

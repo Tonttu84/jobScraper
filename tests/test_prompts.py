@@ -210,3 +210,85 @@ def test_the_reference_block_is_one_line_per_anchor():
         "- Salesforce Consultant · unknown · unknown · score 38 · Different job entirely.\n"
         "\n"
     )
+
+
+# --- dossier and scoring rubric (ranking prompt only) ---------------------------------------
+# PLAN "Improving match quality": the dossier says what the CV has no room for, the weights make
+# every rank call compose its score the same way. Both feed only the Opus ranker (and so the
+# refine pass); the Sonnet screen stays short and cheap.
+
+DOSSIER = "Led a team of four on a 40k-line Go service.\nPay floor: 3200 EUR/month."
+WEIGHTS = {"stack_fit": 30, "domain": 15, "level": 20, "location": 15, "pay": 10,
+           "company_type": 10}
+
+RUBRIC_INSTRUCTION = (
+    "Judge each criterion on its own 0-100, then combine them with these weights into the "
+    "score. The bands keep their meaning (80+ apply this week; below 50 probably skip), a "
+    "deal-breaker still overrides, and a criterion the posting says nothing about is judged "
+    "from what the candidate would most likely find there."
+)
+
+
+def test_empty_dossier_and_weights_leave_every_prompt_byte_for_byte_unchanged():
+    baseline = fixture_json("prompts_baseline.json")
+    for dossier in ("", "   \n\t "):
+        profile = Profile(**BASELINE_PROFILE, dossier=dossier, weights={})
+        assert system_prompt("prefilter", profile) == baseline["prefilter"]
+        assert system_prompt("rank", profile) == baseline["rank"]
+        assert "DOSSIER" not in system_prompt("refine", profile)
+        assert "SCORING RUBRIC" not in system_prompt("refine", profile)
+
+
+def test_the_prefilter_prompt_never_sees_the_dossier_or_the_rubric():
+    plain = system_prompt("prefilter", Profile(**BASELINE_PROFILE))
+    full = system_prompt("prefilter", Profile(**BASELINE_PROFILE, dossier=DOSSIER, weights=WEIGHTS))
+    assert full == plain
+
+
+def test_the_rank_prompt_carries_the_dossier_then_the_rubric_after_the_cv():
+    rank = system_prompt("rank", Profile(**BASELINE_PROFILE, dossier=DOSSIER, weights=WEIGHTS))
+    dossier_block = (
+        "\nDOSSIER (what the CV does not say — written with the candidate; where it contradicts "
+        "a guess from the CV, the dossier wins)\n" + DOSSIER + "\n")
+    rubric_block = (
+        "\nSCORING RUBRIC\n"
+        "- stack fit: 30%\n- domain: 15%\n- level: 20%\n- location: 15%\n- pay: 10%\n"
+        "- company type: 10%\n" + RUBRIC_INSTRUCTION + "\n")
+    assert rank.endswith("\nFULL CV\nA CV.\n" + dossier_block + rubric_block)
+
+
+def test_the_refine_prompt_inherits_both_blocks_from_the_rank_prompt():
+    profile = Profile(**BASELINE_PROFILE, dossier=DOSSIER, weights=WEIGHTS)
+    refine = system_prompt("refine", profile)
+    assert refine.startswith(system_prompt("rank", profile))
+    assert refine.index("FULL CV") < refine.index("DOSSIER") < refine.index("SCORING RUBRIC") \
+        < refine.index("REFINEMENT PASS")
+
+
+def test_the_dossier_alone_or_the_rubric_alone():
+    only_dossier = system_prompt("rank", Profile(**BASELINE_PROFILE, dossier=f"  {DOSSIER}  \n"))
+    assert f"the dossier wins)\n{DOSSIER}\n" in only_dossier
+    assert "SCORING RUBRIC" not in only_dossier
+    only_rubric = system_prompt("rank", Profile(**BASELINE_PROFILE, weights={"stack_fit": 3, "pay": 1}))
+    assert "\nSCORING RUBRIC\n- stack fit: 75%\n- pay: 25%\n" in only_rubric
+    assert "DOSSIER" not in only_rubric
+
+
+def test_rubric_percentages_follow_the_profile_order_and_round_to_whole_numbers():
+    rank = system_prompt("rank", Profile(**BASELINE_PROFILE,
+                                         weights={"pay": 1, "level": 1, "domain": 1}))
+    # Rounding is plain: three equal weights read 33% each, the sum is not forced to 100.
+    assert "\nSCORING RUBRIC\n- pay: 33%\n- level: 33%\n- domain: 33%\n" in rank
+
+
+def test_a_zero_weight_criterion_is_still_listed():
+    rank = system_prompt("rank", Profile(**BASELINE_PROFILE,
+                                         weights={"stack_fit": 4, "company_type": 0}))
+    assert "- stack fit: 100%\n- company type: 0%\n" in rank
+
+
+def test_the_rubric_works_without_a_cv():
+    """No CV means no FULL CV block; the rubric still lands in the rank prompt."""
+    profile = Profile(name="Nobody", summary="Someone who writes software.", weights={"pay": 1})
+    assert "FULL CV" not in system_prompt("rank", profile)
+    assert "- pay: 100%" in system_prompt("rank", profile)

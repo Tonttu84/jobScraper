@@ -115,3 +115,47 @@ def test_company_aliases_are_their_own_settings_block(tmp_path):
     assert config.load_settings(tmp_path).company_aliases == {}
     (tmp_path / "sources.yaml").write_text("sources: {}\n", encoding="utf-8")
     assert config.load_settings(tmp_path).company_aliases == {}
+
+
+# --- dossier and scoring weights (fed only to the ranking prompt) ---------------------------
+
+
+def test_dossier_and_weights_default_to_empty():
+    from jobscraper.config import Profile
+
+    profile = Profile(name="x", summary="y")
+    assert profile.dossier == ""
+    assert profile.weights == {}
+
+
+def test_a_valid_weights_dict_loads_in_its_own_order(tmp_path):
+    from jobscraper import config
+
+    (tmp_path / "profile.yaml").write_text(
+        "name: x\nsummary: y\ndossier: |\n  Led a team of four.\n"
+        "weights:\n  stack_fit: 30\n  domain: 0\n  pay: 10\n", encoding="utf-8")
+    (tmp_path / "sources.yaml").write_text("sources: {}\n", encoding="utf-8")
+    profile = config.load_settings(tmp_path).profile
+    assert profile.dossier == "Led a team of four.\n"
+    assert list(profile.weights.items()) == [("stack_fit", 30), ("domain", 0), ("pay", 10)]
+
+
+def test_invalid_weights_are_rejected_with_a_clear_message():
+    import pytest
+
+    from jobscraper.config import Profile
+
+    cases = {
+        "negative": ({"stack_fit": 3, "pay": -1}, "pay"),
+        "a float": ({"stack_fit": 1.5}, "stack_fit"),
+        "a string": ({"stack_fit": "high"}, "stack_fit"),
+        "a numeric string": ({"stack_fit": "3"}, "stack_fit"),
+        "a bool": ({"stack_fit": True}, "stack_fit"),
+        "all zero": ({"stack_fit": 0, "pay": 0}, "at least one"),
+        "a blank key": ({"stack_fit": 1, "  ": 1}, "blank"),
+        "a list instead of a mapping": (["stack_fit"], "dict"),
+    }
+    for label, (weights, needle) in cases.items():
+        with pytest.raises(ValueError) as exc:
+            Profile(name="x", summary="y", weights=weights)
+        assert needle in str(exc.value), label

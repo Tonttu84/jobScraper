@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -243,6 +243,12 @@ class Profile(BaseModel):
     #: Hard no's, checked by both AI stages (see :mod:`jobscraper.ai.prompts`). Empty by
     #: default, and an empty list leaves the prompts exactly as they were before the feature.
     deal_breakers: list[str] = Field(default_factory=list)
+    #: What the CV has no room for (project sizes, tool bands, pay floor, …), written with the
+    #: candidate. Fed only to the ranking and refine prompts; empty leaves them unchanged.
+    dossier: str = ""
+    #: Scoring rubric for the ranker: criterion -> relative weight (shown as percents of the
+    #: sum, in this order). Fed only to the ranking and refine prompts; empty leaves them unchanged.
+    weights: dict[str, int] = Field(default_factory=dict)
     languages: LanguagePolicy = Field(default_factory=LanguagePolicy)
     seniority: SeniorityPolicy = Field(default_factory=SeniorityPolicy)
     location: LocationPolicy = Field(default_factory=LocationPolicy)
@@ -252,6 +258,25 @@ class Profile(BaseModel):
     web: WebPolicy = Field(default_factory=WebPolicy)
     max_age_days: int = 45  # postings older than this are dropped by the rule filter (unknown dates stay)
     gone_after_misses: int = 1  # consecutive complete runs of its source that must miss a posting before it counts as taken down; 0 = off
+
+    @field_validator("weights", mode="before")
+    @classmethod
+    def _check_weights(cls, value: Any) -> Any:
+        """Whole numbers >= 0 under non-blank keys, and not all zero: a rubric must weigh something.
+
+        Checked before pydantic's own coercion so "3", 1.5 or ``true`` are refused instead of
+        quietly becoming a weight.
+        """
+        if not isinstance(value, dict):
+            return value  # pydantic reports the wrong type itself
+        for key, weight in value.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError(f"weights: blank criterion name {key!r}")
+            if isinstance(weight, bool) or not isinstance(weight, int) or weight < 0:
+                raise ValueError(f"weights: {key} must be a whole number >= 0, got {weight!r}")
+        if value and not any(value.values()):
+            raise ValueError("weights: at least one criterion needs a weight above 0")
+        return value
 
 
 class SourceConfig(BaseModel):
