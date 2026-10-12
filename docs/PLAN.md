@@ -508,7 +508,27 @@ the stored data — the owner wants one fresh run once the pending features are 
   `jobly`) runs afterwards on the main thread, because Playwright objects belong to the thread that
   created them. With `ats_boards` keeping its own `workers: 4` the two multiply (up to 4 + 2 hosts in
   flight; the per-host throttle still holds). Expected effect: the 65-min scrape of 2026-09-13
-  should approach its slowest source (`linkedin`, 18 min). **Time the next run and record it here.**
+  should approach its slowest source (`linkedin`, 18 min).
+  **Timed 2026-10-12** (first run with the pool, `workers: 3`, plus Tesla and Amazon): whole
+  `scrape` **62 min** — no better than before, because `ats_boards` alone took **3 648 s (61
+  min)**: Tesla's listing carries no description and ats-scrapers' per-posting fetch launches a
+  stealth Chromium (CloakBrowser) for every one of its 384 in-region postings, ~10 s each, the
+  last 75 returning empty. Set `lazy_descriptions: false` on Tesla the same day (title + location
+  only, like LinkedIn rows). The pool itself worked: the 24 other sources were all done by 28 min
+  (`linkedin` 1 486 s, `wttj` 1 705 s counted from submit, so queue wait included), and `jobly`
+  (browser) ran after the pool in 80 s. Totals: 24 351 jobs in the DB, 8 307 new (Amazon 682,
+  Tesla 384); `filter` over 19 267 jobs seen in 30 days → 1 757 duplicate groups, keep 1 964 /
+  review 708 / drop 13 628; 2 068 unscreened survivors → 21 Sonnet chunks; `hydrate linkedin`
+  12. Log: `data/scrape-2026-10-12.log` (17 MB with `-v`). Next timing: without Tesla's
+  browser, `ats_boards` should be back near its 2026-09-13 figure (524 s) plus Amazon.
+  Round finished the same day: 21 Sonnet chunks (2 068 verdicts, 0 bad), 3 rank windows of 30 to
+  the 90 budget (stop: budget — every window still placed top-20 entrants, so the 1 148 left in
+  the queue are far from exhausted), one Fable refine pass (18 new vs 2 anchored, then "top 20
+  fully refined"; refine offset 19.7), **report #11: 124 ranked (90 new), 1 254 prefilter**,
+  published `full-2026-10-12.db`, private mirror synced. The top of #11 is RUBINLAKE Frankfurt
+  (junior NestJS backend), Property Finder Dubai (graduate trainee), Eaton Vantaa (firmware test
+  automation), then four Ericsson entry-level C++/cloud roles. `boost`: 392 LinkedIn rows were
+  hydrated across rounds, 71 of them now ranked, the deepest from prefilter position 463.
 - **`jobscraper eval`** (`audit.decision_eval`): grades the screen (precision / recall of "relevant
   and score ≥ `ai.prefilter_min_score`") and the ranking (positives in the effective top 10 / 20,
   P@k over the labelled jobs, mean effective score of wanted vs skipped, Spearman) against the web

@@ -204,6 +204,10 @@ sources:
         slug: tesla
         company: Tesla
         countries: *target_countries
+        # The listing carries no description and ats-scrapers' per-posting fetch launches a
+        # stealth Chromium (CloakBrowser) for every one: measured 2026-10-12, 384 in-region
+        # postings took ~55 min and the last 75 came back empty. Title + location only, then.
+        lazy_descriptions: false
       - ats: amazon                                   # Amazon: 34 576 listed, 10 714 software titles worldwide (2026-10-10); location is 'City, State, CCC' with an ISO-3 country code
         slug: amazon
         company: Amazon
