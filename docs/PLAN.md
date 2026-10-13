@@ -483,7 +483,14 @@ Trigger: whenever a new CV arrives, offer these (CLAUDE.md → "When the owner h
 - The content comes from `docs/DOSSIER-QUESTIONNAIRE.md` (36 questions in 9 groups; section 9 is
   the weights table). Answers go to `config/dossier-answers.md` (gitignored, mirrored by
   `sync_private.sh`) or into the chat, and are condensed into the profile by the main session.
-  **Waiting for the owner's answers.**
+- **2026-10-13: the dossier is in.** 35 of 36 questions answered conversationally (8.2 "what makes
+  you skip" is deferred until the owner has skipped a posting in the web UI; one skip so far).
+  `dossier:` in `config/profile.yaml` holds ~9.5k characters: timeline, hand-written vs AI-directed
+  code with evidence, a SHOWCASE PROJECTS section (the CV carries three lead projects swapped per
+  application; the ranker names the three in `why_apply`), level/title stance, location and
+  conditions, learning stance (will learn anything; Go and cloud wanted; embedded C near-fit),
+  product vs engineering problem, and the gaps to weigh. The draft and its sources stay in
+  `config/dossier-notes/` (private). Takes effect at the next rank round, no re-scoring.
 - Lever 2 (the owner's verdicts as anchors) needs decisions in the web UI first, so it comes after
   the next run; `jobscraper eval` is the measurement for it.
 
