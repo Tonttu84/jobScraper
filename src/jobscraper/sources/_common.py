@@ -63,6 +63,75 @@ US_STATE_NAMES: dict[str, str] = dict.fromkeys(
     "US",
 )
 
+#: German cities and towns beyond the ones in ``CITY_COUNTRY``, umlaut and ASCII spellings both
+#: (the boards write "Dusseldorf" and "Nuremberg" as often as "Düsseldorf" and "Nürnberg").
+#: Taken from the arbeitnow locations of 2026-10-13 that only the board's old blanket "DE"
+#: default placed. Left out on purpose: names shared with a bigger place elsewhere
+#: ("Cham", "Celle", "Halle", "Hof", "Worms" as a word, "Munster" — the Irish province).
+_DE_CITIES: tuple[str, ...] = (
+    *_words(
+        """aachen augsburg bamberg bayreuth bielefeld bochum böblingen boeblingen bonn bottrop
+        braunschweig bremen chemnitz cottbus darmstadt dortmund dresden duisburg
+        dusseldorf duesseldorf düren erfurt erlangen eschborn essen freiburg friedrichshafen
+        fürth garching gelsenkirchen göttingen gottingen goettingen gütersloh gutersloh hagen
+        hamm hannover hanover heidelberg heilbronn herne hildesheim ingolstadt ismaning jena
+        karlsruhe kassel kempten kiel koblenz krefeld leipzig leverkusen lübeck lubeck
+        luebeck ludwigsburg ludwigshafen magdeburg mainz mannheim mönchengladbach
+        moenchengladbach mülheim mulheim muelheim münster muenster neuss neu-isenburg
+        neu-ulm nürnberg nurnberg nuernberg nuremberg offenbach oberhausen oldenburg
+        osnabrück osnabruck osnabrueck ottobrunn paderborn pforzheim potsdam ratingen
+        regensburg reutlingen rostock saarbrücken saarbrucken saarbruecken schweinfurt
+        siegen sindelfingen solingen speyer starnberg stuttgart trier tübingen tuebingen
+        ulm unterföhring unterfoehring unterschleißheim walldorf wiesbaden wolfsburg
+        wuppertal würzburg wurzburg wuerzburg zwickau deutschlandweit"""
+    ),
+    "bad homburg", "frankfurt am main", "sankt augustin",
+)
+
+#: German states (Länder), native and English names. Matched with the city table, i.e. after
+#: country names and codes, so they only decide a string that names no country itself
+#: ("Ottobrunn, Bavaria", "Leipzig, Sachsen").
+_DE_STATES: tuple[str, ...] = (
+    *_words(
+        """bayern bavaria baden-württemberg baden-wurttemberg baden-wuerttemberg sachsen saxony
+        sachsen-anhalt saxony-anhalt hessen hesse nordrhein-westfalen nrw niedersachsen
+        rheinland-pfalz rhineland-palatinate thüringen thuringia brandenburg schleswig-holstein
+        mecklenburg-vorpommern saarland"""
+    ),
+    "north rhine-westphalia", "lower saxony",
+)
+
+#: Other European places arbeitnow (a German board that lists all of Europe) carried with no
+#: country, so they were tagged Germany. Those that share a name with a US town are also in
+#: ``_US_NAMESAKES``.
+_EU_CITIES: dict[str, str] = {
+    **dict.fromkeys(
+        (*_words("""birmingham solihull abingdon westminster cirencester manchester edinburgh
+                    winnersh cardiff belfast leeds bristol oxford bournemouth"""), "milton keynes"),
+        "GB",
+    ),
+    **dict.fromkeys(
+        _words("""geneva genève geneve lausanne saint-sulpice bern berne basel winterthur
+                  liestal zug luzern lucerne fribourg"""),
+        "CH",
+    ),
+    **dict.fromkeys(
+        (*_words("schiphol alkmaar utrecht rijswijk almere"), "den haag", "the hague", "den bosch"),
+        "NL",
+    ),
+    **dict.fromkeys(
+        _words("""saint-denis lille nantes toulouse strasbourg bordeaux rennes marseille metz
+                  rouen colmar niort"""),
+        "FR",
+    ),
+}
+
+#: Table cities that are also US towns. "Birmingham, AL" is Alabama: for these the "City, XX"
+#: rule in ``_country_from_codes`` lets the state code decide, not the city.
+_US_NAMESAKES: frozenset[str] = frozenset(
+    _words("birmingham westminster manchester bristol oxford geneva hanover potsdam")
+)
+
 CITY_COUNTRY: dict[str, str] = {
     "helsinki": "FI", "espoo": "FI", "vantaa": "FI", "tampere": "FI", "turku": "FI", "oulu": "FI",
     "jyväskylä": "FI", "kuopio": "FI", "lahti": "FI", "tallinn": "EE", "tartu": "EE", "stockholm": "SE",
@@ -91,6 +160,8 @@ CITY_COUNTRY: dict[str, str] = {
     "mountain view": "US", "san jose": "US", "san francisco": "US", "new york": "US",
     "boston": "US", "chicago": "US", "atlanta": "US", "dallas": "US", "raleigh": "US",
     "phoenix": "US", "denver": "US",
+    **dict.fromkeys((*_DE_CITIES, *_DE_STATES), "DE"),
+    **_EU_CITIES,
 }
 
 #: Real ISO 3166-1 alpha-2 codes (tzdata's ``iso3166.tab``). A two-letter location token that
@@ -233,7 +304,8 @@ def _country_from_codes(segment: str) -> str | None:
     "City, ST, CC" (Eightfold, Oracle, Workday) puts the country last, so a three-or-more
     part string is decided by its last token and nothing else — that is what makes
     "Amsterdam, NH, NL" the Netherlands and not New Hampshire. A two-part "City, XX" is
-    ambiguous, so a city we know wins first ("Milano, MI" is Milan, not Michigan). Anything
+    ambiguous, so a city we know wins first ("Milano, MI" is Milan, not Michigan) unless the
+    city is also a US town ("Birmingham, AL" is Alabama, see ``_US_NAMESAKES``). Anything
     else is scanned token by token, which catches the trailing-postcode shape
     ("Utrecht, NL, 3584 AB") while never matching a code inside a word.
 
@@ -248,7 +320,7 @@ def _country_from_codes(segment: str) -> str | None:
         iso = _iso2(tokens[-1])
         if iso:
             return iso
-    if len(tokens) == 2:
+    if len(tokens) == 2 and tokens[0] not in _US_NAMESAKES:
         city = CITY_COUNTRY.get(tokens[0])
         if city:
             return city

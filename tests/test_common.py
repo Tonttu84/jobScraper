@@ -79,7 +79,7 @@ from jobscraper.sources._iso3 import ISO3_TO_ISO2
         ("QQ", None),  # not even on its own
         # The two codes where the country beats the US state it shares letters with, for the
         # cities the table does not know (both forms are real rows from the 2026-09-09 run).
-        ("Ulm, DE", "DE"),
+        ("Albstadt, DE", "DE"),
         ("coimbatore, in", "IN"),
     ],
 )
@@ -232,6 +232,99 @@ def test_guess_remote_and_cloudflare_still_work():
     ],
 )
 def test_guess_country_place_names(text, expected):
+    assert guess_country(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # German cities beyond the big four, both spellings where the English one differs.
+        # Arbeitnow used to tag every unknown place DE; these are the ones that kept it true.
+        ("Karlsruhe", "DE"),
+        ("Leipzig", "DE"),
+        ("Dresden", "DE"),
+        ("Mainz", "DE"),
+        ("Nürnberg", "DE"),
+        ("Nuremberg", "DE"),
+        ("Nurnberg", "DE"),
+        ("Hannover", "DE"),
+        ("Hanover", "DE"),
+        ("Dusseldorf", "DE"),
+        ("Düsseldorf", "DE"),
+        ("Cologne", "DE"),
+        ("Köln", "DE"),
+        ("Münster", "DE"),
+        ("Muenster", "DE"),
+        ("Mülheim", "DE"),
+        ("Würzburg", "DE"),
+        ("Saarbrücken", "DE"),
+        ("Osnabrück", "DE"),
+        ("Freiburg im Breisgau", "DE"),
+        ("Neu-Ulm", "DE"),
+        ("Bonn-Ramersdorf", "DE"),
+        ("Karlsruhe, GER", "DE"),
+        ("DE - Mainz", "DE"),
+        ("Achim (bei Bremen)", "DE"),
+        ("Unterföhring", "DE"),
+        ("Neu-Isenburg", "DE"),
+        ("Ludwigshafen am Rhein", "DE"),
+        ("Deutschlandweit", "DE"),
+        # German states, German and English names, as a suffix after an unknown town.
+        ("Leipzig, Sachsen", "DE"),
+        ("Ottobrunn, Bavaria", "DE"),
+        ("Gilching, Bayern", "DE"),
+        ("Hessen (Außendienst)", "DE"),
+        ("Kassel, Hesse", "DE"),
+        ("Gelsenkirchen, North Rhine-Westphalia", "DE"),
+        ("Gescher, Nordrhein-Westfalen", "DE"),
+        ("Wolfsburg, Lower Saxony", "DE"),
+        ("Celle, Niedersachsen", "DE"),
+        ("Falkensee, Brandenburg", "DE"),
+        ("Tuttlingen, Baden-Württemberg", "DE"),
+        ("Jena, Thüringen", "DE"),
+        ("Halle, Sachsen-Anhalt", "DE"),
+        ("Mainz, Rheinland-Pfalz", "DE"),
+        ("Pinneberg, Schleswig-Holstein", "DE"),
+        ("Rostock, Mecklenburg-Vorpommern", "DE"),
+        ("Homburg, Saarland", "DE"),
+        # The UK and Swiss places arbeitnow used to tag DE (signal_conflict notes, 2026-10-13).
+        ("Solihull", "GB"),
+        ("Birmingham", "GB"),
+        ("Westminster", "GB"),
+        ("Abingdon", "GB"),
+        ("Calmsden, Cirencester", "GB"),
+        ("Manchester - Main Office", "GB"),
+        ("Edinburgh", "GB"),
+        ("Geneva", "CH"),
+        ("Genève", "CH"),
+        ("Suisse / Genève", "CH"),
+        ("Lausanne", "CH"),
+        ("Saint-Sulpice", "CH"),
+        ("Bern", "CH"),
+        ("Basel", "CH"),
+        ("Zug", "CH"),
+        # The other non-German places it tagged DE most often.
+        ("Schiphol-Rijk", "NL"),
+        ("Alkmaar", "NL"),
+        ("Saint-Denis", "FR"),
+        ("Lille", "FR"),
+        ("Nantes", "FR"),
+        ("Toulouse", "FR"),
+        # US namesakes: a US state code after the name still means the US.
+        ("Birmingham, AL", "US"),
+        ("Westminster, CO", "US"),
+        ("Manchester, NH", "US"),
+        ("Hanover, MD", "US"),
+        ("Geneva, IL", "US"),
+        ("Oxford, MS", "US"),
+        # Matched as whole words only.
+        ("Lillestrøm", None),
+        ("Bernau", None),
+        ("Essenbach", None),
+        ("Burghaun", None),
+    ],
+)
+def test_guess_country_european_cities_and_german_states(text, expected):
     assert guess_country(text) == expected
 
 

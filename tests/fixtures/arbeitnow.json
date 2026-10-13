@@ -7,8 +7,21 @@
       "description": "<br><strong>The role</strong><p><p><span style=\"font-size:14px;color:rgb(0,0,0);\">We’re looking for a <strong>Senior Python Engineer, Platform Libraries</strong> (m/f/d) to join our team and play a key role in developing software that connects and translates lab equipment hardware interfaces, automates machines, and powers our next-generation automation platform.</span></p><span style=\"font-size:14px;color:rgb(0,0,0);\">Connectors are how we do it. Every instrument we bring online gets one, and every connector is built on our shared Python libraries.<br><br></span>",
       "remote": false,
       "url": "https://www.arbeitnow.com/jobs/companies/unitelabs/senior-python-engineer-platform-libraries-munchen-363975",
-      "tags": ["Python", "Developer", "Biotech", "Rust", "Software Development", "gRPC", "Docker", "API"],
-      "job_types": ["Experienced", "Permanent", "Full time"],
+      "tags": [
+        "Python",
+        "Developer",
+        "Biotech",
+        "Rust",
+        "Software Development",
+        "gRPC",
+        "Docker",
+        "API"
+      ],
+      "job_types": [
+        "Experienced",
+        "Permanent",
+        "Full time"
+      ],
       "location": "München",
       "created_at": 1788746942
     },
@@ -19,8 +32,12 @@
       "description": "<div>Als&nbsp;<strong>DevOps Engineer (m/w/d)</strong> verantwortest du die Architektur, Automatisierung und kontinuierliche Verbesserung unserer AWS-Umgebungen und entwickelst skalierbare Lösungen, die echten Business Impact erzeugen.</div><br><strong>Was du bei uns machst </strong><br>\n<li>Du entwirfst und implementierst <strong>skalierbare, sichere und hochverfügbare Plattformarchitekturen auf AWS</strong> und anderen Cloud Providern.</li>\n<li>Du treibst<strong> Automatisierung</strong> konsequent voran (Terraform, CloudFormation, CDK).</li>",
       "remote": false,
       "url": "https://www.arbeitnow.com/jobs/companies/skaylink/devops-engineer-leipzig-sachsen-478361",
-      "tags": ["Managed Cloud Services"],
-      "job_types": ["Full-time"],
+      "tags": [
+        "Managed Cloud Services"
+      ],
+      "job_types": [
+        "Full-time"
+      ],
       "location": "Leipzig, Sachsen",
       "created_at": 1788735929
     },
@@ -31,8 +48,12 @@
       "description": "<h2><strong>About Us</strong></h2><p style=\"min-height:1.5em\">Parity is one of the world’s most experienced companies building the core infrastructure behind blockchain - the system that allows information and value to be shared securely without needing an intermediary.</p><p style=\"min-height:1.5em\">Our remote-first, global team develop open-source software that anyone can use or improve.</p>",
       "remote": false,
       "url": "https://www.arbeitnow.fr/jobs/companies/parity/remote-core-developer-platform-60113",
-      "tags": ["Acceleration"],
-      "job_types": ["Full Time"],
+      "tags": [
+        "Acceleration"
+      ],
+      "job_types": [
+        "Full Time"
+      ],
       "location": "Remote",
       "created_at": 1788702005
     },
@@ -47,6 +68,86 @@
       "job_types": null,
       "location": null,
       "created_at": null
+    },
+    {
+      "slug": "software-engineer-solihull-512001",
+      "company_name": "Midlands Motors",
+      "title": "Software Engineer",
+      "description": "<h2>Software Engineer</h2><p>We are a product company building software for industrial customers. You will design, build and run backend services in Python and TypeScript, work closely with product and design, review code, improve our CI/CD pipelines and help the team ship small changes to production every day.</p><ul><li>Several years of professional software development</li><li>Experience with SQL databases, Docker and a public cloud</li><li>Good English; German is a plus</li></ul>",
+      "remote": false,
+      "url": "https://www.arbeitnow.com/jobs/companies/midlands-motors/software-engineer-solihull-512001",
+      "tags": [
+        "Software Development"
+      ],
+      "job_types": [
+        "Full time"
+      ],
+      "location": "Solihull",
+      "created_at": 1788700000
+    },
+    {
+      "slug": "backend-developer-geneva-512002",
+      "company_name": "Lac Leman SA",
+      "title": "Backend Developer",
+      "description": "<h2>Backend Developer</h2><p>We are a product company building software for industrial customers. You will design, build and run backend services in Python and TypeScript, work closely with product and design, review code, improve our CI/CD pipelines and help the team ship small changes to production every day.</p><ul><li>Several years of professional software development</li><li>Experience with SQL databases, Docker and a public cloud</li><li>Good English; German is a plus</li></ul>",
+      "remote": false,
+      "url": "https://www.arbeitnow.com/jobs/companies/lac-leman-sa/backend-developer-geneva-512002",
+      "tags": [
+        "Software Development"
+      ],
+      "job_types": [
+        "Full time"
+      ],
+      "location": "Geneva",
+      "created_at": 1788690000
+    },
+    {
+      "slug": "python-developer-karlsruhe-512003",
+      "company_name": "Baden Code GmbH",
+      "title": "Python Developer (m/w/d)",
+      "description": "<h2>Python Developer (m/w/d)</h2><p>We are a product company building software for industrial customers. You will design, build and run backend services in Python and TypeScript, work closely with product and design, review code, improve our CI/CD pipelines and help the team ship small changes to production every day.</p><ul><li>Several years of professional software development</li><li>Experience with SQL databases, Docker and a public cloud</li><li>Good English; German is a plus</li></ul>",
+      "remote": false,
+      "url": "https://www.arbeitnow.com/jobs/companies/baden-code-gmbh/python-developer-karlsruhe-512003",
+      "tags": [
+        "Software Development"
+      ],
+      "job_types": [
+        "Full time"
+      ],
+      "location": "Karlsruhe",
+      "created_at": 1788680000
+    },
+    {
+      "slug": "data-engineer-ottobrunn-bavaria-512004",
+      "company_name": "Isar Data GmbH",
+      "title": "Data Engineer (m/w/d)",
+      "description": "<h2>Data Engineer (m/w/d)</h2><p>We are a product company building software for industrial customers. You will design, build and run backend services in Python and TypeScript, work closely with product and design, review code, improve our CI/CD pipelines and help the team ship small changes to production every day.</p><ul><li>Several years of professional software development</li><li>Experience with SQL databases, Docker and a public cloud</li><li>Good English; German is a plus</li></ul>",
+      "remote": false,
+      "url": "https://www.arbeitnow.com/jobs/companies/isar-data-gmbh/data-engineer-ottobrunn-bavaria-512004",
+      "tags": [
+        "Software Development"
+      ],
+      "job_types": [
+        "Full time"
+      ],
+      "location": "Ottobrunn, Bavaria",
+      "created_at": 1788670000
+    },
+    {
+      "slug": "frontend-developer-burghaun-512005",
+      "company_name": "Rhoen Web GmbH",
+      "title": "Frontend Developer (m/w/d)",
+      "description": "<h2>Frontend Developer (m/w/d)</h2><p>We are a product company building software for industrial customers. You will design, build and run backend services in Python and TypeScript, work closely with product and design, review code, improve our CI/CD pipelines and help the team ship small changes to production every day.</p><ul><li>Several years of professional software development</li><li>Experience with SQL databases, Docker and a public cloud</li><li>Good English; German is a plus</li></ul>",
+      "remote": false,
+      "url": "https://www.arbeitnow.com/jobs/companies/rhoen-web-gmbh/frontend-developer-burghaun-512005",
+      "tags": [
+        "Software Development"
+      ],
+      "job_types": [
+        "Full time"
+      ],
+      "location": "Burghaun",
+      "created_at": 1788660000
     }
   ],
   "links": {

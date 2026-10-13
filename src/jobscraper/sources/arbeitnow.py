@@ -47,9 +47,10 @@ def parse_record(rec: dict[str, Any]) -> Job | None:
         company=rec.get("company_name"),
         description=strip_html(rec.get("description")),
         location_raw=location,
-        # DACH-heavy board: an unrecognized place name is almost always a small German town,
-        # but a bare "Remote" is not a place at all and must not become a German city.
-        country=None if placeless else (guess_country(location) or ("DE" if location else None)),
+        # No "DE" default for an unrecognised place: the board lists jobs across Europe, and the
+        # default tagged Manchester, Geneva and Schiphol as Germany. An unknown place stays None
+        # (the rule filter sends it on for review); a bare "Remote" is not a place at all.
+        country=None if placeless else guess_country(location),
         city=None if placeless or not location else location.split(",")[0].strip() or None,
         remote=guess_remote(location, rec.get("title"), flag=remote_flag if isinstance(remote_flag, bool) else None),
         employment_type=", ".join(job_types) or None,
