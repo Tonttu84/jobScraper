@@ -106,8 +106,9 @@ def test_no_weak_languages_means_no_weak_line():
 #: The exact prompts a profile without deal-breakers produces. Regenerating this fixture is a
 #: deliberate act: it means the wording moved, which is at least a PROMPT_VERSION bump and — when
 #: the scoring scale moved with it — a reset of COMPATIBLE_PROMPT_VERSIONS that re-scores
-#: everything. Last regenerated 2026-09-11 for the rank stage's absolute-scale paragraph, which
-#: pins the same bands down harder instead of changing them, so the old verdicts stayed in use.
+#: everything. Regenerated 2026-09-11 for the rank stage's absolute-scale paragraph, which
+#: pins the same bands down harder instead of changing them, so the old verdicts stayed in use;
+#: last regenerated 2026-10-13 for the INPUT NOTES block both stages carry (no scale change).
 BASELINE_PROFILE = dict(name="Nobody", summary="Someone who writes software.", cv_text="A CV.")
 
 DEAL_BREAKERS = [
@@ -225,7 +226,8 @@ RUBRIC_INSTRUCTION = (
     "Judge each criterion on its own 0-100, then combine them with these weights into the "
     "score. The bands keep their meaning (80+ apply this week; below 50 probably skip), a "
     "deal-breaker still overrides, and a criterion the posting says nothing about is judged "
-    "from what the candidate would most likely find there."
+    "from what the candidate would most likely find there. Return each criterion's 0-100 in "
+    "`criteria`, keyed exactly by the criterion names shown above."
 )
 
 
@@ -292,3 +294,49 @@ def test_the_rubric_works_without_a_cv():
     profile = Profile(name="Nobody", summary="Someone who writes software.", weights={"pay": 1})
     assert "FULL CV" not in system_prompt("rank", profile)
     assert "- pay: 100%" in system_prompt("rank", profile)
+
+
+# --- input notes and criteria (both AI stages) -----------------------------------------------
+# The stages report problems with their *inputs* (not with the job) in `input_notes`, one entry
+# per problem, prefixed by a category token the pipeline groups by; the ranker also returns its
+# per-criterion judgement in `criteria`.
+
+INPUT_NOTES_BLOCK = (
+    "INPUT NOTES\n"
+    "`input_notes` is for problems with what you were given, not with the job. Usually empty. One\n"
+    "short entry per problem, starting with its category: `missing_input:` (no or truncated\n"
+    "description, no location, no language signal), `signal_conflict:` (a detected signal or filter\n"
+    "note contradicts the text, e.g. a years figure that is the company's age), `instruction_gap:`\n"
+    "(an instruction you could not apply or two that conflict), `profile_gap:` (your verdict hinges\n"
+    "on a fact about the candidate the profile does not state — name the fact). Never lower a score\n"
+    "because an input was missing; judge from what is there and note the gap.\n"
+)
+
+
+def test_both_stages_carry_the_input_notes_block_before_the_candidate():
+    profile = Profile(**BASELINE_PROFILE)
+    for stage in ("prefilter", "rank"):
+        text = system_prompt(stage, profile)
+        assert text.count(INPUT_NOTES_BLOCK) == 1, stage
+        assert text.index(INPUT_NOTES_BLOCK) < text.index("CANDIDATE\n"), stage
+
+
+def test_the_input_notes_block_keeps_the_exact_category_tokens():
+    """The pipeline groups notes by these tokens; a reworded token would land in 'uncategorised'."""
+    for token in ("`missing_input:`", "`signal_conflict:`", "`instruction_gap:`", "`profile_gap:`"):
+        assert token in INPUT_NOTES_BLOCK
+
+
+def test_the_rank_prompt_asks_for_criteria_only_with_a_rubric():
+    with_rubric = system_prompt("rank", Profile(**BASELINE_PROFILE, weights={"stack_fit": 3, "pay": 1}))
+    assert "Return each criterion's 0-100 in `criteria`" in with_rubric
+    bare = system_prompt("rank", Profile(**BASELINE_PROFILE))
+    assert "`criteria`" not in bare
+    assert "`criteria`" not in system_prompt("prefilter", Profile(**BASELINE_PROFILE, weights=WEIGHTS))
+
+
+def test_the_refine_prompt_sets_the_rank_only_fields_aside():
+    """Refine reuses the rank prompt verbatim, but its answer has neither field."""
+    refine = system_prompt("refine", Profile(**BASELINE_PROFILE, weights=WEIGHTS))
+    tail = refine[refine.index("REFINEMENT PASS"):]
+    assert "no `criteria` or `input_notes`" in tail

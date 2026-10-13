@@ -37,9 +37,17 @@ Neither AI stage after the screen is a single step any more:
 
 Export writes ``data/exports/ai/<stage>/system.txt`` (the stage's system prompt) and
 ``chunk-NN.json`` (a JSON list of ``{"job_id", "prompt"}`` built with the pipeline's own
-``job_prompt``). A subagent answers each chunk with ``verdicts/chunk-NN.jsonl`` (one JSON object per
-job with the ``Screening``/``Ranking`` fields plus ``job_id``). Import validates those against the
-schemas and stores them as ``AIVerdict`` rows, so ``jobscraper report`` renders them like API runs.
+``job_prompt``). A subagent answers each chunk with ``verdicts/chunk-NN.jsonl``: one JSON object per
+job with the ``Screening``/``Ranking`` fields plus ``job_id``, i.e. ``relevant``, ``score``,
+``language_ok``, ``seniority_ok``, ``location_ok``, ``summary``, ``concerns``, ``input_notes``
+(problems with the input, each starting with ``missing_input:``, ``signal_conflict:``,
+``instruction_gap:`` or ``profile_gap:``; usually empty) and, for rank, ``why_apply`` and
+``criteria`` (``{"stack fit": 80, ...}``, one 0-100 per SCORING RUBRIC criterion; empty when the
+profile has no weights). Import validates those against the schemas and stores them as
+``AIVerdict`` rows, so ``jobscraper report`` renders them like API runs, and writes the same
+pipeline-health notes the API path writes (:mod:`jobscraper.ai.notes`): one per input note, an
+unknown criterion, a score far from its own weighted criteria, and a line that failed the schema
+(``verdict_invalid``).
 
 ``refine`` is the odd one out: it is a single request, not a chunked one. ``export refine`` writes
 ``refine/system.txt`` and one ``refine/batch.json`` — ``{"prompt", "job_ids", "anchors"}`` — over the
@@ -117,9 +125,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from jobscraper import config  # noqa: E402
-from jobscraper.ai.client import refine_verdicts  # noqa: E402
-from jobscraper.ai.prompts import (  # noqa: E402
+from jobscraper import config
+from jobscraper.ai.client import refine_verdicts
+from jobscraper.ai.notes import note_invalid_verdict, store_verdict
+from jobscraper.ai.prompts import (
     COMPATIBLE_PROMPT_VERSIONS,
     PROMPT_VERSION,
     job_prompt,
@@ -127,12 +136,12 @@ from jobscraper.ai.prompts import (  # noqa: E402
     refine_user_prompt,
     system_prompt,
 )
-from jobscraper.ai.schemas import Ranking, Refinement, Screening  # noqa: E402
-from jobscraper.config import load_settings, paths  # noqa: E402
-from jobscraper.http import Http  # noqa: E402
-from jobscraper.models import AIVerdict, Job  # noqa: E402
-from jobscraper.prior import queue_prior  # noqa: E402
-from jobscraper.report import (  # noqa: E402
+from jobscraper.ai.schemas import Ranking, Refinement, Screening
+from jobscraper.config import load_settings, paths
+from jobscraper.http import Http
+from jobscraper.models import AIVerdict, Job
+from jobscraper.prior import queue_prior
+from jobscraper.report import (
     RANK_TOP_WATCH,
     effective_top,
     entered_top,
@@ -141,8 +150,8 @@ from jobscraper.report import (  # noqa: E402
     rank_queue,
     refine_shortlist,
 )
-from jobscraper.sources import linkedin  # noqa: E402
-from jobscraper.store import Store, still_listed  # noqa: E402
+from jobscraper.sources import linkedin
+from jobscraper.store import Store, still_listed
 
 MODEL = {"prefilter": "claude-sonnet-5 (subagent)", "rank": "claude-opus-5 (subagent)",
          "refine": "claude-fable-5-1 (subagent)"}
@@ -308,6 +317,8 @@ def _write_chunks(stage: str, todo: list[Job], filters: dict, chunk: int, max_ch
         (out / f"chunk-{n:02d}.json").write_text(json.dumps(batch, ensure_ascii=False, indent=0), encoding="utf-8")
     sampled = f" (1 in {sample} of {candidates} candidates)" if sample > 1 else f" of {candidates} candidates"
     print(f"{stage}: {len(todo)} jobs{sampled}{note} → {n} chunks of ≤{chunk} in {out}")
+    fields = "the Ranking fields incl. why_apply, criteria" if stage == "rank" else "the Screening fields"
+    print(f"  answer: verdicts/chunk-NN.jsonl, one JSON object per job: job_id + {fields}, input_notes")
 
 
 def export(stage: str, chunk: int, max_chars: int, export_all: bool = False, sample: int = 1) -> None:
@@ -535,7 +546,7 @@ def import_refine() -> None:
         return
     try:
         parsed = Refinement.model_validate_json(answer.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001 - a hand-written answer, report and stop
+    except Exception as exc:
         print(f"  {answer.name}: not a Refinement object ({exc})")
         return
     store = Store()
@@ -561,14 +572,21 @@ def read_verdict_lines(path: Path, schema) -> Iterator[tuple[str | None, object,
             rec = json.loads(line)
             job_id = str(rec.pop("job_id"))
             parsed = schema(**{k: v for k, v in rec.items() if k in schema.model_fields})
-        except Exception as exc:  # noqa: BLE001 - report and continue
+        except Exception as exc:
             yield None, None, f"bad line ({exc}): {line[:100]}"
             continue
         yield job_id, parsed, None
 
 
 def import_verdicts(stage: str) -> None:
+    """Store a stage's ``verdicts/chunk-NN.jsonl`` answers, ``criteria`` and ``input_notes`` included.
+
+    Each verdict goes through :func:`jobscraper.ai.notes.store_verdict`, as on the API path: the
+    criteria are mapped onto the profile's weights and the input notes become run notes. A line
+    that fails the schema is printed and noted as ``verdict_invalid``.
+    """
     schema = Screening if stage == "prefilter" else Ranking
+    weights = load_settings().profile.weights
     out = _out_dir(stage)
     expected: dict[str, str] = {}
     for f in sorted(out.glob("chunk-*.json")):
@@ -582,6 +600,7 @@ def import_verdicts(stage: str) -> None:
             if error:
                 bad += 1
                 print(f"  {f.name}: {error}")
+                note_invalid_verdict(store, stage, error, chunk=f.name)
                 continue
             if job_id not in expected:
                 bad += 1
@@ -590,11 +609,13 @@ def import_verdicts(stage: str) -> None:
             if job_id in seen:
                 continue
             seen.add(job_id)
-            store.save_verdict(AIVerdict(job_id=job_id, stage=stage, model=MODEL[stage], prompt_version=PROMPT_VERSION,
-                                         relevant=parsed.relevant, score=parsed.score, language_ok=parsed.language_ok,
-                                         seniority_ok=parsed.seniority_ok, location_ok=parsed.location_ok,
-                                         summary=parsed.summary, concerns=parsed.concerns,
-                                         why_apply=getattr(parsed, "why_apply", [])))
+            store_verdict(store, AIVerdict(job_id=job_id, stage=stage, model=MODEL[stage], prompt_version=PROMPT_VERSION,
+                                           relevant=parsed.relevant, score=parsed.score, language_ok=parsed.language_ok,
+                                           seniority_ok=parsed.seniority_ok, location_ok=parsed.location_ok,
+                                           summary=parsed.summary, concerns=parsed.concerns,
+                                           why_apply=getattr(parsed, "why_apply", []),
+                                           criteria=getattr(parsed, "criteria", {}),
+                                           input_notes=parsed.input_notes), weights)
     missing = sorted(set(expected) - seen)
     by_chunk: dict[str, int] = {}
     for job_id in missing:

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from jobscraper.ai.schemas import criterion_label
 from jobscraper.config import paths
 from jobscraper.filters.rules import CLOSING_SOON_DAYS, fold_aliases, posting_key
 from jobscraper.models import (
@@ -274,6 +275,9 @@ def ranked_block(job: Job, score: int | None, verdict: AIVerdict | None = None,
         lines.append(verdict.summary)
         if refine is not None:
             lines.append(f"- **Against the rest of the shortlist:** {refine.summary}")
+        if verdict.criteria:  # stored in the profile's weight order (jobscraper.ai.notes)
+            lines.append("- **Criteria:** " + " · ".join(
+                f"{criterion_label(key)} {value}" for key, value in verdict.criteria.items()))
         if verdict.why_apply:
             lines.append("- **Why apply:** " + "; ".join(verdict.why_apply))
         if verdict.concerns:

@@ -209,6 +209,94 @@ def test_import_rank_keeps_why_apply(ranked, data_dir, monkeypatch, capsys):
     assert "imported 1 verdicts, 0 bad lines, 0 missing" in capsys.readouterr().out
 
 
+def _weights(monkeypatch, weights: dict[str, int]) -> None:
+    """Pin the profile's rubric for the import, whatever config/profile.yaml says today."""
+    real = ai_batches.load_settings
+
+    def patched(*args, **kwargs):
+        settings = real(*args, **kwargs)
+        settings.profile.weights = dict(weights)
+        return settings
+
+    monkeypatch.setattr(ai_batches, "load_settings", patched)
+
+
+def _answer(data_dir: Path, stage: str, text: str) -> None:
+    verdicts = data_dir / "exports" / "ai" / stage / "verdicts"
+    verdicts.mkdir(parents=True, exist_ok=True)
+    (verdicts / "chunk-01.jsonl").write_text(text, encoding="utf-8")
+
+
+def test_import_rank_stores_criteria_and_input_notes_and_writes_notes(ranked, data_dir, monkeypatch,
+                                                                      capsys):
+    _weights(monkeypatch, {"stack_fit": 3, "pay": 1})
+    _run(monkeypatch, "export", "rank", "--top", "5")
+    line = {"job_id": ranked[0].id, "relevant": True, "score": 95, "language_ok": True,
+            "seniority_ok": True, "location_ok": True, "summary": "Strong junior Go fit.",
+            "criteria": {"stack fit": 70, "pay": 130, "vibes": 50},
+            "input_notes": ["profile_gap: whether the candidate can relocate", "odd posting"]}
+    _answer(data_dir, "rank", json.dumps(line) + "\n")
+
+    _run(monkeypatch, "import", "rank")
+
+    store = store_mod.Store()
+    try:
+        v = store.verdicts("rank", PROMPT_VERSION)[ranked[0].id]
+        notes = store.notes()
+    finally:
+        store.close()
+    assert list(v.criteria.items()) == [("stack_fit", 70), ("pay", 100)]
+    assert v.input_notes == line["input_notes"]
+    assert [(n.stage, n.kind, n.job_id) for n in notes] == [
+        ("rank", "profile_gap", ranked[0].id), ("rank", "uncategorised", ranked[0].id),
+        ("rank", "criteria_unknown_key", ranked[0].id), ("rank", "rubric_mismatch", ranked[0].id)]
+    assert notes[3].data == {"score": 95, "weighted": 77.5}
+    assert "imported 1 verdicts, 0 bad lines, 0 missing" in capsys.readouterr().out
+
+
+def test_import_prefilter_writes_input_notes_under_the_prefilter_stage(data_dir, monkeypatch, capsys):
+    jobs = [_job(1, "Junior Go Developer")]
+    _seed(jobs, ["keep"])
+    _run(monkeypatch, "export", "prefilter")
+    line = {"job_id": jobs[0].id, "relevant": True, "score": 60, "language_ok": True,
+            "seniority_ok": True, "location_ok": True, "summary": "Title only.",
+            "input_notes": ["missing_input: no description"]}
+    _answer(data_dir, "prefilter", json.dumps(line) + "\n")
+
+    _run(monkeypatch, "import", "prefilter")
+
+    store = store_mod.Store()
+    try:
+        [note] = store.notes()
+        v = store.verdicts("prefilter", PROMPT_VERSION)[jobs[0].id]
+    finally:
+        store.close()
+    assert (note.stage, note.kind, note.message) == ("prefilter", "missing_input", "missing_input: no description")
+    assert v.input_notes == ["missing_input: no description"] and v.criteria == {}
+
+
+def test_an_invalid_verdict_line_becomes_a_verdict_invalid_note(ranked, data_dir, monkeypatch, capsys):
+    _run(monkeypatch, "export", "rank", "--top", "5")
+    bad = {"job_id": ranked[0].id, "relevant": True, "score": 150, "language_ok": True,
+           "seniority_ok": True, "location_ok": True, "summary": "out of range"}
+    unknown = {"job_id": "0000000000000000", "relevant": True, "score": 50, "language_ok": True,
+               "seniority_ok": True, "location_ok": True, "summary": "not exported"}
+    _answer(data_dir, "rank", json.dumps(bad) + "\n" + json.dumps(unknown) + "\n")
+
+    _run(monkeypatch, "import", "rank")
+
+    store = store_mod.Store()
+    try:
+        notes = store.notes()
+    finally:
+        store.close()
+    # The unknown job_id is a bookkeeping slip, not a schema failure: printed, not noted.
+    [note] = notes
+    assert (note.stage, note.kind, note.job_id) == ("rank", "verdict_invalid", None)
+    assert "score" in note.message and note.data == {"chunk": "chunk-01.jsonl"}
+    assert "2 bad lines" in capsys.readouterr().out
+
+
 def test_export_rank_skips_dropped_and_already_ranked_jobs(ranked, data_dir, monkeypatch, capsys):
     """Refill semantics: a job the rule filter now drops is out even with a high prefilter score, and a
     job that already has a rank verdict under the current prompt version is not exported again."""

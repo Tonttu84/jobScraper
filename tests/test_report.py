@@ -1280,3 +1280,54 @@ def test_notes_anchor_is_the_newest_stored_report(tmp_path):
         assert notes_anchor(store) == datetime(2026, 10, 12, tzinfo=UTC)
     finally:
         store.close()
+
+
+# --- the ranker's per-criterion judgement and its input notes --------------------------------
+
+
+def test_a_ranked_block_shows_the_criteria_in_the_profile_order(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    ranked_job = jobs[0]
+    # Stored in the profile's weight order by the AI stage; the report keeps that order.
+    ranked[ranked_job.id] = make_verdict(
+        ranked_job.id, "rank", 91,
+        criteria={"stack_fit": 80, "level": 70, "growth": 65, "location": 90, "domain": 50,
+                  "company_type": 60, "pay": 50})
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text(encoding="utf-8")
+    line = ("- **Criteria:** stack fit 80 · level 70 · growth 65 · location 90 · domain 50 · "
+            "company type 60 · pay 50")
+    assert line in text
+    # right under the summary, before the reasons
+    block = text[text.index(f"[{ranked_job.title}]"):]
+    assert block.index(f"Summary for {ranked_job.id}.") < block.index(line)
+
+
+def test_a_ranked_block_without_criteria_has_no_criteria_line(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text(encoding="utf-8")
+    assert "Criteria" not in text
+
+
+def test_a_profile_gap_note_names_the_job_in_the_health_appendix(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    ranked_job = jobs[0]
+    notes = [_note("profile_gap", "profile_gap: whether the candidate can relocate", stage="rank",
+                   job_id=ranked_job.id, n=1)]
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md",
+                        notes=notes).read_text(encoding="utf-8")
+    appendix = text[text.index("## Pipeline health"):]
+    assert "- **profile_gap**: 1 note" in appendix
+    assert f"  - {ranked_job.title} — profile_gap: whether the candidate can relocate" in appendix
+
+
+def test_export_jsonl_carries_criteria_and_input_notes(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    ranked_job, pre_job, _ = jobs
+    ranked[ranked_job.id] = make_verdict(ranked_job.id, "rank", 91, criteria={"stack_fit": 80},
+                                         input_notes=["profile_gap: notice period"])
+    path = export_jsonl(jobs, filters, {**prefilter, **ranked}, tmp_path / "jobs.jsonl")
+    by_id = {r["id"]: r for r in map(json.loads, path.read_text(encoding="utf-8").splitlines())}
+    assert by_id[ranked_job.id]["verdict"]["criteria"] == {"stack_fit": 80}
+    assert by_id[ranked_job.id]["verdict"]["input_notes"] == ["profile_gap: notice period"]
+    assert by_id[pre_job.id]["verdict"]["criteria"] == {}
+    assert by_id[pre_job.id]["verdict"]["input_notes"] == []

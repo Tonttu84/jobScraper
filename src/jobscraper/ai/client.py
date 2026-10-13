@@ -23,6 +23,7 @@ from anthropic.types.message_create_params import MessageCreateParamsNonStreamin
 from anthropic.types.messages.batch_create_params import Request
 from pydantic import BaseModel, ValidationError
 
+from jobscraper.ai.notes import store_verdict
 from jobscraper.ai.prompts import (
     COMPATIBLE_PROMPT_VERSIONS,
     PROMPT_VERSION,
@@ -30,7 +31,7 @@ from jobscraper.ai.prompts import (
     refine_user_prompt,
     system_prompt,
 )
-from jobscraper.ai.schemas import Ranking, RefinedJob, Refinement, Screening
+from jobscraper.ai.schemas import RefinedJob, Refinement, Screening, ranking_schema
 from jobscraper.config import Profile
 from jobscraper.models import AIVerdict, FilterResult, Job
 from jobscraper.store import Store
@@ -79,7 +80,7 @@ class AIStage:
         ai = profile.ai
         self.model = model or (ai.prefilter_model if stage == "prefilter" else ai.rank_model)
         self.effort = ai.prefilter_effort if stage == "prefilter" else ai.rank_effort
-        self.schema = Screening if stage == "prefilter" else Ranking
+        self.schema = Screening if stage == "prefilter" else ranking_schema(profile.weights)
         self.max_chars = ai.max_description_chars
         self.concurrency = ai.concurrency
         self.batch_chunk = ai.batch_chunk
@@ -106,11 +107,24 @@ class AIStage:
                          concerns=["model gave no structured answer"], usage=usage)
 
     def _verdict(self, job_id: str, parsed, usage: dict[str, int | bool]) -> AIVerdict:
+        """The parsed answer as a verdict; ``criteria`` as the model gave them, keyed by label.
+
+        Mapping them onto the profile's weight keys (and noting what does not fit) happens when
+        the verdict is stored, in :func:`jobscraper.ai.notes.store_verdict`.
+        """
+        criteria = getattr(parsed, "criteria", None) or {}
+        if isinstance(criteria, BaseModel):  # the per-profile API schema, see ranking_schema()
+            criteria = criteria.model_dump(by_alias=True)
         return AIVerdict(job_id=job_id, stage=self.stage, model=self.model, prompt_version=PROMPT_VERSION,
                          relevant=parsed.relevant, score=parsed.score, language_ok=parsed.language_ok,
                          seniority_ok=parsed.seniority_ok, location_ok=parsed.location_ok,
                          summary=parsed.summary, concerns=parsed.concerns,
-                         why_apply=getattr(parsed, "why_apply", []), usage=usage)
+                         why_apply=getattr(parsed, "why_apply", []), criteria=criteria,
+                         input_notes=parsed.input_notes, usage=usage)
+
+    def _store(self, verdict: AIVerdict) -> AIVerdict:
+        """Save a verdict and write its pipeline-health notes (same as the subagent import)."""
+        return store_verdict(self.store, verdict, self.profile.weights)
 
     # ------------------------------------------------------------------ one job
     def judge(self, job: Job, fr: FilterResult | None) -> AIVerdict:
@@ -146,7 +160,7 @@ class AIStage:
                 except anthropic.APIError as exc:
                     log.error("%s: API error for %s: %s", self.stage, job.id, exc)
                     continue
-                self.store.save_verdict(verdict)
+                verdict = self._store(verdict)
                 results[job.id] = verdict
                 if progress:
                     progress(verdict)
@@ -194,8 +208,7 @@ class AIStage:
                 log.warning("%s: batch %s request %s %s%s", self.stage, batch_id, r.custom_id,
                             r.result.type, f": {error}" if error is not None else "")
                 continue
-            verdict = self._from_message(r.custom_id, r.result.message)
-            self.store.save_verdict(verdict)
+            verdict = self._store(self._from_message(r.custom_id, r.result.message))
             results[r.custom_id] = verdict
             stored += 1
             if progress:

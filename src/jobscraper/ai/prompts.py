@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from jobscraper.ai.schemas import criterion_label
 from jobscraper.config import LanguagePolicy, LocationPolicy, Profile
 from jobscraper.filters.language import LANGUAGE_NAMES
 from jobscraper.models import AIVerdict, FilterResult, Job
@@ -133,6 +134,21 @@ candidate: a posting as good as the one at 85 scores about 85.
 """
 
 
+#: Both stages, right after the stage's own head: the stages report problems with what they
+#: were given in ``input_notes``. The category tokens are load-bearing — the pipeline groups the
+#: notes by them (:mod:`jobscraper.ai.notes`) — so a rewording keeps them exactly.
+INPUT_NOTES_BLOCK = """INPUT NOTES
+`input_notes` is for problems with what you were given, not with the job. Usually empty. One
+short entry per problem, starting with its category: `missing_input:` (no or truncated
+description, no location, no language signal), `signal_conflict:` (a detected signal or filter
+note contradicts the text, e.g. a years figure that is the company's age), `instruction_gap:`
+(an instruction you could not apply or two that conflict), `profile_gap:` (your verdict hinges
+on a fact about the candidate the profile does not state — name the fact). Never lower a score
+because an input was missing; judge from what is there and note the gap.
+
+"""
+
+
 #: Appended to the ranking system prompt for the refine stage, which sees the whole shortlist at
 #: once instead of one posting at a time. The ranker scores a job inside a 15-job chunk, so its
 #: score carries chunk noise; this pass removes it for the part of the list that matters.
@@ -140,6 +156,7 @@ REFINE_SYSTEM = """
 REFINEMENT PASS
 All the shortlisted postings follow, each introduced by a line "### job_id: <id>". You have
 already judged them one at a time; now judge them against each other and put them in order.
+This answer has no `criteria` or `input_notes`; the instructions about them above do not apply.
 Return every job_id exactly once, with a position (1 = best) and a score meaning "probability in
 percent that the candidate should spend an evening applying to this one". Differences under
 5 points are ties — use a gap only where you mean it. The summary is one sentence saying why the
@@ -194,7 +211,8 @@ _RUBRIC_INSTRUCTION = (
     "Judge each criterion on its own 0-100, then combine them with these weights into the "
     "score. The bands keep their meaning (80+ apply this week; below 50 probably skip), a "
     "deal-breaker still overrides, and a criterion the posting says nothing about is judged "
-    "from what the candidate would most likely find there."
+    "from what the candidate would most likely find there. Return each criterion's 0-100 in "
+    "`criteria`, keyed exactly by the criterion names shown above."
 )
 
 
@@ -209,7 +227,7 @@ def _rubric_block(profile: Profile) -> str:
     if not weights:
         return ""
     total = sum(weights.values())
-    bullets = "\n".join(f"- {key.replace('_', ' ')}: {round(100 * weight / total)}%"
+    bullets = "\n".join(f"- {criterion_label(key)}: {round(100 * weight / total)}%"
                         for key, weight in weights.items())
     return f"\nSCORING RUBRIC\n{bullets}\n{_RUBRIC_INSTRUCTION}\n"
 
@@ -221,7 +239,7 @@ def system_prompt(stage: str, profile: Profile) -> str:
         return system_prompt("rank", profile) + REFINE_SYSTEM
     stage = "prefilter" if stage == "prefilter" else "rank"
     template = PREFILTER_SYSTEM if stage == "prefilter" else RANK_SYSTEM
-    head = template.replace("{role_label}", profile.prompt.role_label.strip())
+    head = template.replace("{role_label}", profile.prompt.role_label.strip()) + INPUT_NOTES_BLOCK
     body = _policy_block(profile) + _deal_breakers_block(profile, stage)
     if stage == "rank":
         if profile.cv_text.strip():

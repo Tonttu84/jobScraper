@@ -104,6 +104,16 @@ class AIVerdict(BaseModel):
     position: int | None = Field(
         None, description='Place in the shortlist (1 = best), set by the "refine" stage only'
     )
+    criteria: dict[str, int] = Field(
+        default_factory=dict,
+        description='The ranker\'s 0-100 per rubric criterion, keyed and ordered by the profile\'s '
+                    '"weights"; empty without a rubric and for the other stages',
+    )
+    input_notes: list[str] = Field(
+        default_factory=list,
+        description="Problems the model had with its input (not with the job), each starting with a "
+                    "category such as 'missing_input:'; copied to run_notes by jobscraper.ai.notes",
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     usage: dict[str, int | bool] = Field(
         default_factory=dict,

@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from jobscraper.ai.client import AIStage, estimate_cost
+from jobscraper.ai.client import AIStage, estimate_cost, output_schema
 from jobscraper.ai.prompts import PROMPT_VERSION, job_prompt, system_prompt
-from jobscraper.ai.schemas import Ranking, Screening
-from jobscraper.models import FilterResult, Job
+from jobscraper.ai.schemas import Ranking, Screening, ranking_schema
+from jobscraper.models import AIVerdict, FilterResult, Job
 from jobscraper.store import Store
 
 
@@ -206,7 +206,7 @@ def test_prompt_rules_for_a_profile_with_no_language_or_remote_policy(settings):
 def test_rank_stage_uses_ranking_schema(settings, tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     st = AIStage("rank", settings.profile, Store(tmp_path / "r.db"))
-    assert st.schema is Ranking and st.effort == "high" and st.model == settings.profile.ai.rank_model
+    assert issubclass(st.schema, Ranking) and st.effort == "high" and st.model == settings.profile.ai.rank_model
 
 
 def test_the_preamble_rides_in_front_of_the_job_prompt(settings, tmp_path, monkeypatch):
@@ -477,3 +477,171 @@ def test_estimate_cost_halves_batch_usage():
     batched = AIVerdict(**base, usage={**usage, "batch": True})
     assert estimate_cost([live])["total"] == pytest.approx(2.0)
     assert estimate_cost([batched])["total"] == pytest.approx(1.0)
+
+
+# ------------------------------------------------- input notes and criteria (API path)
+# The stages report problems with their inputs in `input_notes`; the ranker returns its
+# per-criterion judgement in `criteria`. Both land on the verdict, the notes also in run_notes.
+
+WEIGHTS = {"stack_fit": 3, "pay": 1}
+
+
+def test_the_new_fields_default_to_empty_so_old_verdicts_still_validate():
+    screening = Screening(relevant=True, score=50, language_ok=True, seniority_ok=True,
+                          location_ok=True, summary="s")
+    ranking = Ranking(relevant=True, score=50, language_ok=True, seniority_ok=True,
+                      location_ok=True, summary="s")
+    assert screening.input_notes == [] and ranking.input_notes == [] and ranking.criteria == {}
+    old = AIVerdict.model_validate_json(
+        '{"job_id": "j", "stage": "rank", "model": "m", "prompt_version": "2026-09-09.1", '
+        '"relevant": true, "score": 70, "language_ok": true, "seniority_ok": true, '
+        '"location_ok": true, "summary": "s"}')
+    assert old.input_notes == [] and old.criteria == {}
+
+
+def test_without_weights_the_rank_schema_is_ranking_itself():
+    assert ranking_schema({}) is Ranking
+
+
+def test_with_weights_the_api_schema_requires_one_integer_per_criterion():
+    """A free-form dict becomes an empty object in structured output (no properties,
+    additionalProperties false), so the API path spells the criteria out, keyed as shown."""
+    schema = ranking_schema(WEIGHTS)
+    assert issubclass(schema, Ranking)
+    full = output_schema(schema)["schema"]
+    criteria = full["properties"]["criteria"]
+    if "$ref" in criteria:  # the SDK keeps nested models as $defs
+        criteria = full["$defs"][criteria["$ref"].rsplit("/", 1)[-1]]
+    assert criteria["additionalProperties"] is False
+    assert set(criteria["properties"]) == {"stack fit", "pay"}
+    assert {p["type"] for p in criteria["properties"].values()} == {"integer"}
+    assert sorted(criteria["required"]) == ["pay", "stack fit"]
+    parsed = schema.model_validate_json(
+        '{"relevant": true, "score": 80, "language_ok": true, "seniority_ok": true, '
+        '"location_ok": true, "summary": "s", "criteria": {"stack fit": 85, "pay": 60}}')
+    assert parsed.criteria.model_dump(by_alias=True) == {"stack fit": 85, "pay": 60}
+
+
+def test_the_api_schema_asks_for_criteria_before_the_score():
+    """Generated in property order: the criteria first, then the score they combine into."""
+    props = list(output_schema(ranking_schema(WEIGHTS))["schema"]["properties"])
+    assert props.index("criteria") < props.index("score")
+
+
+@pytest.fixture
+def rank_stage(settings, tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    profile = settings.profile.model_copy(update={"weights": dict(WEIGHTS)})
+    st = AIStage("rank", profile, Store(tmp_path / "rank.db"))
+    st.concurrency = 1
+    return st
+
+
+def _ranking(stage: AIStage, score: int, criteria: dict | None, notes: list[str] | None = None):
+    fields = {"relevant": True, "score": score, "language_ok": True, "seniority_ok": True,
+              "location_ok": True, "summary": "Go fit."}
+    if criteria is not None:
+        fields["criteria"] = criteria
+    if notes is not None:
+        fields["input_notes"] = notes
+    return stage.schema.model_validate(fields)
+
+
+def test_api_rank_stores_criteria_and_input_notes_and_writes_run_notes(rank_stage, monkeypatch):
+    notes = ["missing_input: description is cut off mid-sentence",
+             "profile_gap: whether the candidate holds a driving licence",
+             "signal_conflict: years_required=12 is the company's age",
+             "instruction_gap: the rubric and the deal-breakers disagree on consultancies",
+             "the posting is in two languages"]
+    parsed = _ranking(rank_stage, 78, {"stack fit": 80, "pay": 70}, notes)
+    monkeypatch.setattr(rank_stage.client.messages, "parse", lambda **kw: _response(parsed))
+    job = _job()
+
+    rank_stage.run([job], {})
+
+    v = rank_stage.store.verdicts("rank")[job.id]
+    assert v.criteria == {"stack_fit": 80, "pay": 70}
+    assert v.input_notes == notes
+    stored = rank_stage.store.notes(stage="rank")
+    assert [(n.kind, n.job_id, n.message) for n in stored] == [
+        ("missing_input", job.id, notes[0]), ("profile_gap", job.id, notes[1]),
+        ("signal_conflict", job.id, notes[2]), ("instruction_gap", job.id, notes[3]),
+        ("uncategorised", job.id, notes[4])]
+
+
+def test_a_prefilter_input_note_is_written_under_the_prefilter_stage(stage, monkeypatch):
+    parsed = Screening(relevant=True, score=60, language_ok=True, seniority_ok=True, location_ok=True,
+                       summary="Title only.", input_notes=["`missing_input:` no description at all"])
+    monkeypatch.setattr(stage.client.messages, "parse", lambda **kw: _response(parsed))
+    stage.run([_job(description=None)], {})
+    [note] = stage.store.notes()
+    assert (note.stage, note.kind) == ("prefilter", "missing_input")
+    assert stage.store.verdicts("prefilter")[_job().id].criteria == {}
+
+
+def test_a_clean_verdict_writes_no_notes(rank_stage, monkeypatch):
+    parsed = _ranking(rank_stage, 76, {"stack fit": 80, "pay": 60})  # weighted 75
+    monkeypatch.setattr(rank_stage.client.messages, "parse", lambda **kw: _response(parsed))
+    rank_stage.run([_job()], {})
+    assert rank_stage.store.notes() == []
+
+
+@pytest.mark.parametrize(("score", "fires"), [(91, True), (90, False), (60, False), (59, True)])
+def test_rubric_mismatch_fires_beyond_fifteen_points(rank_stage, monkeypatch, score, fires):
+    parsed = _ranking(rank_stage, score, {"stack fit": 80, "pay": 60})  # weighted (240+60)/4 = 75
+    monkeypatch.setattr(rank_stage.client.messages, "parse", lambda **kw: _response(parsed))
+    rank_stage.run([_job()], {})
+    notes = rank_stage.store.notes(kind="rubric_mismatch")
+    assert bool(notes) is fires
+    if fires:
+        assert notes[0].stage == "rank" and notes[0].job_id == _job().id
+        assert notes[0].data == {"score": score, "weighted": 75.0}
+        assert "75" in notes[0].message and str(score) in notes[0].message
+
+
+def test_the_score_still_comes_from_the_model_not_the_criteria(rank_stage, monkeypatch):
+    parsed = _ranking(rank_stage, 20, {"stack fit": 90, "pay": 90})
+    monkeypatch.setattr(rank_stage.client.messages, "parse", lambda **kw: _response(parsed))
+    rank_stage.run([_job()], {})
+    assert rank_stage.store.verdicts("rank")[_job().id].score == 20
+
+
+def test_unknown_criteria_are_dropped_with_a_note_and_values_clamped(rank_stage, monkeypatch):
+    """A plain Ranking (the shape the subagent path validates) can carry anything."""
+    parsed = Ranking(relevant=True, score=80, language_ok=True, seniority_ok=True, location_ok=True,
+                     summary="s", criteria={"pay": 140, "Stack_Fit": -5, "vibes": 90})
+    monkeypatch.setattr(rank_stage.client.messages, "parse", lambda **kw: _response(parsed))
+    rank_stage.run([_job()], {})
+    v = rank_stage.store.verdicts("rank")[_job().id]
+    assert list(v.criteria.items()) == [("stack_fit", 0), ("pay", 100)]  # the profile's order
+    [note] = rank_stage.store.notes(kind="criteria_unknown_key")
+    assert note.stage == "rank" and "vibes" in note.message
+    assert note.data == {"keys": ["vibes"], "known": ["stack_fit", "pay"]}
+
+
+def test_criteria_without_profile_weights_are_dropped(settings, tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    profile = settings.profile.model_copy(update={"weights": {}})
+    st = AIStage("rank", profile, Store(tmp_path / "nw.db"))
+    assert st.schema is Ranking
+    parsed = Ranking(relevant=True, score=80, language_ok=True, seniority_ok=True, location_ok=True,
+                     summary="s", criteria={"pay": 10})
+    monkeypatch.setattr(st.client.messages, "parse", lambda **kw: _response(parsed))
+    st.run([_job()], {})
+    assert st.store.verdicts("rank")[_job().id].criteria == {}
+    assert [n.kind for n in st.store.notes()] == ["criteria_unknown_key"]  # and no rubric_mismatch
+
+
+def test_the_batch_path_records_the_same_notes(rank_stage, monkeypatch):
+    fake = FakeBatches()
+    monkeypatch.setattr(rank_stage.client.messages, "batches", fake)
+    monkeypatch.setattr("jobscraper.ai.client.time.sleep", lambda _s: None)
+    job = _job()
+    text = ('{"relevant": true, "score": 95, "language_ok": true, "seniority_ok": true, '
+            '"location_ok": true, "summary": "s", "criteria": {"stack fit": 70, "pay": 70}, '
+            '"input_notes": ["profile_gap: notice period"]}')
+    fake.results_by_id["msgbatch_1"] = [_ok(job.id, text)]
+    rank_stage.run_batch([job], {})
+    v = rank_stage.store.verdicts("rank")[job.id]
+    assert v.criteria == {"stack_fit": 70, "pay": 70} and v.input_notes == ["profile_gap: notice period"]
+    assert [n.kind for n in rank_stage.store.notes()] == ["profile_gap", "rubric_mismatch"]

@@ -580,8 +580,10 @@ each committed after a green `scripts/check.sh`:
 - **D. Sentinels**: each run, rank ~10 random screen rejects and screen ~10 random rule drops,
   stored under their own stage names so they never enter the shortlist; the report shows the
   false-reject estimate per gate and any sentinel find scoring 70+.
-- **Then**: bump `PROMPT_VERSION`, keep `COMPATIBLE_PROMPT_VERSIONS` to the new one, and re-run
-  screen → rank → refine through subagents on the *existing* scrape (no re-scrape). The old
+- **Then** (owner 2026-10-13, Claude's call accepted): scrape once more first, so Task A's scrape
+  checks meet real boards and descriptions are fresh; then bump `PROMPT_VERSION`, keep
+  `COMPATIBLE_PROMPT_VERSIONS` to the new one, and re-run screen → rank → refine through
+  subagents. The comparison runs on the intersection of jobs both versions scored. The old
   verdicts stay under the old version; `compare-verdicts` shows what the dossier and the new
   fields changed. Owner 2026-10-13: "don't overwrite the old ones, keep both".
 
