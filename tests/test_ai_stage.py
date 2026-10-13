@@ -645,3 +645,63 @@ def test_the_batch_path_records_the_same_notes(rank_stage, monkeypatch):
     v = rank_stage.store.verdicts("rank")[job.id]
     assert v.criteria == {"stack_fit": 70, "pay": 70} and v.input_notes == ["profile_gap: notice period"]
     assert [n.kind for n in rank_stage.store.notes()] == ["profile_gap", "rubric_mismatch"]
+
+
+# ------------------------------------------------------------- profile fingerprint
+# PROMPT_VERSION is bumped by hand when the wording changes, but the system prompt also embeds
+# the profile (CV, dossier, weights, deal-breakers, policies). The fingerprint is what says which
+# verdicts saw which profile.
+
+
+def test_the_fingerprint_is_twelve_hex_chars_of_the_system_prompts_sha256(settings):
+    import hashlib
+
+    from jobscraper.ai.prompts import profile_fingerprint
+
+    for stage in ("prefilter", "rank", "refine"):
+        expected = hashlib.sha256(system_prompt(stage, settings.profile).encode("utf-8")).hexdigest()[:12]
+        assert profile_fingerprint(stage, settings.profile) == expected
+    fps = {profile_fingerprint(s, settings.profile) for s in ("prefilter", "rank", "refine")}
+    assert len(fps) == 3  # refine hashes its own prompt (rank + REFINE_SYSTEM)
+
+
+def test_the_fingerprint_moves_with_the_dossier_only_where_the_dossier_goes(settings):
+    from jobscraper.ai.prompts import profile_fingerprint
+
+    edited = settings.profile.model_copy(update={"dossier": settings.profile.dossier + "\nNew fact."})
+    assert profile_fingerprint("rank", edited) != profile_fingerprint("rank", settings.profile)
+    assert profile_fingerprint("refine", edited) != profile_fingerprint("refine", settings.profile)
+    # the screen never sees the dossier, so its verdicts stay comparable
+    assert profile_fingerprint("prefilter", edited) == profile_fingerprint("prefilter", settings.profile)
+
+
+def test_the_api_path_stamps_the_profile_hash_on_every_verdict(stage, rank_stage, monkeypatch):
+    from jobscraper.ai.prompts import profile_fingerprint
+
+    monkeypatch.setattr(stage.client.messages, "parse", lambda **kw: _response(
+        Screening(relevant=True, score=72, language_ok=True, seniority_ok=True, location_ok=True,
+                  summary="ok")))
+    stage.run([_job()], {})
+    assert stage.store.verdicts("prefilter")[_job().id].profile_hash == \
+        profile_fingerprint("prefilter", stage.profile)
+
+    parsed = _ranking(rank_stage, 70, {"stack fit": 70, "pay": 70})
+    monkeypatch.setattr(rank_stage.client.messages, "parse", lambda **kw: _response(parsed))
+    rank_stage.run([_job()], {})
+    stored = rank_stage.store.verdicts("rank", profile_hash=profile_fingerprint("rank", rank_stage.profile))
+    assert set(stored) == {_job().id}
+
+
+def test_a_no_verdict_placeholder_carries_the_profile_hash_too(stage, monkeypatch):
+    from jobscraper.ai.prompts import profile_fingerprint
+
+    monkeypatch.setattr(stage.client.messages, "parse", lambda **kw: _response(None, stop_reason="refusal"))
+    assert stage.judge(_job(), None).profile_hash == profile_fingerprint("prefilter", stage.profile)
+
+
+def test_the_batch_path_stamps_the_profile_hash(stage, batches):
+    from jobscraper.ai.prompts import profile_fingerprint
+
+    stage.run_batch([_job()], {})
+    assert stage.store.verdicts("prefilter")[_job().id].profile_hash == \
+        profile_fingerprint("prefilter", stage.profile)

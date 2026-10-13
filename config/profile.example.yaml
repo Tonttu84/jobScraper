@@ -30,7 +30,7 @@ interests: [backend, full-stack, DevOps]
 deal_breakers: []
 
 # Optional, and fed ONLY to the Opus ranking prompt (and the refine pass, which reuses it), never
-# to the Sonnet screen. Leaving either out keeps every prompt exactly as it is.
+# to the Sonnet screen. Leaving either empty keeps every prompt exactly as it is.
 #
 # dossier: what the CV has no room for — real project sizes and your role in them, tool
 # proficiency by band, domains you like or avoid, what "junior" means to you, pay floor, company
@@ -41,7 +41,8 @@ deal_breakers: []
 #   Strong: Python, SQL. Working: TypeScript, Docker. Read-only: Java.
 #   Prefer product companies of 20-500 people; fintech and games are fine, ad-tech is not.
 #   Pay floor 2800 EUR/month gross; hybrid at most 3 office days a week.
-#
+dossier: ""
+
 # weights: a scoring rubric, so every rank call balances the criteria the same way. Each
 # criterion is judged 0-100 and combined with these weights (shown as percents of their sum, in
 # this order). Whole numbers >= 0, at least one above 0; a 0 is still listed (a deliberate zero).
@@ -52,6 +53,9 @@ deal_breakers: []
 #   location: 15       # country tier, remote region, office days
 #   pay: 10            # stated or likely pay against the floor
 #   company_type: 10   # product vs consultancy, company size, team setup
+# The keys become the `criteria` the ranker returns with every verdict (0-100 each), so the
+# report can show how a score was put together. Empty = no rubric, no criteria.
+weights: {}
 
 languages:
   ok: [en, fi, de]          # can work in these
@@ -218,12 +222,13 @@ prompt:
   # One extra bullet each, appended after the location bullet.
   extra_rules:
     - >-
-      A university-degree requirement is NOT a blocker: 42/Hive graduates are routinely accepted.
+      A university-degree requirement is NOT a blocker: the candidate's school is accepted by
+      many employers in its place.
     - >-
       A current-university-enrolment requirement (working student, "Werkstudent", mandatory
-      internship, enrolment certificate) is NOT a blocker either: the candidate is a student at
-      Hive Helsinki, which several employers accept for student positions. Mention it as a
-      concern, do not reject or cap the score for it.
+      internship, enrolment certificate) is NOT a blocker either: the candidate is a student,
+      which several employers accept for student positions. Mention it as a concern, do not
+      reject or cap the score for it.
     - >-
       Remote roles paying US salaries are worth extra effort even if the wording hints at
       US-only: mark them as "check eligibility" rather than rejecting, unless the text explicitly
@@ -232,10 +237,10 @@ prompt:
 # How `jobscraper serve` presents the page. The default preset is "student": this list is shared
 # with fellow students, so the page offers every language seen in the postings (plus the ones
 # above), ticks English only and lets each viewer say whether they have done Full Stack Open.
-# A one-person profile can switch to the tailored page instead — only the languages in
-# languages.ok are offered, all ticked, and no Full Stack Open box:
-# web:
-#   preset: tailored
+# A one-person profile can switch to `preset: tailored` instead — only the languages in
+# languages.ok are offered, all ticked, and no Full Stack Open box.
+web:
+  preset: student
 
 ai:
   prefilter_model: claude-sonnet-5

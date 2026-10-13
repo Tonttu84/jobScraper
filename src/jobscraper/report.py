@@ -201,6 +201,18 @@ def rank_anchors(jobs: Iterable[Job], ranked: dict[str, AIVerdict],
     return picked
 
 
+def same_profile(verdicts: dict[str, AIVerdict], profile_hash: str) -> dict[str, AIVerdict]:
+    """Only the verdicts written under ``profile_hash`` (see ``prompts.profile_fingerprint``).
+
+    What the rank stage may use as :func:`rank_anchors`: a verdict written under another profile
+    carries that profile's scale and summary. A verdict with no stamp (written before the stamp
+    existed) never qualifies, so the first window after a profile change runs without anchors.
+    """
+    if not profile_hash:
+        return {}
+    return {job_id: v for job_id, v in verdicts.items() if v.profile_hash == profile_hash}
+
+
 def effective_top(jobs: list[Job], filters: dict[str, FilterResult], rank: dict[str, AIVerdict],
                   refine: dict[str, AIVerdict], *, top: int) -> tuple[list[str], int | None]:
     """The ids of the effective top ``top``, and the effective score at its boundary.

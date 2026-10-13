@@ -159,3 +159,25 @@ def test_invalid_weights_are_rejected_with_a_clear_message():
         with pytest.raises(ValueError) as exc:
             Profile(name="x", summary="y", weights=weights)
         assert needle in str(exc.value), label
+
+
+def test_the_profile_template_loads_and_documents_the_rank_only_keys(tmp_path):
+    """config/profile.example.yaml is what profile-init copies: it must load, carry no personal
+    details, and show the dossier/weights/web keys a new candidate fills in."""
+    import shutil
+    from pathlib import Path
+
+    from jobscraper.config import load_settings
+
+    repo_config = Path(__file__).resolve().parents[1] / "config"
+    text = (repo_config / "profile.example.yaml").read_text(encoding="utf-8")
+    shutil.copyfile(repo_config / "profile.example.yaml", tmp_path / "profile.yaml")
+    shutil.copyfile(repo_config / "sources.yaml", tmp_path / "sources.yaml")
+
+    profile = load_settings(tmp_path).profile
+
+    assert profile.dossier == "" and profile.weights == {} and profile.deal_breakers == []
+    assert profile.web.preset == "student"
+    assert "\ndossier: \"\"" in text and "\nweights: {}" in text and "\nweb:\n  preset:" in text
+    for personal in ("hive", "poker"):
+        assert personal not in text.lower()

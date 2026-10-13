@@ -810,3 +810,77 @@ def test_an_older_database_gains_the_gone_columns_when_it_is_opened(tmp_path):
         assert store.gone_ids(1) == {job.id}
     finally:
         store.close()
+
+
+# ------------------------------------------------------------- profile_hash on verdicts
+# The system prompt embeds the candidate profile; a dossier edit without a prompt-version bump
+# must still be traceable, so every verdict carries a fingerprint of the prompt it was written under.
+
+_PRE_HASH_VERDICTS = """
+CREATE TABLE ai_verdicts (
+    job_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    relevant INTEGER NOT NULL,
+    score INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (job_id, stage, model, prompt_version)
+);
+"""
+
+
+def _verdict_columns(store) -> list[str]:
+    return [r["name"] for r in store.conn.execute("PRAGMA table_info(ai_verdicts)")]
+
+
+def test_save_verdict_writes_the_profile_hash_column_and_the_reader_returns_it(store):
+    store.save_verdict(make_verdict("a", profile_hash="abc123def456"))
+    row = store.conn.execute("SELECT profile_hash FROM ai_verdicts WHERE job_id='a'").fetchone()
+    assert row["profile_hash"] == "abc123def456"
+    assert store.verdicts("prefilter")["a"].profile_hash == "abc123def456"
+
+
+def test_a_verdict_without_a_hash_reads_back_empty(store):
+    store.save_verdict(make_verdict("a"))
+    assert store.verdicts("prefilter")["a"].profile_hash == ""
+
+
+def test_verdicts_filter_by_profile_hash(store):
+    now = datetime.now(UTC)
+    store.save_verdict(make_verdict("a", profile_hash="h1", score=40, created_at=now - timedelta(hours=1)))
+    store.save_verdict(make_verdict("a", prompt_version="v2", profile_hash="h2", score=90, created_at=now))
+    store.save_verdict(make_verdict("b", profile_hash="", score=55, created_at=now))
+
+    assert store.verdicts("prefilter")["a"].score == 90  # no filter: latest wins
+    h1 = store.verdicts("prefilter", profile_hash="h1")
+    assert set(h1) == {"a"} and h1["a"].score == 40
+    assert set(store.verdicts("prefilter", profile_hash="")) == {"b"}
+    assert store.verdicts("prefilter", "v2", profile_hash="h1") == {}  # both filters must match
+    assert store.verdicts("prefilter", ("v1", "v2"), profile_hash="h2")["a"].score == 90
+
+
+def test_an_older_database_gains_the_profile_hash_column_with_its_rows_kept(tmp_path):
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(_PRE_HASH_VERDICTS)
+    old = make_verdict("a")
+    conn.execute(
+        "INSERT INTO ai_verdicts (job_id, stage, model, prompt_version, relevant, score, created_at, data)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (old.job_id, old.stage, old.model, old.prompt_version, 1, old.score,
+         old.created_at.isoformat(), old.model_dump_json(exclude={"profile_hash"})),
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+    try:
+        assert "profile_hash" in _verdict_columns(store)
+        assert store.verdicts("prefilter")["a"].profile_hash == ""
+        assert set(store.verdicts("prefilter", profile_hash="")) == {"a"}
+        pk = [r["name"] for r in store.conn.execute("PRAGMA table_info(ai_verdicts)") if r["pk"]]
+        assert pk == ["job_id", "stage", "model", "prompt_version"]  # the key is unchanged
+    finally:
+        store.close()

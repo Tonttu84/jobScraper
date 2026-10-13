@@ -354,8 +354,11 @@ def spy_rank(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
     def init(self, stage, profile, store, model=None, preamble="") -> None:
+        from jobscraper.ai.prompts import profile_fingerprint
+
         self.stage, self.store = stage, store
         self.model = model or profile.ai.rank_model
+        self.profile_hash = profile_fingerprint(stage, profile)  # as the real stage stamps it
         calls["preambles"].append(preamble)
 
     def run(self, jobs, filters, *, force=False, progress=None):
@@ -369,7 +372,8 @@ def spy_rank(monkeypatch):
             verdict = AIVerdict(job_id=job.id, stage="rank", model=self.model,
                                 prompt_version=PROMPT_VERSION, relevant=True,
                                 score=calls["scores"].get(job.title, 10), language_ok=True,
-                                seniority_ok=True, location_ok=True, summary=f"ranked {job.title}")
+                                seniority_ok=True, location_ok=True, summary=f"ranked {job.title}",
+                                profile_hash=self.profile_hash)
             self.store.save_verdict(verdict)
             out[job.id] = verdict
             calls["scored"].append(job.title)
@@ -507,6 +511,37 @@ def test_rank_sends_the_reference_scores_once_something_has_been_ranked(data_dir
     assert preamble.startswith("REFERENCE SCORES (fixed;")
     assert "· score 86 · ranked Queued Developer 00" in preamble
     assert "· score 41 · ranked Queued Developer 01" in preamble
+
+
+def test_rank_anchors_only_on_verdicts_written_under_the_current_profile(data_dir, spy_rank,
+                                                                      monkeypatch):
+    """A verdict from before a profile change (or before the stamp existed) is no reference."""
+    from jobscraper.ai.prompts import profile_fingerprint
+
+    jobs = _queued_jobs(6)
+    settings = _ai_config(monkeypatch, rank_top_n=2, rank_window=2, rank_patience=0, rank_budget=2,
+                          refine_top_n=2, prefilter_min_score=30)
+    store = store_mod.Store()
+    try:
+        _seed_verdict(store, jobs[0], "rank", 86)  # unstamped: written before the change
+        _seed_verdict(store, jobs[1], "rank", 64, profile_hash="0123456789ab")  # another profile
+    finally:
+        store.close()
+
+    result = runner.invoke(cli_mod.app, ["rank"])
+    assert result.exit_code == 0, result.output
+    assert spy_rank["preambles"] == [""]  # the first window after a change has no anchors
+
+    current = profile_fingerprint("rank", settings.profile)
+    store = store_mod.Store()
+    try:
+        assert {v.profile_hash for v in store.verdicts("rank").values()} >= {current}
+    finally:
+        store.close()
+    again = runner.invoke(cli_mod.app, ["rank"])
+    assert again.exit_code == 0, again.output
+    assert "ranked Queued Developer 02" in spy_rank["preambles"][1]
+    assert "The rank stage likes this one" not in spy_rank["preambles"][1]
 
 
 def test_rank_watches_the_top_20_when_the_refine_stage_is_off(data_dir, spy_rank, monkeypatch):
@@ -1014,12 +1049,12 @@ def _seed_verdict(store, job, stage: str, score: int, **kw) -> None:
     from jobscraper.ai.prompts import PROMPT_VERSION
     from jobscraper.models import AIVerdict
 
-    store.save_verdict(AIVerdict(
-        job_id=job.id, stage=stage,
-        model="claude-opus-5" if stage == "rank" else "claude-sonnet-5",
-        prompt_version=PROMPT_VERSION, relevant=True, score=score,
-        language_ok=True, seniority_ok=True, location_ok=True,
-        summary=f"The {stage} stage likes this one.", **kw))
+    fields = {"job_id": job.id, "stage": stage,
+              "model": "claude-opus-5" if stage == "rank" else "claude-sonnet-5",
+              "prompt_version": PROMPT_VERSION, "relevant": True, "score": score,
+              "language_ok": True, "seniority_ok": True, "location_ok": True,
+              "summary": f"The {stage} stage likes this one."}
+    store.save_verdict(AIVerdict(**{**fields, **kw}))
 
 
 def _job(store, prefix: str):
@@ -1809,3 +1844,95 @@ def test_report_records_a_pass_disagreement_and_lists_it(data_dir, fake_http):
     report_md = next((data_dir / "results").glob("report-*.md")).read_text(encoding="utf-8")
     appendix = report_md[report_md.index("## Pipeline health"):]
     assert f"  - arbeitnow · {flagged.title} — rank 90" in appendix
+
+
+# ------------------------------------------------------------------- compare-verdicts
+
+
+def _compare_seed(count: int, *, old_hash: str = "aaa", new_hash: str = "bbb") -> list:
+    """``count`` listed jobs, each with an old (v1) and a new (v2) rank verdict."""
+    jobs = _queued_jobs(count)
+    store = store_mod.Store()
+    try:
+        for i, job in enumerate(jobs):
+            _seed_verdict(store, job, "rank", 40 + i, prompt_version="v1", profile_hash=old_hash,
+                          criteria={"stack_fit": 50})
+        for i, job in enumerate(jobs):
+            _seed_verdict(store, job, "rank", 40 + i + (5 if i % 2 else -5), prompt_version="v2",
+                          profile_hash=new_hash, relevant=i != 0, criteria={"stack_fit": 60})
+        store.add_note("rank", "profile_gap", "notice period", job_id=jobs[0].id)
+    finally:
+        store.close()
+    return jobs
+
+
+def test_compare_verdicts_prints_every_section(data_dir):
+    _compare_seed(3)
+    result = runner.invoke(cli_mod.app, ["compare-verdicts", "--stage", "rank", "--old", "v1",
+                                         "--new", "v2", "--top", "2"])
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert "old only 0, new only 0, both 3" in out
+    assert "mean delta (new - old) -1.67" in out and "median -5.00" in out
+    assert "relevant flips: true→false 1, false→true 0" in out
+    assert "top-2 overlap (Jaccard) 1.00" in out and "Spearman" in out
+    assert "Queued Developer 01 · Example Oy · 41 → 46 (+5)" in out
+    assert "stack_fit: +10.00 over 3 jobs" in out
+    assert "1 run note on these jobs since" in out and "profile_gap 1" in out
+    assert "fewer than 10 jobs" in out
+
+
+def test_compare_verdicts_selects_by_profile_hash(data_dir):
+    _compare_seed(2, old_hash="abc123def456", new_hash="0123456789ab")
+    result = runner.invoke(cli_mod.app, ["compare-verdicts", "--old-hash", "abc123def456",
+                                         "--new-hash", "0123456789ab"])
+    assert result.exit_code == 0, result.output
+    assert "both 2" in result.output
+
+    none = runner.invoke(cli_mod.app, ["compare-verdicts", "--old-hash", "abc123def456",
+                                       "--new-hash", "ffffffffffff"])
+    assert none.exit_code == 0, none.output
+    assert "both 0" in none.output and "nothing to compare" in none.output
+
+
+def test_compare_verdicts_needs_a_selector_on_each_side_and_a_known_stage(data_dir):
+    missing = runner.invoke(cli_mod.app, ["compare-verdicts", "--old", "v1"])
+    assert missing.exit_code != 0
+    bad_stage = runner.invoke(cli_mod.app, ["compare-verdicts", "--stage", "screen", "--old", "a",
+                                            "--new", "b"])
+    assert bad_stage.exit_code != 0
+
+
+def test_compare_verdicts_for_the_screen_skips_the_ranking_only_sections(data_dir):
+    jobs = _queued_jobs(2)  # seeds prefilter verdicts under PROMPT_VERSION
+    from jobscraper.ai.prompts import PROMPT_VERSION
+
+    store = store_mod.Store()
+    try:
+        for job in jobs:
+            _seed_verdict(store, job, "prefilter", 10, prompt_version="v9")
+    finally:
+        store.close()
+    result = runner.invoke(cli_mod.app, ["compare-verdicts", "--stage", "prefilter",
+                                         "--old", "v9", "--new", PROMPT_VERSION])
+    assert result.exit_code == 0, result.output
+    assert "both 2" in result.output
+    assert "Jaccard" not in result.output and "criterion" not in result.output
+    assert "no run notes on these jobs since" in result.output
+
+
+def test_compare_verdicts_over_ten_unchanged_jobs_has_no_movers_and_no_hint(data_dir):
+    from jobscraper.ai.prompts import PROMPT_VERSION
+
+    jobs = _queued_jobs(10)  # prefilter verdicts 99..90 under PROMPT_VERSION
+    store = store_mod.Store()
+    try:
+        for i, job in enumerate(jobs):
+            _seed_verdict(store, job, "prefilter", 99 - i, prompt_version="v0")
+    finally:
+        store.close()
+    result = runner.invoke(cli_mod.app, ["compare-verdicts", "--stage", "prefilter",
+                                         "--old", "v0", "--new", PROMPT_VERSION])
+    assert result.exit_code == 0, result.output
+    assert "both 10" in result.output and "mean delta (new - old) +0.00 (sd 0.00" in result.output
+    assert "biggest movers" not in result.output and "hint:" not in result.output

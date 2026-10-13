@@ -11,7 +11,7 @@ config/profiles/<name>/sources.yaml    # which boards to scrape and with what op
 Create one from the defaults and edit it:
 
 ```bash
-jobscraper profile-init ana        # copies config/profile.yaml + config/sources.yaml here
+jobscraper profile-init ana        # copies config/profile.example.yaml (the template) + config/sources.yaml here
 jobscraper profiles                # list the profiles that exist (* = the active one)
 jobscraper --profile ana run       # everything for that candidate
 ```

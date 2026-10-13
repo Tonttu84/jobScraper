@@ -105,7 +105,7 @@ location policies, the role terms, and the wording of the AI prompts (`prompt.ro
 hard-coded, so a second person only needs their own copy of that file.
 
 ```bash
-uv run jobscraper profile-init ana      # copies config/profile.yaml + sources.yaml to config/profiles/ana/
+uv run jobscraper profile-init ana      # copies config/profile.example.yaml + sources.yaml to config/profiles/ana/
 $EDITOR config/profiles/ana/profile.yaml
 uv run jobscraper profiles              # which profiles exist (* = active)
 uv run jobscraper --profile ana run     # scrape → … → report, all under that profile

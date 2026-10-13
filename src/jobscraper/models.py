@@ -93,6 +93,12 @@ class AIVerdict(BaseModel):
     stage: Literal["prefilter", "rank", "refine"]
     model: str
     prompt_version: str
+    profile_hash: str = Field(
+        "",
+        description="Fingerprint of the system prompt the verdict was written under "
+                    "(jobscraper.ai.prompts.profile_fingerprint): it moves when the profile does, "
+                    "even without a prompt-version bump. Empty on verdicts written before it existed",
+    )
     relevant: bool
     score: int = Field(ge=0, le=100)
     language_ok: bool

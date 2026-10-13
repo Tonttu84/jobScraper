@@ -6,6 +6,8 @@ own ``config/``, ``data/`` and ``results/`` are never touched.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
@@ -18,6 +20,8 @@ runner = CliRunner()
 
 DEFAULT_PROFILE_YAML = "name: Default Owner\nsummary: The default candidate.\n"
 DEFAULT_SOURCES_YAML = "sources:\n  arbeitnow:\n    enabled: true\n"
+#: The template a new profile starts from; deliberately different from DEFAULT_PROFILE_YAML.
+EXAMPLE_PROFILE_YAML = "name: Your Name\nsummary: Template candidate.\nweb:\n  preset: student\n"
 
 
 @pytest.fixture
@@ -30,6 +34,7 @@ def dirs(tmp_path, monkeypatch):
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "profile.yaml").write_text(DEFAULT_PROFILE_YAML, encoding="utf-8")
     (tmp_path / "config" / "sources.yaml").write_text(DEFAULT_SOURCES_YAML, encoding="utf-8")
+    (tmp_path / "config" / "profile.example.yaml").write_text(EXAMPLE_PROFILE_YAML, encoding="utf-8")
     return tmp_path
 
 
@@ -111,11 +116,12 @@ def test_known_profiles_lists_complete_directories_only(dirs):
 # ----------------------------------------------------------------------------- cli
 
 
-def test_profile_init_copies_the_default_config_and_refuses_to_overwrite(dirs):
+def test_profile_init_copies_the_template_and_the_sources_and_refuses_to_overwrite(dirs):
     result = runner.invoke(cli_mod.app, ["profile-init", "ana"])
     assert result.exit_code == 0, result.output
     created = dirs / "config" / "profiles" / "ana"
-    assert (created / "profile.yaml").read_text(encoding="utf-8") == DEFAULT_PROFILE_YAML
+    # the template, not the owner's own profile.yaml
+    assert (created / "profile.yaml").read_text(encoding="utf-8") == EXAMPLE_PROFILE_YAML
     assert (created / "sources.yaml").read_text(encoding="utf-8") == DEFAULT_SOURCES_YAML
     # the copy is now a usable profile
     assert config.use_profile("ana").config == created
@@ -123,6 +129,29 @@ def test_profile_init_copies_the_default_config_and_refuses_to_overwrite(dirs):
     again = runner.invoke(cli_mod.app, ["profile-init", "ana"])
     assert again.exit_code != 0
     assert "already exists" in again.output
+
+
+def test_profile_init_never_copies_the_owners_personal_profile(dirs):
+    """The base profile.yaml holds a CV, a personal dossier and weights; none of it may leak."""
+    (dirs / "config" / "profile.yaml").write_text(
+        "name: Owner\nsummary: The owner.\ncv_text: SECRET-CV-LINE\n"
+        "dossier: SECRET-DOSSIER-LINE\nweights:\n  secret_criterion: 3\n", encoding="utf-8")
+    result = runner.invoke(cli_mod.app, ["profile-init", "ana"])
+    assert result.exit_code == 0, result.output
+    text = (dirs / "config" / "profiles" / "ana" / "profile.yaml").read_text(encoding="utf-8")
+    for secret in ("SECRET-CV-LINE", "SECRET-DOSSIER-LINE", "secret_criterion", "Owner"):
+        assert secret not in text
+    config.use_profile("ana")
+    profile = config.load_settings().profile
+    assert profile.dossier == "" and profile.weights == {} and profile.cv_text == ""
+
+
+def test_profile_init_needs_the_template(dirs):
+    (dirs / "config" / "profile.example.yaml").unlink()
+    result = runner.invoke(cli_mod.app, ["profile-init", "ana"])
+    assert result.exit_code != 0
+    assert "profile.example.yaml" in result.output
+    assert not (dirs / "config" / "profiles" / "ana").exists()
 
 
 def test_profile_init_rejects_an_unsafe_name(dirs):
@@ -219,14 +248,27 @@ def test_web_preset_rejects_an_unknown_value(dirs):
 
 
 def test_profile_init_round_trips_the_web_preset(dirs):
-    """``profile-init`` copies the file verbatim, so the new key survives the copy."""
-    (dirs / "config" / "profile.yaml").write_text(
+    """``profile-init`` copies the template verbatim, so its web preset survives the copy."""
+    (dirs / "config" / "profile.example.yaml").write_text(
         DEFAULT_PROFILE_YAML + "web:\n  preset: tailored\n", encoding="utf-8"
     )
     result = runner.invoke(cli_mod.app, ["profile-init", "ana"])
     assert result.exit_code == 0, result.output
     config.use_profile("ana")
     assert config.load_settings().profile.web.preset == "tailored"
+
+
+def test_the_repos_profile_template_starts_a_working_profile(dirs):
+    """The real config/profile.example.yaml, through profile-init, loads cleanly."""
+    real = Path(cli_mod.__file__).resolve().parents[2] / "config" / "profile.example.yaml"
+    (dirs / "config" / "profile.example.yaml").write_text(real.read_text(encoding="utf-8"),
+                                                          encoding="utf-8")
+    result = runner.invoke(cli_mod.app, ["profile-init", "ana"])
+    assert result.exit_code == 0, result.output
+    config.use_profile("ana")
+    profile = config.load_settings().profile
+    assert profile.dossier == "" and profile.weights == {}
+    assert profile.web.preset == "student"
 
 
 def test_serve_passes_the_tailored_preset_to_the_app(dirs, monkeypatch):

@@ -132,11 +132,15 @@ from jobscraper.ai.prompts import (
     COMPATIBLE_PROMPT_VERSIONS,
     PROMPT_VERSION,
     job_prompt,
+    profile_fingerprint,
     rank_anchor_block,
     refine_user_prompt,
     system_prompt,
 )
 from jobscraper.ai.schemas import Ranking, Refinement, Screening
+from jobscraper.compare import jaccard as _jaccard
+from jobscraper.compare import spearman as _spearman
+from jobscraper.compare import top_set as _top_set
 from jobscraper.config import load_settings, paths
 from jobscraper.http import Http
 from jobscraper.models import AIVerdict, Job
@@ -149,6 +153,7 @@ from jobscraper.report import (
     rank_anchors,
     rank_queue,
     refine_shortlist,
+    same_profile,
 )
 from jobscraper.sources import linkedin
 from jobscraper.store import Store, still_listed
@@ -452,7 +457,10 @@ def export_rank(chunk: int, max_chars: int, top: int | None, window: int | None,
     # Every window of the round is graded against the same fixed reference scores, so a slice of
     # weak postings cannot talk itself into an 80 and a strong slice is not flattened to fill the
     # range. The agents read this file after system.txt and never answer for the postings in it.
-    anchors = rank_anchors(jobs, ranked)
+    # Only verdicts written under the current profile qualify: after a profile change (or on the
+    # first round after the stamp existed) the window goes out with no anchors, and the round's
+    # own verdicts become the reference from the next window on.
+    anchors = rank_anchors(jobs, same_profile(ranked, profile_fingerprint("rank", settings.profile)))
     anchors_file = _out_dir("rank") / "anchors.txt"
     if anchors:
         anchors_file.write_text(rank_anchor_block(anchors), encoding="utf-8")
@@ -533,7 +541,13 @@ def export_refine(top: int | None, max_chars: int, force: bool = False) -> None:
 
 
 def import_refine() -> None:
-    """Store one subagent ``Refinement`` answer, with the same tolerance as the API path."""
+    """Store one subagent ``Refinement`` answer, with the same tolerance as the API path.
+
+    The verdicts are stamped with ``profile_fingerprint("refine", ...)`` of the profile active at
+    import time — the same computation export made. Were the profile edited between export and
+    import, the stamp would name the new profile although the subagent read the old one; nothing
+    here detects that.
+    """
     out = _out_dir("refine")
     batch_file = out / "batch.json"
     if not batch_file.is_file():
@@ -550,7 +564,8 @@ def import_refine() -> None:
         print(f"  {answer.name}: not a Refinement object ({exc})")
         return
     store = Store()
-    verdicts = refine_verdicts(parsed.items, expected, MODEL["refine"])
+    verdicts = refine_verdicts(parsed.items, expected, MODEL["refine"],
+                               profile_hash=profile_fingerprint("refine", load_settings().profile))
     for v in verdicts:
         store.save_verdict(v)
     print(f"refine: imported {len(verdicts)} verdicts of {len(expected)} exported")
@@ -584,9 +599,16 @@ def import_verdicts(stage: str) -> None:
     Each verdict goes through :func:`jobscraper.ai.notes.store_verdict`, as on the API path: the
     criteria are mapped onto the profile's weights and the input notes become run notes. A line
     that fails the schema is printed and noted as ``verdict_invalid``.
+
+    Every verdict is stamped with ``profile_fingerprint(stage, ...)`` of the profile active at
+    import time, computed the same way export computed the system prompt it wrote. Were the
+    profile edited between export and import, the stamp would name the new profile although the
+    subagent read the old one; nothing here detects that.
     """
     schema = Screening if stage == "prefilter" else Ranking
-    weights = load_settings().profile.weights
+    profile = load_settings().profile
+    weights = profile.weights
+    profile_hash = profile_fingerprint(stage, profile)
     out = _out_dir(stage)
     expected: dict[str, str] = {}
     for f in sorted(out.glob("chunk-*.json")):
@@ -610,7 +632,7 @@ def import_verdicts(stage: str) -> None:
                 continue
             seen.add(job_id)
             store_verdict(store, AIVerdict(job_id=job_id, stage=stage, model=MODEL[stage], prompt_version=PROMPT_VERSION,
-                                           relevant=parsed.relevant, score=parsed.score, language_ok=parsed.language_ok,
+                                           profile_hash=profile_hash, relevant=parsed.relevant, score=parsed.score, language_ok=parsed.language_ok,
                                            seniority_ok=parsed.seniority_ok, location_ok=parsed.location_ok,
                                            summary=parsed.summary, concerns=parsed.concerns,
                                            why_apply=getattr(parsed, "why_apply", []),
@@ -680,36 +702,6 @@ def _percentile(values: list[float], q: float) -> float:
     return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo)
 
 
-def _average_ranks(values: list[float]) -> list[float]:
-    """1-based ranks of ``values``, tied values sharing the average of the places they occupy."""
-    order = sorted(range(len(values)), key=lambda i: values[i])
-    ranks = [0.0] * len(values)
-    i = 0
-    while i < len(order):
-        j = i
-        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
-            j += 1
-        shared = (i + j) / 2 + 1
-        for k in range(i, j + 1):
-            ranks[order[k]] = shared
-        i = j + 1
-    return ranks
-
-
-def _spearman(xs: list[float], ys: list[float]) -> float | None:
-    """Spearman's rho: the Pearson correlation of the average ranks. None where it is undefined."""
-    if len(xs) < 2:
-        return None
-    rx, ry = _average_ranks(xs), _average_ranks(ys)
-    mx, my = sum(rx) / len(rx), sum(ry) / len(ry)
-    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
-    dx = sum((a - mx) ** 2 for a in rx)
-    dy = sum((b - my) ** 2 for b in ry)
-    if dx == 0 or dy == 0:  # one run gave every job the same score: no ordering to correlate
-        return None
-    return num / (dx * dy) ** 0.5
-
-
 def _fmt(value: float | None, digits: int = 4) -> str:
     return "n/a" if value is None else f"{value:.{digits}f}"
 
@@ -723,15 +715,6 @@ def _drift_line(label: str, xs: list[float], ys: list[float]) -> str:
     return (f"- {label}: n={len(xs)}, median |d| {_percentile(absd, 0.5):.2f}, "
             f"p90 |d| {_percentile(absd, 0.9):.2f}, mean signed {sum(diffs) / len(diffs):+.2f}, "
             f"Spearman {_fmt(_spearman(xs, ys))}")
-
-
-def _top_set(scores: dict[str, int], n: int) -> set[str]:
-    """The ``n`` best-scoring job ids; the job id breaks ties so the set is the same every run."""
-    return {jid for jid, _ in sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:n]}
-
-
-def _jaccard(x: set[str], y: set[str]) -> float:
-    return len(x & y) / len(x | y) if x or y else 0.0
 
 
 def _read_run(run: Path) -> tuple[dict[str, Ranking], int]:

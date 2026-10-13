@@ -28,6 +28,7 @@ from jobscraper.ai.prompts import (
     COMPATIBLE_PROMPT_VERSIONS,
     PROMPT_VERSION,
     job_prompt,
+    profile_fingerprint,
     refine_user_prompt,
     system_prompt,
 )
@@ -85,6 +86,8 @@ class AIStage:
         self.concurrency = ai.concurrency
         self.batch_chunk = ai.batch_chunk
         self.system = system_prompt(stage, profile)
+        #: Stamped on every verdict this stage writes (see profile_fingerprint).
+        self.profile_hash = profile_fingerprint(stage, profile)
         self.client = _client()
 
     # ------------------------------------------------------------- verdicts
@@ -102,7 +105,7 @@ class AIStage:
         score it in the middle, and say why, so a human still sees it in the report."""
         log.warning("%s: no structured verdict for %s (%s)", self.model, job_id, reason)
         return AIVerdict(job_id=job_id, stage=self.stage, model=self.model, prompt_version=PROMPT_VERSION,
-                         relevant=True, score=50, language_ok=True, seniority_ok=True, location_ok=True,
+                         profile_hash=self.profile_hash, relevant=True, score=50, language_ok=True, seniority_ok=True, location_ok=True,
                          summary=f"No verdict ({reason}); kept for manual review.",
                          concerns=["model gave no structured answer"], usage=usage)
 
@@ -116,7 +119,7 @@ class AIStage:
         if isinstance(criteria, BaseModel):  # the per-profile API schema, see ranking_schema()
             criteria = criteria.model_dump(by_alias=True)
         return AIVerdict(job_id=job_id, stage=self.stage, model=self.model, prompt_version=PROMPT_VERSION,
-                         relevant=parsed.relevant, score=parsed.score, language_ok=parsed.language_ok,
+                         profile_hash=self.profile_hash, relevant=parsed.relevant, score=parsed.score, language_ok=parsed.language_ok,
                          seniority_ok=parsed.seniority_ok, location_ok=parsed.location_ok,
                          summary=parsed.summary, concerns=parsed.concerns,
                          why_apply=getattr(parsed, "why_apply", []), criteria=criteria,
@@ -288,12 +291,14 @@ _THINKING_IS_IMPLICIT = ("fable", "opus")
 
 
 def refine_verdicts(items: Iterable[RefinedJob], job_ids: Iterable[str], model: str,
-                    usage: dict[str, int | bool] | None = None) -> list[AIVerdict]:
+                    usage: dict[str, int | bool] | None = None, *,
+                    profile_hash: str = "") -> list[AIVerdict]:
     """Map one :class:`Refinement` answer onto verdicts, in the order the model gave them.
 
     Ids that were never sent, and repeats of an id already answered, are dropped with a warning;
     ids the model forgot are logged (the report falls back to their rank score). ``usage`` rides
     on the first verdict only — the whole shortlist cost one request, not one per job.
+    ``profile_hash`` is stamped on every verdict (``profile_fingerprint("refine", profile)``).
     """
     known, seen = list(job_ids), set()
     verdicts: list[AIVerdict] = []
@@ -307,7 +312,7 @@ def refine_verdicts(items: Iterable[RefinedJob], job_ids: Iterable[str], model: 
         seen.add(item.job_id)
         verdicts.append(AIVerdict(
             job_id=item.job_id, stage="refine", model=model, prompt_version=PROMPT_VERSION,
-            relevant=True, score=item.score, position=item.position, summary=item.summary,
+            profile_hash=profile_hash, relevant=True, score=item.score, position=item.position, summary=item.summary,
             language_ok=True, seniority_ok=True, location_ok=True, concerns=[], why_apply=[],
             usage=dict(usage or {}) if not verdicts else {}))
     missing = [job_id for job_id in known if job_id not in seen]
@@ -333,6 +338,7 @@ class RefineStage:
         self.effort = ai.refine_effort
         self.max_chars = ai.max_description_chars
         self.system = system_prompt("refine", profile)
+        self.profile_hash = profile_fingerprint("refine", profile)
         self.client = _client()
 
     def _thinking(self) -> dict[str, dict]:
@@ -387,7 +393,7 @@ class RefineStage:
                         "scores", self.model, response.stop_reason)
             return []
         verdicts = refine_verdicts(response.parsed_output.items, [j.id for j in todo], self.model,
-                                   AIStage._usage(response.usage))
+                                   AIStage._usage(response.usage), profile_hash=self.profile_hash)
         for v in verdicts:
             self.store.save_verdict(v)
         return verdicts

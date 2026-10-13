@@ -16,7 +16,7 @@ import pytest
 
 from jobscraper import config
 from jobscraper import store as store_mod
-from jobscraper.ai.prompts import PROMPT_VERSION
+from jobscraper.ai.prompts import PROMPT_VERSION, profile_fingerprint
 from jobscraper.models import AIVerdict, FilterResult, Job
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "ai_batches.py"
@@ -353,7 +353,7 @@ def test_export_rank_writes_the_reference_scores_next_to_the_system_prompt(ranke
         store.save_verdict(AIVerdict(job_id=already.id, stage="rank", model="claude-opus-5 (subagent)",
                                      prompt_version=PROMPT_VERSION, relevant=True, score=86,
                                      language_ok=True, seniority_ok=True, location_ok=True,
-                                     summary="Strong Kotlin fit."))
+                                     summary="Strong Kotlin fit.", profile_hash=_current_hash("rank")))
     finally:
         store.close()
 
@@ -364,6 +364,65 @@ def test_export_rank_writes_the_reference_scores_next_to_the_system_prompt(ranke
     assert "- Junior Kotlin Developer · Acme · FI · score 86 · Strong Kotlin fit." in anchors
     assert [e["job_id"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")] == [ranked[0].id]
     assert "+ anchors.txt (1 reference scores)" in capsys.readouterr().out
+
+
+def _current_hash(stage: str) -> str:
+    """The fingerprint the script computes from the active profile."""
+    return profile_fingerprint(stage, ai_batches.load_settings().profile)
+
+
+@pytest.mark.parametrize("stamp", ["", "0123456789ab"])
+def test_export_rank_anchors_only_on_the_current_profile(ranked, data_dir, monkeypatch, capsys, stamp):
+    """An unstamped verdict, or one from another profile, carries another scale: no anchors.
+
+    The first window after a profile change (or after the stamp was introduced) runs without
+    reference scores; the round's own verdicts become the anchors from the next window on.
+    """
+    already = _job(3, "Junior Kotlin Developer", LONG_DESCRIPTION)
+    _seed([already], ["keep"])
+    store = store_mod.Store()
+    try:
+        store.save_verdict(AIVerdict(job_id=already.id, stage="rank", model="claude-opus-5 (subagent)",
+                                     prompt_version=PROMPT_VERSION, relevant=True, score=86,
+                                     language_ok=True, seniority_ok=True, location_ok=True,
+                                     summary="Strong Kotlin fit.", profile_hash=stamp))
+    finally:
+        store.close()
+    out = data_dir / "exports" / "ai" / "rank"
+    (out / "verdicts").mkdir(parents=True, exist_ok=True)
+    (out / "anchors.txt").write_text("REFERENCE SCORES from before the change\n", encoding="utf-8")
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    assert not (out / "anchors.txt").exists()
+    assert "no reference scores yet" in capsys.readouterr().out
+
+
+def test_import_stamps_the_active_profiles_hash_on_prefilter_and_rank(ranked, data_dir, monkeypatch,
+                                                                      capsys):
+    _run(monkeypatch, "export", "rank", "--top", "5")
+    line = {"job_id": ranked[0].id, "relevant": True, "score": 70, "language_ok": True,
+            "seniority_ok": True, "location_ok": True, "summary": "fit"}
+    _answer(data_dir, "rank", json.dumps(line) + "\n")
+    _run(monkeypatch, "import", "rank")
+
+    store = store_mod.Store()
+    try:
+        assert store.verdicts("rank")[ranked[0].id].profile_hash == _current_hash("rank")
+        assert set(store.verdicts("rank", profile_hash=_current_hash("rank"))) == {ranked[0].id}
+    finally:
+        store.close()
+
+    jobs = [_job(7, "Junior Rust Developer")]
+    _seed(jobs, ["keep"])
+    _run(monkeypatch, "export", "prefilter")
+    _answer(data_dir, "prefilter", json.dumps({**line, "job_id": jobs[0].id}) + "\n")
+    _run(monkeypatch, "import", "prefilter")
+    store = store_mod.Store()
+    try:
+        assert store.verdicts("prefilter")[jobs[0].id].profile_hash == _current_hash("prefilter")
+    finally:
+        store.close()
 
 
 def test_export_rank_without_a_single_ranked_job_removes_a_stale_anchor_file(ranked, data_dir,
@@ -1239,6 +1298,7 @@ def test_import_refine_stores_the_answer_like_the_api_path(shortlist, data_dir, 
     assert best.score == 88 and best.position == 1 and best.relevant
     assert best.model == "claude-fable-5-1 (subagent)" and best.prompt_version == PROMPT_VERSION
     assert best.summary == "Best against the rest."
+    assert best.profile_hash == _current_hash("refine")  # computed at import, like export did
     assert stored[shortlist[0].id].score == 60
     assert "imported 2 verdicts of 3 exported" in capsys.readouterr().out
 
@@ -1586,3 +1646,10 @@ def test_export_prefilter_skips_a_posting_the_board_no_longer_lists(data_dir, mo
         assert jobs[1].id in store.filter_results()
     finally:
         store.close()
+
+
+def test_spearman_lives_in_one_place_and_the_script_imports_it():
+    from jobscraper import audit, compare
+
+    assert ai_batches._spearman is compare.spearman is audit.spearman
+    assert not hasattr(ai_batches, "_average_ranks")

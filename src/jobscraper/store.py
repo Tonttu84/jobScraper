@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS ai_verdicts (
     score INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     data TEXT NOT NULL,
+    -- Fingerprint of the system prompt (profile included); not part of the key.
+    profile_hash TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (job_id, stage, model, prompt_version)
 );
 
@@ -149,6 +151,7 @@ _ADDED_COLUMNS = (
     ("jobs", "last_run_id", "INTEGER"),
     ("jobs", "missed_runs", "INTEGER NOT NULL DEFAULT 0"),
     ("reports", "note_counts", "TEXT"),
+    ("ai_verdicts", "profile_hash", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -356,23 +359,32 @@ class Store:
     def save_verdict(self, v: AIVerdict) -> None:
         with self.tx() as c:
             c.execute(
-                "INSERT OR REPLACE INTO ai_verdicts (job_id, stage, model, prompt_version, relevant, score, created_at, data) VALUES (?,?,?,?,?,?,?,?)",
-                (v.job_id, v.stage, v.model, v.prompt_version, int(v.relevant), v.score, v.created_at.isoformat(), v.model_dump_json()),
+                "INSERT OR REPLACE INTO ai_verdicts (job_id, stage, model, prompt_version, relevant, score, created_at, data,"
+                " profile_hash) VALUES (?,?,?,?,?,?,?,?,?)",
+                (v.job_id, v.stage, v.model, v.prompt_version, int(v.relevant), v.score, v.created_at.isoformat(), v.model_dump_json(),
+                 v.profile_hash),
             )
 
     def verdicts(self, stage: str,
-                 prompt_version: str | Sequence[str] | None = None) -> dict[str, AIVerdict]:
-        """Latest verdict per job for ``stage``, optionally restricted by prompt version.
+                 prompt_version: str | Sequence[str] | None = None, *,
+                 profile_hash: str | None = None) -> dict[str, AIVerdict]:
+        """Latest verdict per job for ``stage``, optionally restricted by prompt version and profile.
 
         ``prompt_version`` takes one version or a sequence of them
         (:data:`~jobscraper.ai.prompts.COMPATIBLE_PROMPT_VERSIONS`, so a wording change that kept
         the scoring scale does not hide the verdicts written before it); None reads every version.
+        ``profile_hash`` keeps only the verdicts written under that system-prompt fingerprint
+        (``""`` selects the ones written before the stamp existed); None reads every one. Both
+        filters apply together, and the latest verdict is picked among what is left.
         """
         sql, args = "SELECT data FROM ai_verdicts WHERE stage=?", [stage]
         if prompt_version:
             versions = [prompt_version] if isinstance(prompt_version, str) else list(prompt_version)
             sql += f" AND prompt_version IN ({','.join('?' * len(versions))})"
             args.extend(versions)
+        if profile_hash is not None:
+            sql += " AND profile_hash=?"
+            args.append(profile_hash)
         out: dict[str, AIVerdict] = {}
         for row in self.conn.execute(sql + " ORDER BY created_at", args):
             v = AIVerdict.model_validate_json(row["data"])

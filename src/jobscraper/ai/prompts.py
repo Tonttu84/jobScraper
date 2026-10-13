@@ -15,6 +15,7 @@ language and location bullets are generated from the same policies the rule filt
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 
 from jobscraper.ai.schemas import criterion_label
@@ -248,6 +249,19 @@ def system_prompt(stage: str, profile: Profile) -> str:
         # (and so for refine, which reuses this prompt).
         body += _dossier_block(profile) + _rubric_block(profile)
     return head + body
+
+
+def profile_fingerprint(stage: str, profile: Profile) -> str:
+    """First 12 hex chars of the sha256 of ``system_prompt(stage, profile)``.
+
+    :data:`PROMPT_VERSION` is bumped by hand when the wording changes, but the system prompt also
+    embeds the candidate — CV, dossier, weights, deal-breakers, policies — and editing those bumps
+    nothing. Every verdict is stamped with this, so the ones written under another profile can be
+    told apart. Each stage hashes its own prompt: the screen never sees the dossier, so a dossier
+    edit leaves its fingerprint alone, and refine (rank prompt + :data:`REFINE_SYSTEM`) differs
+    from rank.
+    """
+    return hashlib.sha256(system_prompt(stage, profile).encode("utf-8")).hexdigest()[:12]
 
 
 def _deadline_note(signals: dict) -> str:

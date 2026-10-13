@@ -375,3 +375,15 @@ def test_the_position_survives_a_store_round_trip(tmp_path):
     store.save_verdict(_verdict("refine", 85, position=3))
     assert store.verdicts("refine")["a"].position == 3
     store.close()
+
+
+def test_refine_verdicts_carry_the_refine_profile_hash(stage, monkeypatch):
+    from jobscraper.ai.prompts import profile_fingerprint
+
+    jobs = [_job(1), _job(2)]
+    monkeypatch.setattr(stage.client.messages, "parse",
+                        lambda **kw: _response(_refinement(jobs, [80, 60])))
+    verdicts = stage.run(jobs, {})
+    expected = profile_fingerprint("refine", stage.profile)
+    assert [v.profile_hash for v in verdicts] == [expected, expected]
+    assert set(stage.store.verdicts("refine", profile_hash=expected)) == {j.id for j in jobs}

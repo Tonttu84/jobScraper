@@ -6,6 +6,7 @@
     jobscraper audit-drops          # sample rule-dropped jobs to label by hand (--score grades them)
     jobscraper audit-prior          # does the queue's lexical prior order better than the screen score?
     jobscraper eval                 # screen P/R and rank P@k against the web UI's applied/skipped decisions
+    jobscraper compare-verdicts     # two verdict sets (prompt version / profile hash) side by side
     jobscraper prefilter            # Sonnet pass over rule survivors (--batch: half price, async)
     jobscraper rank                 # Opus pass in windows, until the top stops gaining entrants
     jobscraper refine               # one request that ranks the shortlist against itself
@@ -15,7 +16,7 @@
     jobscraper facets               # recompute the deterministic facets (backfill an old DB)
     jobscraper serve                # web UI over data/jobs.db
     jobscraper profiles             # candidate profiles under config/profiles
-    jobscraper profile-init NAME    # start a new profile from the default config
+    jobscraper profile-init NAME    # start a new profile from config/profile.example.yaml
 
 Every command takes a global --profile NAME (or $JOBSCRAPER_PROFILE), which moves config, data
 and results into config/profiles/NAME/, data/profiles/NAME/ and results/NAME/.
@@ -528,7 +529,11 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
     """
     _setup_logging(verbose)
     from jobscraper.ai.client import AIStage, estimate_cost
-    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS, rank_anchor_block
+    from jobscraper.ai.prompts import (
+        COMPATIBLE_PROMPT_VERSIONS,
+        profile_fingerprint,
+        rank_anchor_block,
+    )
     from jobscraper.prior import queue_prior
     from jobscraper.report import (
         RANK_TOP_WATCH,
@@ -537,6 +542,7 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
         miss_run,
         rank_anchors,
         rank_queue,
+        same_profile,
     )
 
     settings = load_settings()
@@ -558,9 +564,12 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
     budget = top or ai.rank_budget  # --top names the whole round
     # Fixed for the round, like `refined`: every window is graded against the same reference
     # scores, so a weak window cannot inflate itself into the top and a strong one is not
-    # flattened to fill the range.
+    # flattened to fill the range. Only verdicts written under the current profile qualify: after
+    # a profile change (or on the first round after the stamp existed) the round runs with no
+    # anchors, and its own verdicts become the next round's.
+    current = same_profile(ranked, profile_fingerprint("rank", settings.profile))
     stage = AIStage("rank", settings.profile, store, model=model,
-                    preamble=rank_anchor_block(rank_anchors(jobs, ranked)))
+                    preamble=rank_anchor_block(rank_anchors(jobs, current)))
     before, _edge = effective_top(jobs, filters, ranked, refined, top=n)
     opening = not ranked  # nothing ranked yet: the first window opens at ai.rank_top_n
     windows: list[tuple[int, int]] = []
@@ -910,20 +919,27 @@ def profiles() -> None:
 
 @app.command("profile-init")
 def profile_init(name: str = typer.Argument(..., help="Name of the new profile")) -> None:
-    """Copy the default config/profile.yaml and config/sources.yaml into config/profiles/NAME/."""
+    """Start config/profiles/NAME/ from the template config/profile.example.yaml and config/sources.yaml.
+
+    The new profile.yaml is the template, never the default config/profile.yaml: that file is the
+    owner's own CV, dossier and weights, and a new candidate must not start from them. The boards
+    in sources.yaml are not personal, so they are copied as they are.
+    """
     base = config.base_paths()
     try:
         dst = config.profile_dir(name, base)
     except config.ProfileError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    sources = {"profile.yaml": base.config / "profile.example.yaml",
+               "sources.yaml": base.config / "sources.yaml"}
     for filename in config.PROFILE_FILES:
-        if not (base.config / filename).is_file():
-            raise typer.BadParameter(f"{base.config / filename} does not exist; nothing to copy from")
+        if not sources[filename].is_file():
+            raise typer.BadParameter(f"{sources[filename]} does not exist; nothing to copy from")
         if (dst / filename).exists():
             raise typer.BadParameter(f"{dst / filename} already exists; refusing to overwrite")
     dst.mkdir(parents=True, exist_ok=True)
     for filename in config.PROFILE_FILES:
-        shutil.copyfile(base.config / filename, dst / filename)
+        shutil.copyfile(sources[filename], dst / filename)
     console.print(f"created {dst} — edit profile.yaml, then run commands with --profile {name}")
 
 
@@ -1089,6 +1105,86 @@ def eval_cmd(
         console.print(f"wrote {json_out}", soft_wrap=True)
     # One line to paste into the commit message of the change being measured.
     console.print(eval_summary(out), soft_wrap=True)
+
+
+def _signed(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:+.2f}"
+
+
+def _side_label(version: str | None, profile_hash: str | None) -> str:
+    parts = [f"prompt_version {version}" if version else "", f"profile_hash {profile_hash}" if profile_hash else ""]
+    return " + ".join(p for p in parts if p)
+
+
+@app.command("compare-verdicts")
+def compare_verdicts_cmd(
+    stage: str = typer.Option("rank", "--stage", help="prefilter, rank or refine"),
+    old: str | None = typer.Option(None, "--old", help="Old side: verdicts under this prompt_version"),
+    new: str | None = typer.Option(None, "--new", help="New side: verdicts under this prompt_version"),
+    old_hash: str | None = typer.Option(None, "--old-hash", help="Old side: verdicts under this profile_hash"),
+    new_hash: str | None = typer.Option(None, "--new-hash", help="New side: verdicts under this profile_hash"),
+    top: int = typer.Option(30, "--top", help="Width of the top-N overlap (rank/refine)"),
+    days: int = typer.Option(60, "--days", help="Only jobs seen within this many days, as the stages read them"),
+) -> None:
+    """Compare two sets of verdicts for the same jobs: before/after a prompt or profile change.
+
+    Each side is the latest verdict per job under a prompt version (--old/--new), a profile
+    fingerprint (--old-hash/--new-hash), or both at once. Prints the counts, the score delta,
+    relevant flips, the top-N overlap and Spearman (rank/refine), the biggest movers, the mean
+    delta per rubric criterion (rank) and the run notes written about these jobs since the old
+    side's newest verdict.
+    """
+    from jobscraper.compare import load_comparison
+
+    if stage not in ("prefilter", "rank", "refine"):
+        raise typer.BadParameter(f"--stage must be prefilter, rank or refine, not {stage!r}")
+    if not (old or old_hash) or not (new or new_hash):
+        raise typer.BadParameter("each side needs --old/--old-hash and --new/--new-hash (either or both)")
+    store = Store()
+    try:
+        jobs, _filters = _load_state(store, days)
+        out = load_comparison(store, jobs, stage=stage, old_version=old, old_hash=old_hash,
+                              new_version=new, new_hash=new_hash, top=top)
+    finally:
+        store.close()
+
+    def say(text: str) -> None:
+        console.print(text, soft_wrap=True, markup=False, highlight=False)
+
+    counts = out["counts"]
+    say(f"compare-verdicts {stage}: old = {_side_label(old, old_hash)}; new = {_side_label(new, new_hash)}")
+    say(f"jobs seen in the last {days} days: old only {counts['old_only']}, new only "
+        f"{counts['new_only']}, both {counts['both']}")
+    if not counts["both"]:
+        say("nothing to compare — no job carries a verdict on both sides")
+        return
+    delta = out["delta"]
+    sd = "n/a" if delta["sd"] is None else f"{delta['sd']:.2f}"
+    say(f"mean delta (new - old) {_signed(delta['mean'])} (sd {sd}, median {_signed(delta['median'])})")
+    flips = out["flips"]
+    say(f"relevant flips: true→false {flips['true_to_false']}, false→true {flips['false_to_true']}")
+    if out["top"] is not None:
+        say(f"top-{out['top']['n']} overlap (Jaccard) {out['top']['jaccard']:.2f}; "
+            f"Spearman {_rho(out['spearman'])}")
+    if out["movers"]:
+        say("biggest movers:")
+        for m in out["movers"]:
+            say(f"  {m['title']} · {m['company']} · {m['old']} → {m['new']} ({m['delta']:+d})")
+    if out["criteria"]:
+        say("mean delta per criterion (new - old):")
+        for key, row in out["criteria"].items():
+            say(f"  {key}: {_signed(row['mean_delta'])} over {row['n']} jobs")
+    notes = out["notes"]
+    since = notes["since"].isoformat(timespec="minutes")  # set: both sides scored something
+    if notes["total"]:
+        kinds = ", ".join(f"{kind} {n}" for kind, n in notes["by_kind"].items())
+        say(f"{notes['total']} run note{'s' if notes['total'] != 1 else ''} on these jobs since "
+            f"{since} (the old side's newest verdict): {kinds}")
+    else:
+        say(f"no run notes on these jobs since {since} (the old side's newest verdict)")
+    if out["small"]:
+        say(f"hint: fewer than 10 jobs carry a verdict on both sides ({counts['both']}); read these "
+            "numbers as anecdotes, or widen --days")
 
 
 if __name__ == "__main__":

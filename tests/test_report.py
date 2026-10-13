@@ -25,6 +25,7 @@ from jobscraper.report import (
     refine_shortlist,
     render_diff,
     render_new_section,
+    same_profile,
     write_report,
 )
 
@@ -1053,6 +1054,20 @@ def test_rank_anchors_break_a_tie_on_the_higher_score_then_the_id():
               same: make_verdict(same, "rank", 70)}
     picked = rank_anchors(jobs, ranked, targets=(65,))
     assert picked[0][0].id == min(high, same)  # both are 5 away: the higher score, then the id
+
+
+def test_same_profile_keeps_only_verdicts_written_under_the_current_profile_hash(anchor_state):
+    """After a profile change the old scores and summaries are not this profile's scale."""
+    jobs, ranked = anchor_state
+    hashes = dict(zip(ranked, ["cur", "old", "cur", "", "cur", "cur"]))  # the last one is "gone"
+    stamped = {jid: v.model_copy(update={"profile_hash": hashes[jid]}) for jid, v in ranked.items()}
+
+    current = same_profile(stamped, "cur")
+
+    assert set(current) == {jid for jid, h in hashes.items() if h == "cur"}
+    assert same_profile(stamped, "") == {}  # an unstamped verdict never qualifies
+    assert [j.source_id for j, _v in rank_anchors(jobs, current)] == ["a", "c", "e"]
+    assert rank_anchors(jobs, same_profile(stamped, "new")) == []  # the first window after a change
 
 
 def test_rank_anchors_return_what_there_is_and_nothing_at_all_when_nothing_is_ranked():
