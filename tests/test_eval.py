@@ -336,3 +336,76 @@ def test_eval_rejects_a_missing_decisions_file(data_dir, tmp_path) -> None:
     result = runner.invoke(cli_mod.app, ["--db", str(db), "eval", "--decisions",
                                          str(tmp_path / "nope.db")])
     assert result.exit_code != 0
+
+
+# ------------------------------------------------------------------ skip reasons
+
+
+def with_reasons(state: dict) -> dict:
+    """Job 3 (skipped, effective 60) for the stack; job 5 (skipped, never ranked) for the stack
+    and the pay; bob's superseded skip of job 9 carries a reason that must not count."""
+    j = state["ids"]
+    reasons = {j[3]: ["wrong_stack"], j[5]: ["wrong_stack", "pay"]}
+    state["decisions"] = [
+        d.model_copy(update={"reasons": reasons.get(d.job_id, ["location"] if d.user == "bob" else [])})
+        for d in state["decisions"]
+    ]
+    return state
+
+
+def test_skip_reasons_are_counted_over_the_latest_skips_with_their_mean_score() -> None:
+    out = run_eval(with_reasons(build_state()))["skip_reasons"]
+    assert out["skipped"] == 2 and out["with_reasons"] == 2
+    assert out["reasons"] == [
+        {"reason": "wrong_stack", "label": "Wrong stack", "count": 2, "scored": 1,
+         "mean_score": pytest.approx(60)},
+        {"reason": "pay", "label": "Pay", "count": 1, "scored": 0, "mean_score": None},
+    ]
+    json.dumps(out)
+
+
+def test_skip_reasons_without_any_reason_recorded() -> None:
+    out = run_eval(build_state())["skip_reasons"]
+    assert out == {"skipped": 2, "with_reasons": 0, "reasons": []}
+    empty = audit.decision_eval([], {}, {}, {}, {}, [], Profile(name="T", summary=""))
+    assert empty["skip_reasons"] == {"skipped": 0, "with_reasons": 0, "reasons": []}
+
+
+def build_db_with_reasons(path: Path) -> None:
+    build_db(path)
+    s = Store(path)
+    try:
+        save_decisions(s, with_reasons(build_state())["decisions"])
+    finally:
+        s.close()
+
+
+def test_eval_prints_the_skip_reasons_table(data_dir) -> None:
+    db = data_dir / "jobs.db"
+    build_db_with_reasons(db)
+    result = runner.invoke(cli_mod.app, ["--db", str(db), "eval", "--min-decisions", "5"], env=WIDE)
+    assert result.exit_code == 0, result.output
+    assert "Skip reasons" in result.output
+    lines = {line.split("│")[1].strip(): line for line in result.output.splitlines()
+             if line.count("│") >= 4}
+    assert "2" in lines["Wrong stack"] and "60" in lines["Wrong stack"]
+    assert "—" in lines["Pay"]  # no scored job behind it
+    assert "2 of 2 skipped decisions carry a reason" in result.output
+
+
+def test_eval_says_so_when_no_skip_carries_a_reason(data_dir) -> None:
+    db = data_dir / "jobs.db"
+    build_db(db)
+    result = runner.invoke(cli_mod.app, ["--db", str(db), "eval", "--min-decisions", "5"], env=WIDE)
+    assert result.exit_code == 0, result.output
+    assert "skip reasons: none of the 2 skipped decisions carries a reason yet" in result.output
+
+
+def test_eval_shows_skip_reasons_even_below_the_grading_minimum(data_dir) -> None:
+    """Counting reasons needs no minimum: it is the data the owner is collecting."""
+    db = data_dir / "jobs.db"
+    build_db_with_reasons(db)
+    result = runner.invoke(cli_mod.app, ["--db", str(db), "eval"], env=WIDE)
+    assert result.exit_code == 0, result.output
+    assert "Skip reasons" in result.output and "at least 10" in result.output
+    assert "screen P" not in result.output

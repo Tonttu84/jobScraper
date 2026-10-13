@@ -13,6 +13,7 @@ from pathlib import Path
 
 from jobscraper.config import paths
 from jobscraper.models import (
+    SKIP_REASONS,
     AIVerdict,
     Decision,
     FilterResult,
@@ -104,6 +105,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     status TEXT NOT NULL,
     note TEXT,
     updated_at TEXT NOT NULL,
+    reasons TEXT NOT NULL DEFAULT '[]',  -- JSON list of models.SKIP_REASONS
     PRIMARY KEY (job_id, user)
 );
 
@@ -152,7 +154,18 @@ _ADDED_COLUMNS = (
     ("jobs", "missed_runs", "INTEGER NOT NULL DEFAULT 0"),
     ("reports", "note_counts", "TEXT"),
     ("ai_verdicts", "profile_hash", "TEXT NOT NULL DEFAULT ''"),
+    ("decisions", "reasons", "TEXT NOT NULL DEFAULT '[]'"),
 )
+
+
+def _read_reasons(raw: str | None) -> list[str]:
+    """The stored JSON list, keeping only reasons the vocabulary still knows: a hand edit or a
+    retired reason must not take the whole decision list down with a validation error."""
+    try:
+        value = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    return [r for r in value if r in SKIP_REASONS] if isinstance(value, list) else []
 
 
 def _now() -> str:
@@ -262,8 +275,13 @@ class Store:
             decisions_path.parent.mkdir(parents=True, exist_ok=True)
             self.conn.execute("ATTACH DATABASE ? AS dec", (_uri(decisions_path, "rwc"),))
             self.conn.execute(f"CREATE TABLE IF NOT EXISTS dec.decisions ({_DECISIONS_DDL})")
-            self.conn.commit()
+            # The sidecar outlives every run database (data/serve/decisions.db holds the owner's
+            # real decisions), so it is migrated on open like a main database, rows kept.
+            self._add_missing_columns("dec", only="decisions")
             self._decisions = "dec.decisions"
+        # A read-only copy without a sidecar is never migrated: its decisions may lack reasons.
+        schema = "dec" if decisions_path is not None else "main"
+        self._decision_reasons = "reasons" in self._columns(schema, "decisions")
 
     def _migrate(self) -> None:
         """Add the columns ``CREATE TABLE IF NOT EXISTS`` cannot add to a table that exists.
@@ -271,10 +289,23 @@ class Store:
         A database written by an earlier version keeps its rows; only the new column is empty.
         A read-only copy is never migrated, so every reader treats a missing column as unknown.
         """
+        self._add_missing_columns("main")
+
+    def _columns(self, schema: str, table: str) -> set[str]:
+        return {row["name"] for row in self.conn.execute(f"PRAGMA {schema}.table_info({table})")}
+
+    def _add_missing_columns(self, schema: str, *, only: str | None = None) -> None:
+        """ALTER in every :data:`_ADDED_COLUMNS` entry the tables of ``schema`` lack (``only``:
+        just that table's). Another request that added the column first is not an error."""
         for table, column, decl in _ADDED_COLUMNS:
-            have = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
-            if column not in have:
-                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            if only is not None and table != only:
+                continue
+            if column not in self._columns(schema, table):
+                try:
+                    self.conn.execute(f"ALTER TABLE {schema}.{table} ADD COLUMN {column} {decl}")
+                except sqlite3.OperationalError as exc:  # pragma: no cover - a concurrent open won
+                    if "duplicate column" not in str(exc):
+                        raise
         self.conn.commit()
 
     @contextmanager
@@ -440,8 +471,10 @@ class Store:
         stored = d.model_copy(update={"updated_at": datetime.now(UTC)})
         with self.tx() as c:
             c.execute(
-                f"INSERT OR REPLACE INTO {self._decisions} (job_id, user, status, note, updated_at) VALUES (?,?,?,?,?)",
-                (stored.job_id, stored.user, stored.status, stored.note, stored.updated_at.isoformat()),
+                f"INSERT OR REPLACE INTO {self._decisions} (job_id, user, status, note, updated_at, reasons)"
+                " VALUES (?,?,?,?,?,?)",
+                (stored.job_id, stored.user, stored.status, stored.note, stored.updated_at.isoformat(),
+                 json.dumps(list(stored.reasons))),
             )
         return stored
 
@@ -452,12 +485,18 @@ class Store:
         return cur.rowcount > 0
 
     def decisions(self, user: str | None = None) -> list[Decision]:
-        sql, args = f"SELECT job_id, user, status, note, updated_at FROM {self._decisions}", []
+        reasons = ", reasons" if self._decision_reasons else ""
+        sql, args = f"SELECT job_id, user, status, note, updated_at{reasons} FROM {self._decisions}", []
         if user is not None:
             sql += " WHERE user=?"
             args.append(user)
         sql += " ORDER BY updated_at DESC, job_id"
-        return [Decision(**dict(row)) for row in self.conn.execute(sql, args)]
+        out = []
+        for row in self.conn.execute(sql, args):
+            fields = dict(row)
+            fields["reasons"] = _read_reasons(fields.get("reasons"))
+            out.append(Decision(**fields))
+        return out
 
     def decision_users(self) -> list[str]:
         return [r["user"] for r in self.conn.execute(f"SELECT DISTINCT user FROM {self._decisions} ORDER BY user")]

@@ -5,9 +5,9 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 RemoteKind = Literal["remote", "hybrid", "onsite", "unknown"]
 
@@ -139,6 +139,30 @@ DecisionStatus = Literal[
 ]
 
 
+#: Why the owner passed on a posting — one tap each in the web UI, 0..n per ``skipped`` decision.
+#: The only record of *why* a skip happened; collected now so the ranking prompt can later learn
+#: from them (and so the questionnaire's "what makes you skip a posting" has data behind it).
+#: ``other`` is meant to come with a ``note`` saying what it was (not enforced). Append new
+#: reasons at the end, before ``other``; a stored reason that leaves the list is dropped on read.
+SkipReason = Literal[
+    "wrong_stack", "wrong_level", "location", "consultancy", "company",
+    "duplicate_or_applied", "posting_gone", "pay", "other",
+]
+SKIP_REASONS: tuple[str, ...] = get_args(SkipReason)
+#: Short UI labels, in :data:`SKIP_REASONS` order (``/api/meta`` serves them, the page never hardcodes them).
+SKIP_REASON_LABELS: dict[str, str] = {
+    "wrong_stack": "Wrong stack",
+    "wrong_level": "Wrong level",
+    "location": "Location",
+    "consultancy": "Consultancy",
+    "company": "Company",
+    "duplicate_or_applied": "Duplicate / already applied",
+    "posting_gone": "Posting gone",
+    "pay": "Pay",
+    "other": "Other",
+}
+
+
 class Decision(BaseModel):
     """What one user decided about one job (the clickable state in the web UI)."""
 
@@ -146,7 +170,17 @@ class Decision(BaseModel):
     user: str = Field(description="Free-form handle chosen in the UI; several students can share one DB")
     status: DecisionStatus
     note: str | None = None
+    reasons: list[SkipReason] = Field(
+        default_factory=list,
+        description="Why the job was skipped (SKIP_REASONS), kept in vocabulary order without "
+                    "repeats. Allowed with any status; the UI only offers them for 'skipped'",
+    )
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("reasons")
+    @classmethod
+    def _vocabulary_order(cls, value: list[str]) -> list[str]:
+        return [r for r in SKIP_REASONS if r in value]
 
 
 ReportSection = Literal["ranked", "prefilter", "review"]

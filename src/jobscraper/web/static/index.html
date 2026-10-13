@@ -43,7 +43,7 @@
   aside h2:first-child { margin-top: 0; }
   aside label { display: block; font-size: 14px; }
   aside select[multiple] { width: 100%; height: 92px; }
-  aside #f-decision { height: 118px; }
+  aside #f-decision, aside #f-reason { height: 118px; }
   .note-line { font-size: 12px; margin-top: 4px; }
   aside input[type=text], aside input[type=number], aside select:not([multiple]) { width: 100%; }
   main { flex: 1; min-width: 0; }
@@ -100,6 +100,11 @@
   .actions button:hover { border-color: var(--accent); color: var(--accent); }
   .actions button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .actions button.toggle { color: var(--muted); }
+  /* Why a job was skipped: one tap each, only on a skipped card, a row of small chips. */
+  .reasons { margin-top: 6px; align-items: center; }
+  .reasons .why { font-size: 12px; }
+  .reasons .chip:hover { border-color: var(--accent); }
+  .reasons .chip.on:hover { color: #fff; }
   /* 120, not 160: with seven status buttons the row has ~157px left, and a wider minimum
      pushed the note onto a second line on every card. */
   .actions input.note { flex: 1; min-width: 120px; }
@@ -162,6 +167,10 @@
     <select id="f-decision" multiple></select>
     <div id="decision-note" class="muted note-line">applies once you pick a handle</div>
 
+    <h2>Skip reason</h2>
+    <select id="f-reason" multiple></select>
+    <div class="muted note-line">shows the jobs you skipped for any of these</div>
+
     <h2>Search</h2>
     <input type="text" id="f-q" placeholder="title or company">
 
@@ -195,6 +204,10 @@ var UI = { preset: "student", default_languages: ["en"], web_dev_toggle: true };
 var STATUSES = ["applied", "skipped", "closed", "interested", "interview", "rejected", "offer"];
 // Marked as dead ends: still selectable, just not part of the default view.
 var DECISIONS_OFF_BY_DEFAULT = ["skipped", "closed", "rejected"];
+
+// Why a job was skipped: [{key, label}] in chip order, from /api/meta's skip_reasons — the page
+// never hardcodes them. Empty (an old server) means no chips and an empty filter box.
+var SKIP_REASONS = [];
 
 // ISO-3166 alpha-2 → the name to show. The API keeps receiving the code (the option value);
 // this only decides what the reader sees. Europe in full, plus the places the sources reach.
@@ -310,6 +323,13 @@ function query(extra) {
   if (handle()) { p.set("user", handle()); }
   // Without a handle the server has no decisions to match on, so the box stays inert.
   var decisions = selectedValues($("f-decision"));
+  // Asking for a skip reason is asking for skipped jobs: they are off in the default decision
+  // view, so the request lets them through rather than answering "nothing matches".
+  var reasons = selectedValues($("f-reason"));
+  if (reasons.length && handle()) {
+    p.set("reason", reasons.join(","));
+    if (decisions.length && decisions.indexOf("skipped") < 0) { decisions.push("skipped"); }
+  }
   if (decisions.length && handle()) { p.set("decision", decisions.join(",")); }
   for (var key in (extra || {})) { p.set(key, extra[key]); }
   return p.toString();
@@ -442,7 +462,44 @@ function cardHtml(job) {
       '<span class="stage" title="How far the pipeline took this job">' + esc(stageLabel(job)) + "</span>" +
     "</div>" +
     '<div class="actions">' + actions + "</div>" +
+    reasonsHtml(job) +
     '<div class="detail" hidden></div>';
+}
+
+// The skip-reason chips: only on a skipped card, one toggle per reason from /api/meta.
+function reasonsHtml(job) {
+  if (!job.decision || job.decision.status !== "skipped" || !SKIP_REASONS.length) { return ""; }
+  var have = job.decision.reasons || [];
+  var chips = '<span class="muted why">why?</span>';
+  for (var i = 0; i < SKIP_REASONS.length; i++) {
+    var key = SKIP_REASONS[i].key;
+    chips += '<button type="button" class="chip reason' + (have.indexOf(key) >= 0 ? " on" : "") +
+      '" data-reason="' + esc(key) + '">' + esc(SKIP_REASONS[i].label) + "</button>";
+  }
+  return '<div class="chips reasons">' + chips + "</div>";
+}
+
+function cardReasons(card) {
+  var out = [];
+  var chips = card.querySelectorAll("button.reason.on");
+  for (var i = 0; i < chips.length; i++) { out.push(chips[i].dataset.reason); }
+  return out;
+}
+
+// A chip re-saves the skip with the new reason set (and whatever the note box holds). "Other"
+// says nothing on its own, so switching it on hands over to the note box for the words.
+function toggleReason(card, chip) {
+  if (!needHandle(card)) { return; }
+  chip.classList.toggle("on");
+  var other = chip.dataset.reason === "other" && chip.classList.contains("on");
+  var note = card.querySelector("input.note");
+  var saved = saveDecision(card, "skipped", note ? note.value : "", cardReasons(card));
+  if (other && saved) {
+    saved.then(function () {
+      var box = card.querySelector("input.note");
+      if (box) { box.focus(); }
+    });
+  }
 }
 
 function detailHtml(job) {
@@ -476,7 +533,9 @@ function detailHtml(job) {
   return parts.join("");
 }
 
-function saveDecision(card, status, note) {
+// Skip reasons belong to a skip: any other status is saved without them, so a skip that turns
+// into "applied" does not keep a hidden "wrong stack" in the labelled data.
+function saveDecision(card, status, note, reasons) {
   if (!needHandle(card)) { return; }
   var id = card.dataset.id;
   var url = "/api/jobs/" + encodeURIComponent(id) + "/decision";
@@ -485,7 +544,8 @@ function saveDecision(card, status, note) {
     request = fetch(url, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user: handle(), status: status, note: note || null })
+      body: JSON.stringify({ user: handle(), status: status, note: note || null,
+                             reasons: status === "skipped" ? (reasons || []) : [] })
     });
   } else {
     request = fetch(url + "?user=" + encodeURIComponent(handle()), { method: "DELETE" });
@@ -715,6 +775,17 @@ function buildFilters(meta) {
     ? defaultDecisions(values)
     : savedDecisions.split(",").filter(function (v) { return v; }));
 
+  SKIP_REASONS = meta.skip_reasons || [];
+  var reasonBox = $("f-reason");
+  reasonBox.innerHTML = "";
+  SKIP_REASONS.forEach(function (reason) {
+    var option = document.createElement("option");
+    option.value = reason.key;
+    option.textContent = reason.label;
+    reasonBox.appendChild(option);
+  });
+  selectValues(reasonBox, stored("jobscraper.reasons", "").split(","));
+
   var info = "no stored report — live view";
   if (meta.report) {
     var counts = meta.report.counts || {};
@@ -754,6 +825,10 @@ function wire() {
     store("jobscraper.decisions", selectedValues($("f-decision")).join(","));
     reload();
   });
+  $("f-reason").addEventListener("change", function () {
+    store("jobscraper.reasons", selectedValues($("f-reason")).join(","));
+    reload();
+  });
   $("f-q").addEventListener("input", reload);
   // Saving a decision deliberately leaves the card in place, so a misclick can be taken
   // back before the list moves under the reader. This is how they ask for the catch-up.
@@ -764,7 +839,7 @@ function wire() {
   // Mouse only: a touch browser draws a multiple-select as its own picker, which already toggles
   // per tap — taking the mousedown over there would break it.
   if (window.matchMedia("(pointer: fine)").matches) {
-    [$("f-country"), $("f-remote"), $("f-decision")].forEach(function (select) {
+    [$("f-country"), $("f-remote"), $("f-decision"), $("f-reason")].forEach(function (select) {
       toggleOnClick(select);
     });
   }
@@ -786,9 +861,10 @@ function wire() {
     resetDecisions();
     var chips = $("f-stacks").querySelectorAll(".chip");
     for (var i = 0; i < chips.length; i++) { chips[i].classList.remove("on"); }
-    [$("f-country"), $("f-remote")].forEach(function (select) {
+    [$("f-country"), $("f-remote"), $("f-reason")].forEach(function (select) {
       for (var j = 0; j < select.options.length; j++) { select.options[j].selected = false; }
     });
+    store("jobscraper.reasons", "");
     var boxes = $("f-sections").querySelectorAll("input");
     for (var k = 0; k < boxes.length; k++) { boxes[k].checked = true; }
     load(false);
@@ -798,10 +874,13 @@ function wire() {
     var card = event.target.closest ? event.target.closest(".card") : null;
     if (!card) { return; }
     if (event.target.closest("button.toggle")) { toggleDetail(card); return; }
+    var chip = event.target.closest("button.reason");
+    if (chip) { toggleReason(card, chip); return; }
     var button = event.target.closest("button.act");
     if (button) {
       var note = card.querySelector("input.note");
-      saveDecision(card, button.dataset.status, note ? note.value : "");
+      // Re-clicking "skipped" keeps the reasons already tapped; the other statuses drop them.
+      saveDecision(card, button.dataset.status, note ? note.value : "", cardReasons(card));
       return;
     }
     if (event.target.closest("a") || event.target.closest("input")) { return; }
@@ -811,8 +890,14 @@ function wire() {
     if (!event.target.classList || !event.target.classList.contains("note")) { return; }
     var card = event.target.closest(".card");
     var active = card.querySelector("button.act.on");
-    saveDecision(card, active ? active.dataset.status : "interested", event.target.value);
+    saveDecision(card, active ? active.dataset.status : "interested", event.target.value,
+                 cardReasons(card));
   }, true);
+  // Enter in the note box saves it the way leaving the box does.
+  $("list").addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" || !event.target.classList || !event.target.classList.contains("note")) { return; }
+    event.target.blur();
+  });
 }
 
 fetch("/api/meta")

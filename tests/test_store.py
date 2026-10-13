@@ -884,3 +884,117 @@ def test_an_older_database_gains_the_profile_hash_column_with_its_rows_kept(tmp_
         assert pk == ["job_id", "stage", "model", "prompt_version"]  # the key is unchanged
     finally:
         store.close()
+
+
+# ------------------------------------------------------------------ skip reasons
+
+#: The decisions table as it was before skip reasons, with two rows already in it.
+_PRE_REASONS_DECISIONS = """
+CREATE TABLE decisions (
+    job_id TEXT NOT NULL,
+    user TEXT NOT NULL,
+    status TEXT NOT NULL,
+    note TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (job_id, user)
+);
+INSERT INTO decisions VALUES ('a', 'tont', 'skipped', 'too senior', '2026-10-01T08:00:00+00:00');
+INSERT INTO decisions VALUES ('b', 'tont', 'applied', NULL, '2026-10-02T08:00:00+00:00');
+"""
+
+
+def _pre_reasons_db(path):
+    conn = sqlite3.connect(path)
+    conn.executescript(_PRE_REASONS_DECISIONS)
+    conn.commit()
+    conn.close()
+    return path
+
+
+def _decision_columns(store: Store, schema: str = "main") -> list[str]:
+    return [r["name"] for r in store.conn.execute(f"PRAGMA {schema}.table_info(decisions)")]
+
+
+def test_a_skip_carries_its_reasons_in_vocabulary_order_without_repeats(store):
+    stored = store.save_decision(Decision(job_id="a", user="tont", status="skipped",
+                                          reasons=["pay", "wrong_stack", "pay"]))
+    assert stored.reasons == ["wrong_stack", "pay"]
+    (only,) = store.decisions()
+    assert only.reasons == ["wrong_stack", "pay"]
+    raw = store.conn.execute("SELECT reasons FROM decisions").fetchone()["reasons"]
+    assert json.loads(raw) == ["wrong_stack", "pay"]
+
+
+def test_a_decision_without_reasons_reads_back_an_empty_list(store):
+    store.save_decision(Decision(job_id="a", user="tont", status="applied"))
+    assert store.decisions()[0].reasons == []
+    assert "reasons" in _decision_columns(store)
+
+
+def test_the_reason_vocabulary_is_fixed_and_labelled():
+    from pydantic import ValidationError
+
+    from jobscraper.models import SKIP_REASON_LABELS, SKIP_REASONS
+
+    assert SKIP_REASONS == ("wrong_stack", "wrong_level", "location", "consultancy", "company",
+                            "duplicate_or_applied", "posting_gone", "pay", "other")
+    assert list(SKIP_REASON_LABELS) == list(SKIP_REASONS)
+    assert SKIP_REASON_LABELS["duplicate_or_applied"] == "Duplicate / already applied"
+    with pytest.raises(ValidationError):
+        Decision(job_id="a", user="tont", status="skipped", reasons=["boring"])
+    # allowed with any status: an odd combination, but harmless
+    assert Decision(job_id="a", user="t", status="interested", reasons=["pay"]).reasons == ["pay"]
+
+
+def test_an_older_database_gains_the_reasons_column_with_its_decisions_kept(tmp_path):
+    store = Store(_pre_reasons_db(tmp_path / "old.db"))
+    try:
+        assert "reasons" in _decision_columns(store)
+        kept = {d.job_id: d for d in store.decisions()}
+        assert set(kept) == {"a", "b"}
+        assert kept["a"].note == "too senior" and kept["a"].reasons == []
+        store.save_decision(Decision(job_id="a", user="tont", status="skipped",
+                                     reasons=["wrong_level"]))
+        assert {d.job_id: d.reasons for d in store.decisions()} == {"a": ["wrong_level"], "b": []}
+    finally:
+        store.close()
+
+
+def test_an_older_attached_decisions_database_is_migrated_and_keeps_its_rows(tmp_path):
+    """The web UI's sidecar (data/serve/decisions.db) predates the column too."""
+    main = tmp_path / "run.db"
+    Store(main).close()
+    (tmp_path / "serve").mkdir()
+    sidecar = _pre_reasons_db(tmp_path / "serve" / "decisions.db")
+    ro = Store(main, readonly=True, decisions_path=sidecar)
+    try:
+        assert "reasons" in _decision_columns(ro, "dec")
+        assert sorted(d.job_id for d in ro.decisions()) == ["a", "b"]
+        ro.save_decision(Decision(job_id="b", user="tont", status="skipped", reasons=["pay"]))
+        assert {d.job_id: d.reasons for d in ro.decisions()} == {"a": [], "b": ["pay"]}
+    finally:
+        ro.close()
+    # opening it again finds the column in place and changes nothing
+    again = Store(main, readonly=True, decisions_path=sidecar)
+    try:
+        assert len(again.decisions()) == 2
+    finally:
+        again.close()
+
+
+def test_a_readonly_copy_without_the_column_reads_its_decisions_without_reasons(tmp_path):
+    store = Store(_pre_reasons_db(tmp_path / "ro.db"), readonly=True)
+    try:
+        assert [d.reasons for d in store.decisions()] == [[], []]
+    finally:
+        store.close()
+
+
+def test_a_stored_reason_outside_the_vocabulary_is_dropped_on_read(store):
+    """A hand edit or a later vocabulary must not take the whole decision list down."""
+    store.save_decision(Decision(job_id="a", user="tont", status="skipped", reasons=["pay"]))
+    store.conn.execute("""UPDATE decisions SET reasons='["pay", "retired_reason"]'""")
+    store.conn.execute("""INSERT INTO decisions VALUES ('b', 'tont', 'skipped', NULL,
+                          '2026-10-01T08:00:00+00:00', 'not json')""")
+    store.conn.commit()
+    assert {d.job_id: d.reasons for d in store.decisions()} == {"a": ["pay"], "b": []}

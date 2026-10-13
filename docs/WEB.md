@@ -20,7 +20,7 @@ basic auth when sharing it.
 |---|---|
 | `job_facets` | deterministic filter attributes per job: posting language, required/optional languages, stack tags, `web_dev` (the posting expects web development, i.e. what Full Stack Open prepares you for). Computed by `filter`/`report`, no AI. |
 | `reports` / `report_items` | one row per `jobscraper report` run: counts, cost, prompt version, and the ordered items of each section (`ranked`, `prefilter`, `review`). |
-| `decisions` | `(job_id, user) → status, note, updated_at`. |
+| `decisions` | `(job_id, user) → status, note, updated_at, reasons` (`reasons`: JSON list of skip reasons, `'[]'` by default — see below). |
 
 Stack tags (`facets.STACKS`): `web c_cpp python go rust java dotnet mobile embedded devops data game qa php ruby`.
 `web_dev` is true when `web` is among the tags.
@@ -51,10 +51,10 @@ or repeated parameters.
 
 | method + path | purpose |
 |---|---|
-| `GET /api/meta` | latest report meta, facet values with counts (posting languages, required languages, stacks, countries, remote kinds, sources, sections), known users, decision statuses, `languages_offered` (the codes the page turns into "languages you speak" boxes) and `ui` (how the page presents its profile-fact controls — see below) |
-| `GET /api/jobs` | list `JobView`s (see below) from a report, filtered and sorted by score desc. Params: `report_id` (default latest; if the DB has no report yet the view is built on the fly from the current state), `section`, `langs` (languages the viewer speaks; a job passes when its posting language is unknown or spoken, and every required language is spoken), `stack` (any-of), `web_dev` (`true`/`false`; the UI sends `false` only, when the viewer says they have not done Full Stack Open, and omits it otherwise), `country`, `remote`, `source`, `min_score`, `q` (title/company substring), `user` (whose decisions to attach), `decision` (any-of, comma-separated or repeated: `none` and/or statuses — a job passes when its status, or `none` when this user never decided on it, is in the set; requires `user`; the page sends everything except `skipped`, `closed` and `rejected` by default), `limit` (default 200), `offset`. Response `{ "total": n, "items": [...] }` |
+| `GET /api/meta` | latest report meta, facet values with counts (posting languages, required languages, stacks, countries, remote kinds, sources, sections), known users, decision statuses, `skip_reasons` (`[{"key", "label"}]` in chip order), `languages_offered` (the codes the page turns into "languages you speak" boxes) and `ui` (how the page presents its profile-fact controls — see below) |
+| `GET /api/jobs` | list `JobView`s (see below) from a report, filtered and sorted by score desc. Params: `report_id` (default latest; if the DB has no report yet the view is built on the fly from the current state), `section`, `langs` (languages the viewer speaks; a job passes when its posting language is unknown or spoken, and every required language is spoken), `stack` (any-of), `web_dev` (`true`/`false`; the UI sends `false` only, when the viewer says they have not done Full Stack Open, and omits it otherwise), `country`, `remote`, `source`, `min_score`, `q` (title/company substring), `user` (whose decisions to attach), `decision` (any-of, comma-separated or repeated: `none` and/or statuses — a job passes when its status, or `none` when this user never decided on it, is in the set; requires `user`; the page sends everything except `skipped`, `closed` and `rejected` by default), `reason` (any-of skip reasons, comma-separated or repeated; on top of `decision`, a job passes only when this user's decision carries one of them; requires `user`), `limit` (default 200), `offset`. Response `{ "total": n, "items": [...] }` |
 | `GET /api/jobs/{id}` | one `JobView` including `description`; `?user=` attaches that user's decision |
-| `PUT /api/jobs/{id}/decision` | body `{ "user": "...", "status": "applied", "note": "..." }` → stored `Decision` |
+| `PUT /api/jobs/{id}/decision` | body `{ "user": "...", "status": "skipped", "note": "...", "reasons": ["pay"] }` → stored `Decision` (`reasons` optional, default `[]`; an unknown reason is 422) |
 | `DELETE /api/jobs/{id}/decision?user=...` | clear a decision → 204 |
 | `GET /api/decisions?user=...` | all decisions (one user's when given) |
 | `GET /api/reports` | report history (no items) |
@@ -64,8 +64,25 @@ or repeated parameters.
 posted_at employment_type salary_text tags score section position`, plus nested `filter`
 (`status location_tier reasons signals`), `prefilter` (`score relevant summary concerns`),
 `rank` (`score summary concerns why_apply`), `facets` (`posting_language languages_required
-languages_optional stacks web_dev`), `decision` (`status note updated_at` or `null`).
+languages_optional stacks web_dev`), `decision` (`status note reasons updated_at` or `null`).
 `score` is the rank score when ranked, otherwise the prefilter score, otherwise `null`.
 The verdict summaries travel with every list item (not only with `GET /api/jobs/{id}`), so the
 page can print its one-line teaser under a card — the rank summary when there is one, else the
 prefilter summary, cut at its first sentence or 160 characters — without a request per card.
+
+## Skip reasons
+
+A `skipped` decision records that the owner passed on a posting, but not why — and the why is
+what the ranking needs to learn. So a skipped card shows a row of one-tap chips under its
+decision buttons: **Wrong stack, Wrong level, Location, Consultancy, Company, Duplicate / already
+applied, Posting gone, Pay, Other** (`models.SKIP_REASONS`, labels from `/api/meta`). Each tap
+re-saves the decision with the current set; "Other" moves the cursor to the note box for the
+words. Any other status is saved without reasons, so they never linger hidden on an `applied`.
+They are stored with the decision (`decisions.reasons`, a JSON list) — in `data/serve/decisions.db`
+when serving a directory, which is migrated in place on open (rows kept). The sidebar's "Skip
+reason" box narrows the list to jobs skipped for any of the picked reasons (it lets `skipped`
+through even when the decision box leaves it out), and `jobscraper eval` prints a "Skip reasons"
+table: skips per reason and the mean effective score of those jobs, so a reason the ranker
+cannot see (it scored them high) stands apart from one it already catches. They are collected
+for the deferred questionnaire question "what makes you skip a posting" and, later, as structured
+anchors in the ranking prompt.

@@ -927,3 +927,119 @@ def test_a_touch_browser_keeps_its_own_picker(browser, site):
 
 def test_a_muted_line_says_the_boxes_toggle(page):
     expect(page.locator("#multi-note")).to_have_text("click to toggle — same for remote and decision")
+
+
+# ------------------------------------------------------------------ skip reasons
+
+
+REASON_OPTIONS = [
+    "wrong_stack|Wrong stack", "wrong_level|Wrong level", "location|Location",
+    "consultancy|Consultancy", "company|Company",
+    "duplicate_or_applied|Duplicate / already applied", "posting_gone|Posting gone", "pay|Pay",
+    "other|Other",
+]
+
+
+def stored_decision(page, base_url, job):
+    return page.request.get(f"{base_url}/api/jobs/{job.id}?user=tonttu").json()["decision"]
+
+
+def sign_in(page):
+    """The handle as a returning viewer has it: stored, restored on load. Typing it instead
+    schedules a debounced list reload that can land mid-test and take a just-skipped card away."""
+    page.evaluate("() => localStorage.setItem('jobscraper.user', 'tonttu')")
+    page.reload()
+    expect(page.locator("#user")).to_have_value("tonttu")
+    expect(count(page)).to_contain_text(" of ")
+
+
+def test_skip_reason_chips_show_on_a_skipped_card_toggle_and_survive_a_reload(page, site):
+    base_url, jobs = site
+    sign_in(page)
+    py = card(page, jobs["py"])
+    expect(py.locator("button.reason")).to_have_count(0)  # undecided: no chips
+    py.locator('button.act[data-status="applied"]').click()
+    expect(py.locator("button.act.on")).to_have_attribute("data-status", "applied")
+    expect(py.locator("button.reason")).to_have_count(0)  # other statuses: no chips
+
+    py.locator('button.act[data-status="skipped"]').click()
+    expect(py.locator("button.reason")).to_have_count(9)
+    labels = py.locator("button.reason").evaluate_all("els => els.map(el => el.textContent)")
+    assert labels == [option.split("|")[1] for option in REASON_OPTIONS]
+    expect(py.locator("button.reason.on")).to_have_count(0)
+
+    py.locator('button.reason[data-reason="pay"]').click()
+    expect(py.locator("button.reason.on")).to_have_attribute("data-reason", "pay")
+    assert stored_decision(page, base_url, jobs["py"])["reasons"] == ["pay"]
+    py.locator('button.reason[data-reason="wrong_stack"]').click()
+    expect(py.locator("button.reason.on")).to_have_count(2)
+    py.locator('button.reason[data-reason="pay"]').click()
+    expect(py.locator("button.reason.on")).to_have_count(1)
+    decision = stored_decision(page, base_url, jobs["py"])
+    assert (decision["status"], decision["reasons"]) == ("skipped", ["wrong_stack"])
+
+    # skipped is off in the default view: ask for it, and the chip is still on after a reload
+    page.reload()
+    page.locator("#f-decision").select_option("skipped")
+    expect(count(page)).to_have_text("1 of 1")
+    py = card(page, jobs["py"])
+    expect(py.locator("button.reason.on")).to_have_attribute("data-reason", "wrong_stack")
+
+    # leaving "skipped" drops the chips and the reasons with them
+    py.locator('button.act[data-status="interested"]').click()
+    expect(py.locator("button.reason")).to_have_count(0)
+    assert stored_decision(page, base_url, jobs["py"])["reasons"] == []
+
+
+def test_the_other_reason_hands_over_to_the_note_which_keeps_the_reasons(page, site):
+    base_url, jobs = site
+    sign_in(page)
+    py = card(page, jobs["py"])
+    py.locator('button.act[data-status="skipped"]').click()
+    py.locator('button.reason[data-reason="other"]').click()
+    expect(py.locator("input.note")).to_be_focused()
+    py.locator("input.note").fill("recruiter agency in disguise")
+    py.locator("input.note").press("Enter")
+    expect(py.locator("input.note")).to_have_value("recruiter agency in disguise")
+    decision = stored_decision(page, base_url, jobs["py"])
+    assert (decision["status"], decision["note"], decision["reasons"]) == \
+        ("skipped", "recruiter agency in disguise", ["other"])
+    expect(py.locator("button.reason.on")).to_have_attribute("data-reason", "other")
+
+
+def test_a_chip_without_a_handle_asks_for_one_and_saves_nothing(page, site):
+    base_url, jobs = site
+    sign_in(page)
+    card(page, jobs["py"]).locator('button.act[data-status="skipped"]').click()
+    expect(card(page, jobs["py"]).locator("button.reason")).to_have_count(9)
+    page.locator("#user").fill("")
+    card(page, jobs["py"]).locator('button.reason[data-reason="pay"]').click()
+    expect(card(page, jobs["py"]).locator(".card-hint")).to_have_count(1)
+    assert stored_decision(page, base_url, jobs["py"])["reasons"] == []
+
+
+def test_the_skip_reason_filter_is_built_from_meta_and_finds_jobs_skipped_for_it(page, site):
+    _base_url, jobs = site
+    assert options_of(page, "f-reason") == REASON_OPTIONS
+    assert selected_of(page, "f-reason") == []
+    sign_in(page)
+    for key, reason in (("py", "pay"), ("web", "location")):
+        c = card(page, jobs[key])
+        c.locator('button.act[data-status="skipped"]').click()
+        c.locator(f'button.reason[data-reason="{reason}"]').click()
+        expect(c.locator("button.reason.on")).to_have_count(1)
+
+    # picking a reason shows the jobs skipped for it, although "skipped" is off in Decision
+    page.locator("#f-reason").select_option("pay")
+    expect(count(page)).to_have_text("1 of 1")
+    expect(card(page, jobs["py"])).to_have_count(1)
+    page.locator("#f-reason").select_option(["pay", "location"])
+    expect(count(page)).to_have_text("2 of 2")
+
+    page.reload()
+    assert selected_of(page, "f-reason") == ["location", "pay"]
+    expect(count(page)).to_have_text("2 of 2")
+
+    page.locator("#reset").click()
+    assert selected_of(page, "f-reason") == []
+    expect(count(page)).to_have_text("1 of 1")  # the two skipped ones are out of the default view

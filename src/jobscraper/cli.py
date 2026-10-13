@@ -1057,6 +1057,8 @@ def eval_cmd(
 
     counts = out["counts"]
     if counts["usable"] < min_decisions:
+        # Counting skip reasons needs no minimum: it is the data being collected.
+        _print_skip_reasons(out["skip_reasons"])
         console.print(f"eval: {counts['usable']} usable decisions (closed ones excluded) — at least "
                       f"{min_decisions} are needed for a number worth quoting; record more in the "
                       "web UI or lower --min-decisions", soft_wrap=True)
@@ -1098,6 +1100,7 @@ def eval_cmd(
                   f"mean score positive {num(labelled['mean_positive'])} vs negative "
                   f"{num(labelled['mean_negative'])}, Spearman score vs label {_rho(labelled['spearman'])}, "
                   f"refine offset {ranked['offset']:+.1f}", soft_wrap=True)
+    _print_skip_reasons(out["skip_reasons"])
 
     if json_out is not None:
         json_out.parent.mkdir(parents=True, exist_ok=True)
@@ -1105,6 +1108,21 @@ def eval_cmd(
         console.print(f"wrote {json_out}", soft_wrap=True)
     # One line to paste into the commit message of the change being measured.
     console.print(eval_summary(out), soft_wrap=True)
+
+
+def _print_skip_reasons(skips: dict) -> None:
+    """The "Skip reasons" section of ``eval``: count and mean effective score per reason."""
+    if not skips["with_reasons"]:
+        console.print(f"skip reasons: none of the {skips['skipped']} skipped decisions carries a "
+                      "reason yet (tap them under 'skipped' in the web UI)", soft_wrap=True)
+        return
+    table = Table("reason", "skips", "scored", "mean score", title="Skip reasons")
+    for row in skips["reasons"]:
+        mean = "—" if row["mean_score"] is None else f"{row['mean_score']:.1f}"
+        table.add_row(row["label"], str(row["count"]), str(row["scored"]), mean)
+    console.print(table)
+    console.print(f"{skips['with_reasons']} of {skips['skipped']} skipped decisions carry a reason; "
+                  "a skip with several reasons counts under each", soft_wrap=True)
 
 
 def _signed(value: float | None) -> str:

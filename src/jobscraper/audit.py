@@ -32,7 +32,14 @@ from collections.abc import Collection, Sequence
 from pathlib import Path
 
 from jobscraper.config import Profile
-from jobscraper.models import AIVerdict, Decision, FilterResult, Job
+from jobscraper.models import (
+    SKIP_REASON_LABELS,
+    SKIP_REASONS,
+    AIVerdict,
+    Decision,
+    FilterResult,
+    Job,
+)
 from jobscraper.store import Store
 
 #: Reason template (as built in ``filters/rules.py`` and by ``cli.filter``) → category slug.
@@ -468,7 +475,29 @@ def decision_eval(jobs: list[Job], filters: dict[str, FilterResult],
                                  [1.0 if labels[i] else 0.0 for i in order]),
         },
     }
-    return {"counts": counts, "screen": screen, "rank": ranked}
+    return {"counts": counts, "screen": screen, "rank": ranked,
+            "skip_reasons": skip_reason_counts(merged, scored)}
+
+
+def skip_reason_counts(merged: dict[str, Decision], scored: dict[str, int]) -> dict:
+    """Why the owner skipped, over the latest decision per job whose status is ``skipped``.
+
+    One row per reason that occurs, in vocabulary order: how many skips carry it, how many of
+    those have an effective score, and their mean — so a reason the ranker scores high (it
+    cannot see it) stands apart from one it already scores low. A skip with several reasons
+    counts under each.
+    """
+    skips = [d for d in merged.values() if d.status == "skipped"]
+    rows = []
+    for reason in SKIP_REASONS:
+        ids = [d.job_id for d in skips if reason in d.reasons]
+        if not ids:
+            continue
+        scores = [scored[i] for i in ids if i in scored]
+        rows.append({"reason": reason, "label": SKIP_REASON_LABELS[reason], "count": len(ids),
+                     "scored": len(scores), "mean_score": _mean(scores)})
+    return {"skipped": len(skips), "with_reasons": sum(1 for d in skips if d.reasons),
+            "reasons": rows}
 
 
 def _fmt(value: float | None) -> str:

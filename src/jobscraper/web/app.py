@@ -25,6 +25,8 @@ from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS, PROMPT_VERSION
 from jobscraper.config import WebPreset
 from jobscraper.facets import FACETS_VERSION, compute_facets
 from jobscraper.models import (
+    SKIP_REASON_LABELS,
+    SKIP_REASONS,
     AIVerdict,
     Decision,
     DecisionStatus,
@@ -34,6 +36,7 @@ from jobscraper.models import (
     RemoteKind,
     ReportSection,
     ReportSnapshot,
+    SkipReason,
 )
 from jobscraper.report import (
     build_snapshot,
@@ -139,6 +142,7 @@ class FacetsView(BaseModel):
 class DecisionView(BaseModel):
     status: DecisionStatus
     note: str | None = None
+    reasons: list[SkipReason] = Field(default_factory=list)
     updated_at: datetime
 
 
@@ -207,6 +211,16 @@ class UIConfig(BaseModel):
     )
 
 
+class SkipReasonView(BaseModel):
+    key: SkipReason
+    label: str
+
+
+SKIP_REASON_VIEWS: list[SkipReasonView] = [
+    SkipReasonView(key=key, label=SKIP_REASON_LABELS[key]) for key in SKIP_REASONS  # type: ignore[arg-type]
+]
+
+
 class Meta(BaseModel):
     """Everything the filter panel needs in one request."""
 
@@ -229,6 +243,10 @@ class Meta(BaseModel):
     )
     users: list[str] = Field(default_factory=list)
     decision_statuses: list[str] = Field(default_factory=list)
+    skip_reasons: list[SkipReasonView] = Field(
+        default_factory=lambda: list(SKIP_REASON_VIEWS),
+        description="Why a job can be skipped, in the order the cards show the chips",
+    )
     ui: UIConfig = Field(default_factory=UIConfig)
     facets_version: str = FACETS_VERSION
     database: str | None = Field(None, description="File name of the database being served")
@@ -238,6 +256,7 @@ class DecisionIn(BaseModel):
     user: Handle
     status: DecisionStatus
     note: str | None = None
+    reasons: list[SkipReason] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------------------ view
@@ -382,6 +401,7 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
         "refine": _refine_view(refine, view.refine_offset),
         "facets": facets,
         "decision": DecisionView(status=decision.status, note=decision.note,
+                                 reasons=list(decision.reasons),
                                  updated_at=decision.updated_at) if decision else None,
     }
     if detail:
@@ -428,7 +448,7 @@ def _codes(values: list[str] | None, *, upper: bool = False) -> list[str]:
 def _matches(view: View, job: JobView, *, langs: list[str], stack: list[str], section: list[str],
              country: list[str], remote: list[str], source: list[str], web_dev: bool | None,
              evergreen: bool | None, min_score: int | None, q: str | None,
-             decision: list[str]) -> bool:
+             decision: list[str], reason: list[str]) -> bool:
     facets = job.facets
     if langs and not view.facets[job.id].language_ok(langs):
         return False
@@ -452,6 +472,9 @@ def _matches(view: View, job: JobView, *, langs: list[str], stack: list[str], se
         needle = q.lower()
         if needle not in job.title.lower() and needle not in (job.company or "").lower():
             return False
+    # Skip reasons narrow on top of the status filter: a job passes when its decision carries any.
+    if reason and not (job.decision and set(reason) & set(job.decision.reasons)):
+        return False
     # "none" stands for "no decision by this user", so every job has exactly one value here.
     return not decision or (job.decision.status if job.decision else "none") in decision
 
@@ -549,19 +572,22 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
         q: str | None = None,
         user: str | None = None,
         decision: list[str] | None = Query(None),
+        reason: list[str] | None = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         offset: int = Query(0, ge=0),
     ) -> JobList:
-        decisions = _codes(decision)
+        decisions, reasons = _codes(decision), _codes(reason)
         if decisions and not user:
             raise HTTPException(status_code=400, detail="decision= requires user=")
+        if reasons and not user:
+            raise HTTPException(status_code=400, detail="reason= requires user=")
         view = load_view(store, report_id, user)
         jobs = [
             j for j in _sorted_views(view)
             if _matches(view, j, langs=_codes(langs), stack=_codes(stack), section=_codes(section),
                         country=_codes(country, upper=True), remote=_codes(remote),
                         source=_codes(source), web_dev=web_dev, evergreen=evergreen,
-                        min_score=min_score, q=q, decision=decisions)
+                        min_score=min_score, q=q, decision=decisions, reason=reasons)
         ]
         return JobList(total=len(jobs), items=jobs[offset:offset + limit])
 
@@ -585,7 +611,8 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
         if not store.jobs(ids=[job_id]):
             raise HTTPException(status_code=404, detail=f"no job {job_id}")
         return store.save_decision(
-            Decision(job_id=job_id, user=body.user, status=body.status, note=body.note)
+            Decision(job_id=job_id, user=body.user, status=body.status, note=body.note,
+                     reasons=body.reasons)
         )
 
     @app.delete("/api/jobs/{job_id}/decision", status_code=204)

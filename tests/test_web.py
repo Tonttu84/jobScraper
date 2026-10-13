@@ -729,3 +729,77 @@ def test_sections_never_interleave_even_when_a_screen_score_beats_a_rank_score(t
     with TestClient(create_app(db)) as client:
         items = client.get("/api/jobs").json()["items"]
     assert [(i["section"], i["score"]) for i in items[:3]] == [("ranked", 60), ("prefilter", 70), ("prefilter", 55)]
+
+
+# ------------------------------------------------------------------ skip reasons
+
+
+def test_meta_lists_the_skip_reasons_in_order_with_labels(seeded):
+    client, _jobs = seeded
+    reasons = client.get("/api/meta").json()["skip_reasons"]
+    assert [r["key"] for r in reasons] == [
+        "wrong_stack", "wrong_level", "location", "consultancy", "company",
+        "duplicate_or_applied", "posting_gone", "pay", "other",
+    ]
+    assert reasons[0] == {"key": "wrong_stack", "label": "Wrong stack"}
+    assert reasons[5]["label"] == "Duplicate / already applied"
+
+
+def test_a_skip_round_trips_its_reasons_through_every_endpoint(seeded):
+    client, jobs = seeded
+    job_id = jobs["web"].id
+    body = client.put(f"/api/jobs/{job_id}/decision",
+                      json={"user": "bob", "status": "skipped", "note": "Angular shop",
+                            "reasons": ["pay", "wrong_stack"]}).json()
+    assert body["reasons"] == ["wrong_stack", "pay"]  # vocabulary order
+    detail = client.get(f"/api/jobs/{job_id}?user=bob").json()
+    assert detail["decision"]["reasons"] == ["wrong_stack", "pay"]
+    listed = client.get("/api/jobs?user=bob").json()
+    assert next(i for i in listed["items"] if i["id"] == job_id)["decision"]["reasons"] == \
+        ["wrong_stack", "pay"]
+    assert client.get("/api/decisions?user=bob").json()[0]["reasons"] == ["wrong_stack", "pay"]
+
+    # re-PUT with fewer reasons replaces the set
+    again = client.put(f"/api/jobs/{job_id}/decision",
+                       json={"user": "bob", "status": "skipped", "reasons": []}).json()
+    assert again["reasons"] == []
+
+
+def test_a_decision_without_reasons_keeps_the_old_shape(seeded):
+    client, jobs = seeded
+    body = client.put(f"/api/jobs/{jobs['web'].id}/decision",
+                      json={"user": "bob", "status": "applied"}).json()
+    assert body["reasons"] == []
+    seeded_skip = client.get(f"/api/jobs/{jobs['cpp'].id}?user=ada").json()["decision"]
+    assert seeded_skip["reasons"] == []
+
+
+def test_an_unknown_skip_reason_is_422(seeded):
+    client, jobs = seeded
+    resp = client.put(f"/api/jobs/{jobs['web'].id}/decision",
+                      json={"user": "bob", "status": "skipped", "reasons": ["boring"]})
+    assert resp.status_code == 422
+    assert client.get("/api/decisions?user=bob").json() == []
+
+
+def test_reason_filter_narrows_to_decisions_carrying_any_of_them(seeded):
+    client, jobs = seeded
+    put = lambda key, status, reasons: client.put(  # noqa: E731
+        f"/api/jobs/{jobs[key].id}/decision",
+        json={"user": "ada", "status": status, "reasons": reasons})
+    put("cpp", "skipped", ["location"])
+    put("web", "skipped", ["pay", "consultancy"])
+    put("py", "skipped", [])
+
+    assert client.get("/api/jobs?reason=pay").status_code == 400  # needs user=
+    assert ids(client.get("/api/jobs?user=ada&reason=pay").json()) == [jobs["web"].id]
+    assert set(ids(client.get("/api/jobs?user=ada&reason=pay,location").json())) == \
+        {jobs["web"].id, jobs["cpp"].id}
+    assert set(ids(client.get("/api/jobs?user=ada&reason=PAY&reason=location").json())) == \
+        {jobs["web"].id, jobs["cpp"].id}
+    # together with decision=: both must hold
+    assert ids(client.get("/api/jobs?user=ada&decision=none,applied&reason=pay").json()) == []
+    assert ids(client.get("/api/jobs?user=ada&decision=skipped&reason=location").json()) == \
+        [jobs["cpp"].id]
+    # an empty value is no filter at all
+    assert client.get("/api/jobs?reason=").json()["total"] == 4

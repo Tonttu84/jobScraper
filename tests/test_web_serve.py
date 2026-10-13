@@ -80,3 +80,33 @@ def test_single_db_mode_still_works(tmp_path):
         meta = client.get("/api/meta").json()
         assert meta["database"] == "one.db"
         assert client.put(f"/api/jobs/{job_id}/decision", json={"user": "jo", "status": "applied"}).status_code == 200
+
+
+def test_an_older_decisions_sidecar_is_migrated_and_keeps_its_rows(serve_dir):
+    """The owner's data/serve/decisions.db predates skip reasons: opening it adds the column."""
+    import sqlite3
+
+    job_id = _seed(serve_dir / "run.db", "1")
+    conn = sqlite3.connect(serve_dir / "decisions.db")
+    conn.executescript(f"""
+        CREATE TABLE decisions (job_id TEXT NOT NULL, user TEXT NOT NULL, status TEXT NOT NULL,
+                                note TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (job_id, user));
+        INSERT INTO decisions VALUES ('{job_id}', 'jo', 'skipped', 'meh', '2026-10-01T08:00:00+00:00');
+        INSERT INTO decisions VALUES ('other', 'jo', 'applied', NULL, '2026-10-02T08:00:00+00:00');
+    """)
+    conn.commit()
+    conn.close()
+    with TestClient(create_app(serve_dir=serve_dir)) as client:
+        kept = client.get("/api/decisions", params={"user": "jo"}).json()
+        assert sorted((d["job_id"], d["status"], d["reasons"]) for d in kept) == sorted(
+            [(job_id, "skipped", []), ("other", "applied", [])])
+        r = client.put(f"/api/jobs/{job_id}/decision",
+                       json={"user": "jo", "status": "skipped", "note": "meh", "reasons": ["company"]})
+        assert r.status_code == 200, r.text
+        assert client.get(f"/api/jobs/{job_id}", params={"user": "jo"}).json()["decision"]["reasons"] \
+            == ["company"]
+    conn = sqlite3.connect(serve_dir / "decisions.db")
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 2
+    finally:
+        conn.close()
