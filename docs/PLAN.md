@@ -560,6 +560,12 @@ Tasks, one Opus subagent each, sequential (shared files; browser tests fail unde
 each committed after a green `scripts/check.sh`. **All five landed 2026-10-13** (A a404852,
 B 76830af, C 10ddb2e, E 9b27e3b, D below). Follow-up for D: the rule-drop sentinel pool still
 includes age/deadline drops, which are right by construction and dilute the estimate; exclude them.
+Follow-up found 2026-10-13 while re-scraping: with stdout redirected to a file on Windows,
+Python's cp1252 fallback made `console.print("✓ …")` in `_book_fetch` raise UnicodeEncodeError,
+which ended the scrape after the first source and discarded the other 24 fetches (their `runs`
+rows were marked errored by hand). `scripts/scheduled_run.sh` now exports `PYTHONUTF8=1`; the code
+fix (console output must never abort a stage: configure the Console for the stream's encoding or
+catch and degrade to ASCII) is a small TDD task still to do.
 - **A. Pipeline health**: `run_notes` table + Store API; producers: source count drop vs the
   previous complete run (and the takedown guard: a half-returned listing does not count misses),
   source error, empty-description share per source, borderline language drops, rank/refine

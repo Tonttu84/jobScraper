@@ -23,13 +23,16 @@ from jobscraper.config import LanguagePolicy, LocationPolicy, Profile
 from jobscraper.filters.language import LANGUAGE_NAMES
 from jobscraper.models import AIVerdict, FilterResult, Job, mirrored_stage
 
-PROMPT_VERSION = "2026-09-11.1"
+PROMPT_VERSION = "2026-10-13.1"  # dossier + weights in the rank prompt, input_notes/criteria answers, first-seen date
 
 #: Verdicts read as current. A wording change that keeps the scoring scale is added here
 #: instead of re-queueing every ranked job (owner, 2026-09-11: verdicts don't expire with the
 #: prompt, jobs do — they age out); a change that breaks the scale resets this to
 #: (PROMPT_VERSION,) alone.
-COMPATIBLE_PROMPT_VERSIONS: tuple[str, ...] = (PROMPT_VERSION, "2026-09-09.1")
+# 2026-10-13: reset to the new version alone. The owner wants every job re-screened and
+# re-ranked once with the dossier, and the 2026-09-11.1 verdicts kept beside the new ones for
+# `jobscraper compare-verdicts --old 2026-09-11.1 --new 2026-10-13.1`.
+COMPATIBLE_PROMPT_VERSIONS: tuple[str, ...] = (PROMPT_VERSION,)
 
 
 def _language_name(code: str) -> str:

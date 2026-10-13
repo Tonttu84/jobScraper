@@ -16,6 +16,10 @@
 # Any extra arguments go to `jobscraper run`, e.g. `./scripts/scheduled_run.sh --skip-ai`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# 2026-10-13: with stdout redirected to a log, Windows Python falls back to cp1252 and the
+# scrape's "✓ source" line raised UnicodeEncodeError, which ended the whole scrape after the
+# first source. UTF-8 mode makes stdout UTF-8 regardless of the console.
+export PYTHONUTF8=1
 
 if [ -f .env ]; then
   set -a

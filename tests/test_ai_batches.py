@@ -321,9 +321,10 @@ def test_a_verdict_from_a_compatible_prompt_version_still_counts_as_ranked(ranke
                                                                            monkeypatch, capsys):
     """Owner, 2026-09-11: a wording change that keeps the scale does not re-queue the whole list —
     the old verdicts stay in use until their jobs age out."""
-    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
-
-    older = next(v for v in COMPATIBLE_PROMPT_VERSIONS if v != PROMPT_VERSION)
+    # The tuple is reset to the current version alone right now (2026-10-13: everything goes back
+    # through the stages once); the compatibility mechanism itself is what this test guards.
+    older = "0000-00-00.1"
+    monkeypatch.setattr(ai_batches, "COMPATIBLE_PROMPT_VERSIONS", (PROMPT_VERSION, older))
     store = store_mod.Store()
     try:
         store.save_verdict(AIVerdict(job_id=ranked[0].id, stage="rank",
