@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from jobscraper.ai.schemas import criterion_label
 from jobscraper.config import LanguagePolicy, LocationPolicy, Profile
 from jobscraper.filters.language import LANGUAGE_NAMES
-from jobscraper.models import AIVerdict, FilterResult, Job
+from jobscraper.models import AIVerdict, FilterResult, Job, mirrored_stage
 
 PROMPT_VERSION = "2026-09-11.1"
 
@@ -234,6 +234,8 @@ def _rubric_block(profile: Profile) -> str:
 
 
 def system_prompt(stage: str, profile: Profile) -> str:
+    """The stage's system prompt; a sentinel stage gets the one of the stage it mirrors, verbatim."""
+    stage = mirrored_stage(stage)
     if stage == "refine":
         # The refine pass judges the same jobs by the same rules; only the shape of the answer
         # differs, so it reuses the ranker's prompt verbatim and adds its own instructions.
@@ -259,7 +261,7 @@ def profile_fingerprint(stage: str, profile: Profile) -> str:
     nothing. Every verdict is stamped with this, so the ones written under another profile can be
     told apart. Each stage hashes its own prompt: the screen never sees the dossier, so a dossier
     edit leaves its fingerprint alone, and refine (rank prompt + :data:`REFINE_SYSTEM`) differs
-    from rank.
+    from rank. A sentinel stage hashes the prompt of the stage it mirrors, so the two match.
     """
     return hashlib.sha256(system_prompt(stage, profile).encode("utf-8")).hexdigest()[:12]
 
@@ -301,7 +303,14 @@ def _posted_line(job: Job, now: datetime | None) -> str:
     return line
 
 
-def job_prompt(job: Job, fr: FilterResult | None, max_chars: int, now: datetime | None = None) -> str:
+def job_prompt(job: Job, fr: FilterResult | None, max_chars: int, now: datetime | None = None,
+               prefix: str = "") -> str:
+    """One posting as the AI stages read it.
+
+    ``prefix`` (a sentinel's SENTINEL line, see :func:`jobscraper.sentinel.sentinel_prefix`) goes
+    on a line of its own in front; without one the prompt is unchanged, byte for byte.
+    """
+    lead = prefix.rstrip("\n") + "\n" if prefix else ""
     desc = (job.description or "")[:max_chars]
     if job.description and len(job.description) > max_chars:
         desc += "\n[…truncated…]"
@@ -319,7 +328,7 @@ def job_prompt(job: Job, fr: FilterResult | None, max_chars: int, now: datetime 
         meta.append(f"Rule-filter status: {fr.status}; notes: {'; '.join(fr.reasons) or '-'}")
         meta.append(f"Detected signals: {fr.signals}{_deadline_note(fr.signals)}"
                     f"{_evergreen_note(fr.signals)}")
-    return "JOB POSTING\n" + "\n".join(meta) + "\n\nDESCRIPTION\n" + (desc or "(no description available; judge from the title)")
+    return lead + "JOB POSTING\n" + "\n".join(meta) + "\n\nDESCRIPTION\n" + (desc or "(no description available; judge from the title)")
 
 
 #: Head of the reference block every rank batch carries. The bullets under it are postings this

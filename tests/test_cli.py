@@ -294,7 +294,7 @@ def spy_ai(monkeypatch):
     calls: dict[str, dict] = {}
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-    def init(self, stage, profile, store, model=None, preamble="") -> None:
+    def init(self, stage, profile, store, model=None, preamble="", prefixes=None) -> None:
         self.stage = stage
 
     def record(name):
@@ -353,7 +353,7 @@ def spy_rank(monkeypatch):
     calls: dict = {"windows": [], "scored": [], "scores": {}, "force": [], "preambles": []}
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-    def init(self, stage, profile, store, model=None, preamble="") -> None:
+    def init(self, stage, profile, store, model=None, preamble="", prefixes=None) -> None:
         from jobscraper.ai.prompts import profile_fingerprint
 
         self.stage, self.store = stage, store
@@ -1423,7 +1423,7 @@ def test_prefilter_prints_each_verdict_and_honours_max_jobs(data_dir, fake_http,
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     seen: dict[str, int] = {}
 
-    def init(self, stage, profile, store, model=None) -> None:
+    def init(self, stage, profile, store, model=None, preamble="", prefixes=None) -> None:
         self.stage = stage
 
     def run(self, jobs, filters, **kw):
@@ -1936,3 +1936,195 @@ def test_compare_verdicts_over_ten_unchanged_jobs_has_no_movers_and_no_hint(data
     assert result.exit_code == 0, result.output
     assert "both 10" in result.output and "mean delta (new - old) +0.00 (sd 0.00" in result.output
     assert "biggest movers" not in result.output and "hint:" not in result.output
+
+
+# ------------------------------------------------------------------------------ sentinels
+# Each run, a small random sample of rule drops is screened and a sample of screen rejects is
+# ranked, under their own stage names: measurements of the two gates, never candidates.
+
+
+@pytest.fixture
+def spy_sentinel(monkeypatch):
+    """An AIStage that stores a verdict per job under its own stage name, without the API."""
+    from jobscraper.ai import client as ai_client
+    from jobscraper.ai.prompts import PROMPT_VERSION
+    from jobscraper.models import AIVerdict
+
+    calls: dict = {"stages": {}, "prefixes": {}, "scores": {}}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    def init(self, stage, profile, store, model=None, preamble="", prefixes=None) -> None:
+        self.stage, self.store, self.model = stage, store, "fake-model"
+        calls["prefixes"][stage] = dict(prefixes or {})
+
+    def run(self, jobs, filters, *, force=False, progress=None):
+        jobs = list(jobs)
+        calls["stages"][self.stage] = [j.id for j in jobs]
+        out = {}
+        for job in jobs:
+            v = AIVerdict(job_id=job.id, stage=self.stage, model=self.model,
+                          prompt_version=PROMPT_VERSION, relevant=True,
+                          score=calls["scores"].get(job.id, 40), language_ok=True,
+                          seniority_ok=True, location_ok=True, summary=f"{self.stage} says so")
+            self.store.save_verdict(v)
+            out[job.id] = v
+            if progress:
+                progress(v)
+        return out
+
+    monkeypatch.setattr(ai_client.AIStage, "__init__", init)
+    monkeypatch.setattr(ai_client.AIStage, "run", run)
+    return calls
+
+
+def _gate_jobs(drops: int, rejects: int) -> tuple[list, list]:
+    """``drops`` rule-dropped jobs and ``rejects`` kept jobs the screen turned down."""
+    from datetime import UTC, datetime
+
+    from jobscraper.models import Job
+
+    def make(kind: str, i: int) -> Job:
+        return Job(source="teamtailor", source_id=f"{kind}-{i:02d}",
+                   title=f"{kind.title()} Developer {i:02d}",
+                   url=f"https://jobs.example.test/{kind}-{i:02d}", company="Example Oy",
+                   description="We build backend services in Python.", country="FI",
+                   remote="hybrid", posted_at=datetime.now(UTC))
+
+    dropped = [make("dropped", i) for i in range(drops)]
+    rejected = [make("rejected", i) for i in range(rejects)]
+    store = store_mod.Store()
+    try:
+        store.upsert_jobs(dropped + rejected)
+        store.save_filter_results(
+            [FilterResult(job_id=j.id, status="drop", reasons=["asks for 5 years"]) for j in dropped]
+            + [FilterResult(job_id=j.id, status="keep") for j in rejected], "rules-test")
+        for job in rejected:
+            _seed_verdict(store, job, "prefilter", 5, relevant=False, summary="Senior role.")
+    finally:
+        store.close()
+    return dropped, rejected
+
+
+def test_sentinel_screens_rule_drops_and_ranks_screen_rejects(data_dir, spy_sentinel):
+    dropped, rejected = _gate_jobs(4, 3)
+    result = runner.invoke(cli_mod.app, ["sentinel", "--n", "2", "--seed", "7"])
+    assert result.exit_code == 0, result.output
+
+    screened = spy_sentinel["stages"]["sentinel_prefilter"]
+    ranked = spy_sentinel["stages"]["sentinel_rank"]
+    assert len(screened) == 2 and set(screened) <= {j.id for j in dropped}
+    assert len(ranked) == 2 and set(ranked) <= {j.id for j in rejected}
+    prefix = spy_sentinel["prefixes"]["sentinel_prefilter"][screened[0]]
+    assert prefix.startswith("SENTINEL: this posting was rejected by an earlier gate (rule filter: "
+                             "asks for 5 years)")
+    assert "(screen: score 5, Senior role.)" in spy_sentinel["prefixes"]["sentinel_rank"][ranked[0]]
+    assert "sentinel: 2 rule drops screened, 2 screen rejects ranked (seed 7)" in result.output
+
+    store = store_mod.Store()
+    try:
+        assert set(store.verdicts("sentinel_prefilter")) == set(screened)
+        assert set(store.verdicts("sentinel_rank")) == set(ranked)
+        assert store.verdicts("rank") == {}
+    finally:
+        store.close()
+
+
+def test_sentinel_repeats_a_seed_and_skips_jobs_it_already_measured(data_dir, spy_sentinel):
+    _gate_jobs(5, 0)
+    runner.invoke(cli_mod.app, ["sentinel", "--n", "2", "--seed", "3"])
+    first = list(spy_sentinel["stages"]["sentinel_prefilter"])
+    assert "sentinel_rank" not in spy_sentinel["stages"]  # an empty pool costs no stage at all
+
+    result = runner.invoke(cli_mod.app, ["sentinel", "--n", "2", "--seed", "3"])
+    assert result.exit_code == 0, result.output
+    second = spy_sentinel["stages"]["sentinel_prefilter"]
+    assert len(second) == 2 and not set(first) & set(second)  # already measured: out of the pool
+
+
+def test_sentinel_defaults_to_the_profile_sample_and_the_date_seed(data_dir, spy_sentinel, monkeypatch):
+    from jobscraper.sentinel import default_seed
+
+    _gate_jobs(5, 5)
+    _ai_config(monkeypatch, sentinel_sample=1)
+    result = runner.invoke(cli_mod.app, ["sentinel"])
+    assert result.exit_code == 0, result.output
+    assert len(spy_sentinel["stages"]["sentinel_prefilter"]) == 1
+    assert len(spy_sentinel["stages"]["sentinel_rank"]) == 1
+    assert f"(seed {default_seed()})" in result.output
+
+
+def test_sentinel_with_a_zero_sample_does_nothing(data_dir, spy_sentinel, monkeypatch):
+    _gate_jobs(3, 3)
+    _ai_config(monkeypatch, sentinel_sample=0)
+    result = runner.invoke(cli_mod.app, ["sentinel"])
+    assert result.exit_code == 0, result.output
+    assert "sentinel: ai.sentinel_sample is 0 and no --n given — skipped" in result.output
+    assert spy_sentinel["stages"] == {}
+
+
+@pytest.fixture
+def spy_sentinel_cmd(monkeypatch):
+    calls: list[dict] = []
+    monkeypatch.setattr(cli_mod, "sentinel", lambda **kw: calls.append(kw))
+    return calls
+
+
+def test_run_calls_sentinel_after_rank_and_refine(data_dir, fake_http, spy_ai, spy_refine,
+                                                  spy_sentinel_cmd, monkeypatch):
+    _ai_config(monkeypatch, sentinel_sample=3)
+    result = runner.invoke(cli_mod.app, ["run", "arbeitnow", "--days", "12"])
+    assert result.exit_code == 0, result.output
+    assert spy_sentinel_cmd == [{"days": 12, "verbose": False}]
+
+
+def test_run_skips_sentinel_when_switched_off_or_with_skip_ai(data_dir, fake_http, spy_ai, spy_refine,
+                                                              spy_sentinel_cmd, monkeypatch):
+    _ai_config(monkeypatch, sentinel_sample=0)
+    assert runner.invoke(cli_mod.app, ["run", "arbeitnow"]).exit_code == 0
+    _ai_config(monkeypatch, sentinel_sample=3)
+    assert runner.invoke(cli_mod.app, ["run", "arbeitnow", "--skip-ai"]).exit_code == 0
+    assert spy_sentinel_cmd == []
+
+
+def test_report_shows_the_sentinels_and_keeps_them_out_of_everything_else(data_dir, spy_sentinel):
+    dropped, rejected = _gate_jobs(2, 2)
+    spy_sentinel["scores"] = {dropped[0].id: 60, dropped[1].id: 10,
+                              rejected[0].id: 82, rejected[1].id: 30}
+    assert runner.invoke(cli_mod.app, ["sentinel", "--n", "5", "--seed", "1"]).exit_code == 0
+    result = runner.invoke(cli_mod.app, ["report"])
+    assert result.exit_code == 0, result.output
+
+    text = next((data_dir / "results").glob("report-*.md")).read_text(encoding="utf-8")
+    section = text[text.index("## Sentinels"):text.index("## Pipeline health")]
+    assert ("- **Rule filter**: 2 drops screened, 1 would have passed the screen (score >= 30 and "
+            "relevant) → estimated false-drop rate 1/2 (50%)") in section
+    assert ("  - Dropped Developer 00 · Example Oy · teamtailor · asks for 5 years · screen 60"
+            in section)
+    assert ("- **Screen**: 2 rejects ranked, 1 scored 70+ → estimated false-reject rate 1/2 (50%)"
+            in section)
+    assert (f"  - [Rejected Developer 00]({rejected[0].url}) · Example Oy · rank 82 · "
+            "sentinel_rank says so") in section
+    rest = text.replace(section, "")
+    assert "## Ranked" not in rest and "sentinel_rank says so" not in rest
+    # the health appendix does not repeat what the Sentinels section already says
+    assert "sentinel_" not in text[text.index("## Pipeline health"):]
+
+    export = (data_dir / "exports" / "filtered.jsonl").read_text(encoding="utf-8")
+    exported = [json.loads(line)["verdict"] for line in export.splitlines()]
+    assert {v["stage"] for v in exported if v} == {"prefilter"}  # the screen rejects' own verdicts
+
+    store = store_mod.Store()
+    try:
+        notes = {n.kind: n for n in store.notes(stage="sentinel")}
+        assert notes["sentinel_rule_filter"].data == {"n": 2, "k": 1}
+        assert notes["sentinel_screen"].data == {"n": 2, "k": 1}
+        assert notes["sentinel_find"].job_id == rejected[0].id
+        report = store.report()
+        assert report.note_counts["sentinel_find"] == 1
+        assert [i for i in report.items if i.section != "review"] == []
+    finally:
+        store.close()
+
+    # the next report has nothing new to say about the gates
+    assert runner.invoke(cli_mod.app, ["report", "--out", str(data_dir / "again.md")]).exit_code == 0
+    assert "No sentinel samples this run." in (data_dir / "again.md").read_text(encoding="utf-8")

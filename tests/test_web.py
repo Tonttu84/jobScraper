@@ -413,6 +413,24 @@ def test_a_refine_score_is_read_on_the_rank_scale_before_the_two_are_averaged(tm
     assert first["score"] == 88                 # round((91 + 85) / 2), not 77
 
 
+def test_a_sentinel_verdict_never_changes_what_a_card_shows(tmp_path):
+    """Sentinels measure the gates; a card's score and verdicts come from the real stages only."""
+    jobs = _seed(tmp_path / "t.db")
+    store = Store(tmp_path / "t.db")
+    for handle in ("web", "cpp", "rev"):
+        store.save_verdict(make_verdict(jobs[handle].id, "sentinel_rank", 3, summary="sentinel says"))
+        store.save_verdict(make_verdict(jobs[handle].id, "sentinel_prefilter", 99, summary="sentinel says"))
+    store.close()
+    with TestClient(create_app(tmp_path / "t.db")) as client:
+        items = {i["id"]: i for i in client.get("/api/jobs").json()["items"]}
+        detail = client.get(f"/api/jobs/{jobs['rev'].id}").json()
+    web, cpp, rev = (items[jobs[h].id] for h in ("web", "cpp", "rev"))
+    assert web["score"] == 91 and web["rank"]["score"] == 91
+    assert cpp["score"] == 55 and cpp["prefilter"]["score"] == 55 and cpp["rank"] is None
+    assert rev["rank"] is None and rev["prefilter"] is None
+    assert "sentinel says" not in str(items) and "sentinel says" not in str(detail)
+
+
 def test_a_job_without_a_refine_verdict_keeps_its_rank_score(seeded):
     client, jobs = seeded
     first = next(i for i in client.get("/api/jobs").json()["items"] if i["id"] == jobs["web"].id)

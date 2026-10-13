@@ -557,7 +557,9 @@ prompt now shows the pipeline's first-seen date). Rank vs refine agree after the
 offset (residual sd 9.3; one job over 20), so disagreement is a health line, not a system.
 
 Tasks, one Opus subagent each, sequential (shared files; browser tests fail under contention),
-each committed after a green `scripts/check.sh`:
+each committed after a green `scripts/check.sh`. **All five landed 2026-10-13** (A a404852,
+B 76830af, C 10ddb2e, E 9b27e3b, D below). Follow-up for D: the rule-drop sentinel pool still
+includes age/deadline drops, which are right by construction and dilute the estimate; exclude them.
 - **A. Pipeline health**: `run_notes` table + Store API; producers: source count drop vs the
   previous complete run (and the takedown guard: a half-returned listing does not count misses),
   source error, empty-description share per source, borderline language drops, rank/refine

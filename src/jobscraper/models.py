@@ -86,11 +86,27 @@ class FilterResult(BaseModel):
     location_tier: int | None = Field(None, description="1=FI/EE, 2=EU/EEA, 3=extended, 0=remote-only")
 
 
+#: Sentinel stage → the stage it mirrors. A sentinel verdict is the mirrored stage's judgement of
+#: a posting the gate *before* that stage rejected (``sentinel_prefilter``: a rule drop screened;
+#: ``sentinel_rank``: a screen reject ranked), stored under its own name so that every read keyed
+#: on ``prefilter``/``rank``/``refine`` — the queue, the shortlist, anchors, the report's
+#: sections, the web cards — never sees it. Measurements of the gates, never candidates (see
+#: :mod:`jobscraper.sentinel`).
+SENTINEL_STAGES: dict[str, str] = {"sentinel_prefilter": "prefilter", "sentinel_rank": "rank"}
+
+AIStageName = Literal["prefilter", "rank", "refine", "sentinel_prefilter", "sentinel_rank"]
+
+
+def mirrored_stage(stage: str) -> str:
+    """The stage whose prompt, schema and model a stage uses: itself, unless it is a sentinel."""
+    return SENTINEL_STAGES.get(stage, stage)
+
+
 class AIVerdict(BaseModel):
     """Structured output of an AI stage for one job."""
 
     job_id: str
-    stage: Literal["prefilter", "rank", "refine"]
+    stage: AIStageName
     model: str
     prompt_version: str
     profile_hash: str = Field(

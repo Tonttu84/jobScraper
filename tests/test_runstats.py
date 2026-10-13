@@ -422,3 +422,20 @@ def test_refresh_writes_the_markdown_next_to_the_jsonl(tmp_path, monkeypatch):
     out = runstats.refresh()
     assert out == tmp_path / "public" / "README.md"
     assert "#1" in out.read_text(encoding="utf-8")
+
+
+def test_collect_carries_the_sentinel_counts_of_the_report(state, settings):
+    """The gate measurements as counts (n sampled, k wrongly rejected), never the finds' text."""
+    state.add_note("sentinel", "sentinel_rule_filter", "10 drops screened, 1 would have passed",
+                   data={"n": 10, "k": 1})
+    state.add_note("sentinel", "sentinel_screen", "8 rejects ranked, 2 scored 70+", data={"n": 8, "k": 2})
+    state.add_note("sentinel", "sentinel_find", "rank 81 · Junior at Example Oy", job_id="x",
+                   data={"score": 81})
+    row = runstats.collect(state, snapshot_for(state), settings, profile=None, usage_path=None)
+    assert row["sentinels"] == {"rule_filter": {"n": 10, "k": 1}, "screen": {"n": 8, "k": 2}}
+    assert "Example Oy" not in json.dumps(row)
+
+
+def test_collect_omits_the_sentinels_when_none_ran(state, settings):
+    row = runstats.collect(state, snapshot_for(state), settings, profile=None, usage_path=None)
+    assert "sentinels" not in row

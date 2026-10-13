@@ -84,6 +84,23 @@ def _rank_round(path: Path | None) -> dict:
     }
 
 
+#: Run-note kind → the key its counts go under in the row's ``sentinels`` block.
+_SENTINEL_GATES = {"sentinel_rule_filter": "rule_filter", "sentinel_screen": "screen"}
+
+
+def _sentinel_counts(store: Store, since: datetime | None) -> dict[str, dict[str, int]]:
+    """``{"rule_filter": {"n", "k"}, "screen": {...}}`` from the sentinel notes of this report;
+    a gate nobody sampled is left out, and so is the block when neither was."""
+    out: dict[str, dict[str, int]] = {}
+    for kind, key in _SENTINEL_GATES.items():
+        for note in store.notes(since=since, kind=kind):
+            data = note.data or {}
+            row = out.setdefault(key, {"n": 0, "k": 0})
+            row["n"] += int(data.get("n", 0))
+            row["k"] += int(data.get("k", 0))
+    return out
+
+
 def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
             profile: str | None, usage_path: Path | None,
             rank_state_path: Path | None = None) -> dict:
@@ -112,6 +129,7 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
     passed = sum(1 for v in prefiltered.values() if v.relevant and v.score >= ai.prefilter_min_score)
     runs = store.latest_runs()
     tokens = _tokens_by_stage(usage_path)
+    sentinels = _sentinel_counts(store, previous.created_at if previous else None)
 
     return {
         "recorded_at": datetime.now(UTC).isoformat(),
@@ -140,6 +158,9 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
         "models": {"prefilter": ai.prefilter_model, "rank": ai.rank_model},
         "cost_usd": round(float(snapshot.cost.get("total", 0.0)), 4),
         **({"tokens_by_stage": tokens} if tokens else {}),
+        # The sentinels' measurement of the two gates, as counts: per gate how many rejects were
+        # judged anyway (n) and how many of them the next stage would have kept (k).
+        **({"sentinels": sentinels} if sentinels else {}),
         "scrape": {
             "sources": len(runs),
             "fetched": sum(r["fetched"] for r in runs),

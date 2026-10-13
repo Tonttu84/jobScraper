@@ -207,6 +207,13 @@ class AIPolicy(BaseModel):
     #: before giving up on reaching a fixed point.
     refine_max_passes: int = 5
     prefilter_min_score: int = 30
+    #: Sentinels: per gate and per run, how many of its rejects the next stage judges anyway —
+    #: rule drops screened by Sonnet (``sentinel_prefilter``) and screen rejects ranked by Opus
+    #: (``sentinel_rank``). Nothing downstream ever sees a gate's false rejects, so this random
+    #: sample is the only measurement of them; the report shows the estimated false-reject rate
+    #: per gate and every sentinel find worth reading. Stored under their own stage names, they
+    #: never enter the queue, the shortlist or the report's sections. 0 turns them off.
+    sentinel_sample: int = Field(10, ge=0)
     concurrency: int = 4
     max_description_chars: int = 6000
     #: Send the prefilter through the Message Batches API (same verdicts, half price, async).

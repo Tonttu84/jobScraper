@@ -10,9 +10,10 @@
     jobscraper prefilter            # Sonnet pass over rule survivors (--batch: half price, async)
     jobscraper rank                 # Opus pass in windows, until the top stops gaining entrants
     jobscraper refine               # one request that ranks the shortlist against itself
+    jobscraper sentinel             # screen a few rule drops, rank a few screen rejects: gate checks
     jobscraper report               # markdown report + JSONL export, stored in the DB
     jobscraper diff                 # what changed since the previous report (see docs/SCHEDULING.md)
-    jobscraper run                  # scrape → filter → prefilter → rank → refine → report
+    jobscraper run                  # scrape → filter → prefilter → rank → refine → sentinel → report
     jobscraper facets               # recompute the deterministic facets (backfill an old DB)
     jobscraper serve                # web UI over data/jobs.db
     jobscraper profiles             # candidate profiles under config/profiles
@@ -732,6 +733,66 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
 
 
 @app.command()
+def sentinel(n: int | None = None, seed: int | None = None, days: int = 30,
+             verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
+    """Measure the two gates nothing downstream can see: screen a random sample of rule drops
+    and rank a random sample of screen rejects.
+
+    ``--n`` per gate (default ``ai.sentinel_sample``; 0 does nothing), ``--seed`` for the draw
+    (default: today's date, so a re-run on the same day repeats the sample). A job that already
+    carries a sentinel verdict is not drawn again, and a screen reject that has a real rank
+    verdict is not lost, so it is not drawn either. The verdicts go under ``sentinel_prefilter``
+    and ``sentinel_rank`` and never enter the queue, the shortlist or the report's sections; the
+    report's ``## Sentinels`` section turns them into a false-reject rate per gate.
+    """
+    _setup_logging(verbose)
+    from jobscraper.ai.client import AIStage, estimate_cost
+    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
+    from jobscraper.sentinel import (
+        default_seed,
+        rule_drop_gate,
+        sample_rule_drops,
+        sample_screen_rejects,
+        screen_gate,
+        sentinel_prefix,
+    )
+
+    settings = load_settings()
+    ai = settings.profile.ai
+    n = ai.sentinel_sample if n is None else n
+    if n <= 0:
+        console.print("sentinel: ai.sentinel_sample is 0 and no --n given — skipped", soft_wrap=True)
+        return
+    seed = default_seed() if seed is None else seed
+    store = Store()
+    jobs, filters = _load_state(store, days)
+    pre = store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS)
+    drops = sample_rule_drops(
+        jobs, filters, n, seed,
+        exclude=set(store.verdicts("sentinel_prefilter", COMPATIBLE_PROMPT_VERSIONS)))
+    rejects = sample_screen_rejects(
+        jobs, filters, pre, n, seed, min_score=ai.prefilter_min_score,
+        exclude=set(store.verdicts("sentinel_rank", COMPATIBLE_PROMPT_VERSIONS))
+        | set(store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)))
+
+    def show(v) -> None:
+        console.print(f"  {v.stage} {v.score:3d} {'✓' if v.relevant else '✗'} {v.summary[:100]}")
+
+    spent: list = []
+    for stage_name, sample, gate in (
+            ("sentinel_prefilter", drops, lambda job: rule_drop_gate(filters.get(job.id))),
+            ("sentinel_rank", rejects, lambda job: screen_gate(pre[job.id]))):
+        if not sample:  # an empty pool costs nothing, not even a client
+            continue
+        stage = AIStage(stage_name, settings.profile, store,
+                        prefixes={job.id: sentinel_prefix(gate(job)) for job in sample})
+        got = stage.run(sample, filters, progress=show)
+        spent += [got[job.id] for job in sample if job.id in got]
+    console.print(f"sentinel: {len(drops)} rule drops screened, {len(rejects)} screen rejects "
+                  f"ranked (seed {seed}); cost ≈ {estimate_cost(spent)}", soft_wrap=True)
+
+
+@app.command()
 def report(days: int = 30, out: Path | None = None) -> None:
     """Write the markdown report and a JSONL export, and store the report in the database."""
     from jobscraper.ai.client import estimate_cost
@@ -744,8 +805,10 @@ def report(days: int = 30, out: Path | None = None) -> None:
         prepend_section,
         previous_report,
         record_report_notes,
+        record_sentinel_notes,
         render_diff,
         render_new_section,
+        sentinel_summary,
         write_report,
     )
 
@@ -762,9 +825,18 @@ def report(days: int = 30, out: Path | None = None) -> None:
     # the finished state can show (two passes far apart, one posting ranked twice).
     since = notes_anchor(store)
     record_report_notes(store, jobs, filters, ranked, refined, aliases=settings.company_aliases)
+    # The sentinels written since the previous report: measurements of the two gates, kept out of
+    # every section above and shown in their own (see jobscraper.sentinel).
+    screened = store.verdicts("sentinel_prefilter", COMPATIBLE_PROMPT_VERSIONS)
+    sentinel_ranked = store.verdicts("sentinel_rank", COMPATIBLE_PROMPT_VERSIONS)
+    sentinel_ids = list(dict.fromkeys([*screened, *sentinel_ranked]))
+    sentinels = sentinel_summary(screened, sentinel_ranked, since=since,
+                                 min_score=settings.profile.ai.prefilter_min_score,
+                                 jobs={j.id: j for j in store.jobs(ids=sentinel_ids)} if sentinel_ids else {})
+    record_sentinel_notes(store, sentinels)
     notes = store.notes(since=since)
     path = write_report(jobs, filters, pre, ranked, out, cost, refine=refined, gone=len(gone),
-                        notes=notes)
+                        notes=notes, sentinels=sentinels)
     jsonl = export_jsonl([j for j in jobs if filters.get(j.id) and filters[j.id].status != "drop"], filters, {**pre, **ranked},
                          config.paths().data / "exports" / "filtered.jsonl")
     snap = store.save_report(build_snapshot(jobs, filters, pre, ranked, days=days, cost=cost, path=path,
@@ -987,7 +1059,8 @@ def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (
         batch: bool | None = typer.Option(None, "--batch/--no-batch",
                                           help="Run the prefilter through the Message Batches API (half price, "
                                                "asynchronous; default: profile ai.prefilter_batch)")) -> None:
-    """Full pipeline in a new per-run database: scrape → filter → prefilter → rank → refine → report."""
+    """Full pipeline in a new per-run database: scrape → filter → prefilter → rank → refine →
+    sentinel (when ``ai.sentinel_sample`` > 0) → report."""
     path = new_run_db(fresh=fresh)
     store_mod.DB_OVERRIDE = path
     console.print(f"run database: {path}" + ("" if fresh else " (copied forward from the previous run)"))
@@ -996,6 +1069,8 @@ def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (
     if not skip_ai:
         prefilter(days=days, verbose=verbose, batch=batch, wait=True)
         _rank_and_refine(days=days, verbose=verbose)
+        if load_settings().profile.ai.sentinel_sample > 0:
+            sentinel(days=days, verbose=verbose)
     report(days=days)
 
 

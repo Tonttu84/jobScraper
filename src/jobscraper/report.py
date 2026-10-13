@@ -23,6 +23,7 @@ from jobscraper.models import (
     ReportSnapshot,
     RunNote,
 )
+from jobscraper.sentinel import SENTINEL_FIND_SCORE
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle: store imports models, not report
     from jobscraper.store import Store
@@ -426,8 +427,12 @@ def notes_anchor(store: Store) -> datetime | None:
 
 
 def health_lines(notes: list[RunNote], by_id: dict[str, Job]) -> list[str]:
-    """The ``## Pipeline health`` appendix: per kind a count line, then example lines."""
+    """The ``## Pipeline health`` appendix: per kind a count line, then example lines.
+
+    The sentinel notes are left to the ``## Sentinels`` section, which says the same in full.
+    """
     lines = ["## Pipeline health", ""]
+    notes = [n for n in notes if n.kind not in SENTINEL_NOTE_KINDS]
     if not notes:
         return [*lines, "No pipeline notes this run.", ""]
     groups: dict[str, list[RunNote]] = {}
@@ -446,11 +451,122 @@ def health_lines(notes: list[RunNote], by_id: dict[str, Job]) -> list[str]:
     return lines
 
 
+# ------------------------------------------------------------------------ sentinels
+
+#: The run notes the sentinels write: one per gate per run, one per find.
+SENTINEL_NOTE_KINDS = frozenset({"sentinel_rule_filter", "sentinel_screen", "sentinel_find"})
+
+
+@dataclass(frozen=True)
+class SentinelSummary:
+    """This run's sentinel verdicts per gate (see :mod:`jobscraper.sentinel`).
+
+    ``screened`` are rule drops the screen judged and ``passed`` the ones it would have let
+    through; ``ranked`` are screen rejects the ranker judged and ``finds`` the ones it scored
+    :data:`~jobscraper.sentinel.SENTINEL_FIND_SCORE`+ (best first). ``jobs`` resolves their ids.
+    """
+
+    screened: list[AIVerdict]
+    passed: list[AIVerdict]
+    ranked: list[AIVerdict]
+    finds: list[AIVerdict]
+    min_score: int
+    jobs: dict[str, Job]
+
+    @property
+    def empty(self) -> bool:
+        return not (self.screened or self.ranked)
+
+
+def _utc(when: datetime) -> datetime:
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+
+def sentinel_summary(screened: dict[str, AIVerdict], ranked: dict[str, AIVerdict], *,
+                     since: datetime | None, min_score: int,
+                     jobs: dict[str, Job]) -> SentinelSummary:
+    """The ``sentinel_prefilter`` / ``sentinel_rank`` verdicts written at or after ``since`` (the
+    previous report, :func:`notes_anchor`; None reads them all), split into the gate counts.
+
+    A rule drop the screen calls relevant with a score of at least ``min_score``
+    (``ai.prefilter_min_score``) is a false drop; a screen reject the ranker scores
+    :data:`~jobscraper.sentinel.SENTINEL_FIND_SCORE` or more is a false reject, and a find.
+    """
+    def recent(verdicts: dict[str, AIVerdict]) -> list[AIVerdict]:
+        keep = [v for v in verdicts.values() if since is None or _utc(v.created_at) >= _utc(since)]
+        return sorted(keep, key=lambda v: (-v.score, v.job_id))
+
+    pre, rank = recent(screened), recent(ranked)
+    return SentinelSummary(
+        screened=pre, passed=[v for v in pre if v.relevant and v.score >= min_score],
+        ranked=rank, finds=[v for v in rank if v.score >= SENTINEL_FIND_SCORE],
+        min_score=min_score, jobs=jobs)
+
+
+def _rate(k: int, n: int) -> str:
+    return f"{k}/{n} ({round(100 * k / n)}%)"
+
+
+def _gate_counts(summary: SentinelSummary) -> tuple[str, str]:
+    """The two gate lines' text, shared by the report section and the run notes."""
+    n, k = len(summary.screened), len(summary.passed)
+    rule = (f"{n} drop{'s' if n != 1 else ''} screened, {k} would have passed the screen "
+            f"(score >= {summary.min_score} and relevant) → estimated false-drop rate {_rate(k, n)}"
+            if n else "no drops screened this run")
+    n, k = len(summary.ranked), len(summary.finds)
+    screen = (f"{n} reject{'s' if n != 1 else ''} ranked, {k} scored {SENTINEL_FIND_SCORE}+ → "
+              f"estimated false-reject rate {_rate(k, n)}" if n else "no rejects ranked this run")
+    return rule, screen
+
+
+def sentinel_lines(summary: SentinelSummary | None, filters: dict[str, FilterResult]) -> list[str]:
+    """The ``## Sentinels`` section: per gate a rate line, then each posting it got wrong."""
+    lines = ["## Sentinels", ""]
+    if summary is None or summary.empty:
+        return [*lines, "No sentinel samples this run.", ""]
+    rule, screen = _gate_counts(summary)
+    lines.append(f"- **Rule filter**: {rule}")
+    for v in summary.passed:
+        job, fr = summary.jobs.get(v.job_id), filters.get(v.job_id)
+        reasons = "; ".join(fr.reasons) if fr and fr.reasons else "?"
+        lines.append(f"  - {job.title if job else v.job_id} · {(job.company if job else None) or '?'} · "
+                     f"{job.source if job else '?'} · {reasons} · screen {v.score}")
+    lines.append(f"- **Screen**: {screen}")
+    for v in summary.finds:
+        job = summary.jobs.get(v.job_id)
+        name = f"[{job.title}]({job.url})" if job else v.job_id
+        lines.append(f"  - {name} · {(job.company if job else None) or '?'} · rank {v.score} · {v.summary}")
+    lines.append("")
+    return lines
+
+
+def record_sentinel_notes(store: Store, summary: SentinelSummary) -> int:
+    """One ``sentinel_rule_filter`` and one ``sentinel_screen`` note per gate that was sampled
+    (data ``{"n", "k"}``), and one ``sentinel_find`` per find, with its job id. Returns how many."""
+    rule, screen = _gate_counts(summary)
+    written = 0
+    for kind, text, n, k in (("sentinel_rule_filter", rule, len(summary.screened), len(summary.passed)),
+                             ("sentinel_screen", screen, len(summary.ranked), len(summary.finds))):
+        if n:
+            store.add_note("sentinel", kind, text, data={"n": n, "k": k})
+            written += 1
+    for v in summary.finds:
+        job = summary.jobs.get(v.job_id)
+        store.add_note("sentinel", "sentinel_find",
+                       f"rank {v.score} · {v.summary}" if job is None else
+                       f"rank {v.score} · {job.title} at {job.company or '?'}",
+                       source=job.source if job else None, job_id=v.job_id, data={"score": v.score})
+        written += 1
+    return written
+
+
 def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
                  ranked: dict[str, AIVerdict], path: Path | None = None, cost: dict | None = None,
                  refine: dict[str, AIVerdict] | None = None, gone: int = 0,
-                 notes: list[RunNote] | None = None) -> Path:
-    """The markdown report; ``notes`` (this run's, see :func:`notes_anchor`) form its appendix."""
+                 notes: list[RunNote] | None = None,
+                 sentinels: SentinelSummary | None = None) -> Path:
+    """The markdown report; ``notes`` (this run's, see :func:`notes_anchor`) form its appendix,
+    and ``sentinels`` (:func:`sentinel_summary`) the section right before it."""
     refine = refine or {}
     path = path or paths().results / f"report-{datetime.now(UTC):%Y-%m-%d}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -499,6 +615,7 @@ def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: d
                 lines.append(f"| [{j.title}]({j.url}) | {j.company or ''} | {j.source} | {'; '.join(f.reasons)} |")
         lines.append("")
 
+    lines += sentinel_lines(sentinels, filters)
     lines += health_lines(notes or [], by_id)
     path.write_text("\n".join(lines), encoding="utf-8")
     return path

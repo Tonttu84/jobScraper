@@ -1346,3 +1346,180 @@ def test_export_jsonl_carries_criteria_and_input_notes(tmp_path, state):
     assert by_id[ranked_job.id]["verdict"]["input_notes"] == ["profile_gap: notice period"]
     assert by_id[pre_job.id]["verdict"]["criteria"] == {}
     assert by_id[pre_job.id]["verdict"]["input_notes"] == []
+
+
+# ------------------------------------------------------------------------------ sentinels
+# A sample of each gate's rejects, judged by the stage after it: the only way to see a false
+# reject at either gate. Measurements, never candidates.
+
+_EARLY = datetime(2026, 10, 1, tzinfo=UTC)
+_LATE = datetime(2026, 10, 13, 6, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def sentinel_state():
+    """Three rule drops screened (one passes, one relevant but low, one irrelevant but high) and
+    three screen rejects ranked (two 70+), plus one of each written before the previous report."""
+    drops = [make_job(f"drop-{n}", f"Dropped Developer {n}") for n in range(4)]
+    rejects = [make_job(f"rej-{n}", f"Rejected Developer {n}") for n in range(4)]
+    filters = {j.id: FilterResult(job_id=j.id, status="drop", reasons=["asks for 5 years", "onsite"])
+               for j in drops}
+    filters.update({j.id: FilterResult(job_id=j.id, status="keep") for j in rejects})
+    screened = {
+        drops[0].id: make_verdict(drops[0].id, "sentinel_prefilter", 64, created_at=_LATE),
+        drops[1].id: make_verdict(drops[1].id, "sentinel_prefilter", 20, created_at=_LATE),
+        drops[2].id: make_verdict(drops[2].id, "sentinel_prefilter", 90, relevant=False, created_at=_LATE),
+        drops[3].id: make_verdict(drops[3].id, "sentinel_prefilter", 99, created_at=_EARLY),
+    }
+    ranked = {
+        rejects[0].id: make_verdict(rejects[0].id, "sentinel_rank", 74, created_at=_LATE,
+                                    summary="A real junior Go fit."),
+        rejects[1].id: make_verdict(rejects[1].id, "sentinel_rank", 88, created_at=_LATE,
+                                    summary="Strong fit the screen misread."),
+        rejects[2].id: make_verdict(rejects[2].id, "sentinel_rank", 69, created_at=_LATE),
+        rejects[3].id: make_verdict(rejects[3].id, "sentinel_rank", 95, created_at=_EARLY),
+    }
+    jobs = {j.id: j for j in drops + rejects}
+    return drops, rejects, filters, screened, ranked, jobs
+
+
+def _summary(sentinel_state, since=datetime(2026, 10, 5, tzinfo=UTC)):
+    from jobscraper.report import sentinel_summary
+
+    _drops, _rejects, _filters, screened, ranked, jobs = sentinel_state
+    return sentinel_summary(screened, ranked, since=since, min_score=30, jobs=jobs)
+
+
+def test_sentinel_summary_counts_this_runs_verdicts_per_gate(sentinel_state):
+    drops, rejects, *_ = sentinel_state
+    summary = _summary(sentinel_state)
+    assert len(summary.screened) == 3 and [v.job_id for v in summary.passed] == [drops[0].id]
+    assert len(summary.ranked) == 3
+    assert [v.job_id for v in summary.finds] == [rejects[1].id, rejects[0].id]  # best first
+    assert not summary.empty
+    everything = _summary(sentinel_state, since=None)
+    assert len(everything.screened) == 4 and len(everything.finds) == 3
+
+
+def test_sentinel_summary_reads_a_naive_anchor_as_utc(sentinel_state):
+    assert len(_summary(sentinel_state, since=datetime(2026, 10, 5)).screened) == 3
+
+
+def test_write_report_shows_both_gates_with_rates_and_the_finds(tmp_path, state, sentinel_state):
+    jobs, filters, prefilter, ranked = state
+    drops, rejects, sentinel_filters, *_ = sentinel_state
+    text = write_report(jobs, {**filters, **sentinel_filters}, prefilter, ranked, tmp_path / "r.md",
+                        sentinels=_summary(sentinel_state)).read_text(encoding="utf-8")
+    section = text[text.index("## Sentinels"):text.index("## Pipeline health")]
+    assert section.splitlines() == [
+        "## Sentinels",
+        "",
+        "- **Rule filter**: 3 drops screened, 1 would have passed the screen (score >= 30 and "
+        "relevant) → estimated false-drop rate 1/3 (33%)",
+        "  - Dropped Developer 0 · Example Oy · teamtailor · asks for 5 years; onsite · screen 64",
+        "- **Screen**: 3 rejects ranked, 2 scored 70+ → estimated false-reject rate 2/3 (67%)",
+        f"  - [Rejected Developer 1]({rejects[1].url}) · Example Oy · rank 88 · "
+        "Strong fit the screen misread.",
+        f"  - [Rejected Developer 0]({rejects[0].url}) · Example Oy · rank 74 · A real junior Go fit.",
+        "",
+    ]
+    # the sentinel verdicts are nowhere else in the report
+    rest = text.replace(section, "")
+    assert all(j.title not in rest for j in drops + rejects)
+    assert text.rstrip().endswith("No pipeline notes this run.")  # the appendix stays last
+
+
+def test_a_gate_without_samples_says_so_and_a_find_whose_job_is_unknown_keeps_its_id(tmp_path, state,
+                                                                                  sentinel_state):
+    from jobscraper.report import sentinel_summary
+
+    jobs, filters, prefilter, ranked = state
+    _drops, rejects, _f, _screened, sentinel_ranked, _jobs = sentinel_state
+    summary = sentinel_summary({}, {rejects[1].id: sentinel_ranked[rejects[1].id]}, since=None,
+                               min_score=30, jobs={})
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md",
+                        sentinels=summary).read_text(encoding="utf-8")
+    assert "- **Rule filter**: no drops screened this run" in text
+    assert "- **Screen**: 1 reject ranked, 1 scored 70+ → estimated false-reject rate 1/1 (100%)" in text
+    assert f"  - {rejects[1].id} · ? · rank 88 · Strong fit the screen misread." in text
+
+
+def test_write_report_says_so_when_there_are_no_sentinel_samples(tmp_path, state, sentinel_state):
+    jobs, filters, prefilter, ranked = state
+    for sentinels in (None, _summary(sentinel_state, since=datetime(2026, 10, 20, tzinfo=UTC))):
+        text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md",
+                            sentinels=sentinels).read_text(encoding="utf-8")
+        assert "## Sentinels\n\nNo sentinel samples this run.\n" in text
+        assert text.index("## Sentinels") < text.index("## Pipeline health")
+
+
+def test_record_sentinel_notes_writes_one_per_gate_and_one_per_find(tmp_path, sentinel_state):
+    from jobscraper.report import record_sentinel_notes
+    from jobscraper.store import Store
+
+    _drops, rejects, *_ = sentinel_state
+    store = Store(tmp_path / "jobs.db")
+    try:
+        assert record_sentinel_notes(store, _summary(sentinel_state)) == 4
+        notes = store.notes(stage="sentinel")
+        assert [(n.kind, n.data) for n in notes[:2]] == [("sentinel_rule_filter", {"n": 3, "k": 1}),
+                                                         ("sentinel_screen", {"n": 3, "k": 2})]
+        finds = [n for n in notes if n.kind == "sentinel_find"]
+        assert [n.job_id for n in finds] == [rejects[1].id, rejects[0].id]
+        assert finds[0].data == {"score": 88} and finds[0].source == "teamtailor"
+        assert "rank 88" in finds[0].message
+        assert record_sentinel_notes(store, _summary(sentinel_state, since=_LATE.replace(day=20))) == 0
+    finally:
+        store.close()
+
+
+def test_the_health_appendix_leaves_the_sentinel_notes_to_their_own_section(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    notes = [_note("sentinel_screen", "3 rejects ranked, 1 scored 70+", stage="sentinel"),
+             _note("sentinel_find", "rank 88", stage="sentinel", n=2)]
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md",
+                        notes=notes).read_text(encoding="utf-8")
+    assert text.rstrip().endswith("## Pipeline health\n\nNo pipeline notes this run.")
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1", notes=notes)
+    assert snap.note_counts == {"sentinel_screen": 1, "sentinel_find": 1}  # diff still sees them
+
+
+def test_sentinel_verdicts_never_reach_the_queue_anchors_or_the_top(tmp_path, queue_state):
+    """Stored side by side with the real ones, they stay out of every stage-keyed read."""
+    from jobscraper.store import Store
+
+    jobs, filters, prefilter, rank = queue_state
+    best, tie_a, tie_b, ranked_id, weak, dropped = (j.id for j in jobs)
+    store = Store(tmp_path / "jobs.db")
+    try:
+        for v in [*prefilter.values(), *rank.values()]:
+            store.save_verdict(v)
+        # a rule drop the sentinel screen loved, and a screen reject the sentinel ranker loved
+        store.save_verdict(make_verdict(dropped, "sentinel_prefilter", 99))
+        store.save_verdict(make_verdict(weak, "sentinel_rank", 97))
+        store.save_verdict(make_verdict(best, "sentinel_rank", 99))
+        pre, rk = store.verdicts("prefilter"), store.verdicts("rank")
+        assert pre == prefilter and rk == rank
+        assert _ids(rank_queue(jobs, filters, pre, rk, min_score=30)) == [best, *sorted([tie_a, tie_b])]
+        assert [v.job_id for _j, v in rank_anchors(jobs, rk)] == [ranked_id]
+        ids, edge = effective_top(jobs, filters, rk, store.verdicts("refine"), top=5)
+        assert ids == [ranked_id] and edge == 55
+    finally:
+        store.close()
+
+
+def test_export_jsonl_is_handed_only_the_regular_verdicts(tmp_path, state):
+    """``report`` merges the prefilter and rank dicts; a sentinel verdict is in neither."""
+    from jobscraper.store import Store
+
+    jobs, filters, _prefilter, _ranked = state
+    store = Store(tmp_path / "jobs.db")
+    try:
+        store.save_verdict(make_verdict(jobs[2].id, "sentinel_rank", 90))
+        store.save_verdict(make_verdict(jobs[2].id, "sentinel_prefilter", 90))
+        merged = {**store.verdicts("prefilter"), **store.verdicts("rank")}
+    finally:
+        store.close()
+    path = export_jsonl(jobs, filters, merged, tmp_path / "x.jsonl")
+    rows = {json.loads(line)["id"]: json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()}
+    assert rows[jobs[2].id]["verdict"] is None

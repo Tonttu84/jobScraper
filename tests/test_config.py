@@ -71,6 +71,17 @@ def test_rank_order_defaults_to_the_lexical_prior():
     assert AIPolicy(rank_order="screen").rank_order == "screen"
 
 
+def test_sentinels_sample_ten_per_gate_by_default_and_zero_turns_them_off():
+    import pytest
+
+    from jobscraper.config import AIPolicy
+
+    assert AIPolicy().sentinel_sample == 10
+    assert AIPolicy(sentinel_sample=0).sentinel_sample == 0
+    with pytest.raises(ValueError):
+        AIPolicy(sentinel_sample=-1)
+
+
 def test_gone_after_misses_defaults_to_one_complete_run():
     """One complete run of a source that misses a posting is enough to call it taken down."""
     from jobscraper.config import Profile

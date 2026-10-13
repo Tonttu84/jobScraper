@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import anthropic
@@ -34,7 +34,7 @@ from jobscraper.ai.prompts import (
 )
 from jobscraper.ai.schemas import RefinedJob, Refinement, Screening, ranking_schema
 from jobscraper.config import Profile
-from jobscraper.models import AIVerdict, FilterResult, Job
+from jobscraper.models import SENTINEL_STAGES, AIVerdict, FilterResult, Job, mirrored_stage
 from jobscraper.store import Store
 
 log = logging.getLogger(__name__)
@@ -66,28 +66,35 @@ def _client() -> anthropic.Anthropic:
 
 class AIStage:
     def __init__(self, stage: str, profile: Profile, store: Store, model: str | None = None,
-                 preamble: str = "") -> None:
+                 preamble: str = "", prefixes: Mapping[str, str] | None = None) -> None:
         """``preamble`` goes in front of every job prompt this stage sends.
 
         The rank stage uses it for the REFERENCE SCORES block
         (:func:`jobscraper.ai.prompts.rank_anchor_block`): it is fixed for the round but changes
         between rounds, so it belongs in the user message, not in the cached system prompt.
+
+        A sentinel stage (``sentinel_prefilter``, ``sentinel_rank``; see
+        :mod:`jobscraper.sentinel`) is the stage it mirrors in model, effort, schema, system prompt
+        and fingerprint; only the stage name it stamps on its verdicts differs. ``prefixes`` maps a
+        job id to the line that goes in front of that job's prompt (its SENTINEL line).
         """
-        assert stage in ("prefilter", "rank")
+        assert stage in ("prefilter", "rank", *SENTINEL_STAGES)
         self.stage = stage
         self.preamble = preamble
+        self.prefixes = dict(prefixes or {})
         self.profile = profile
         self.store = store
         ai = profile.ai
-        self.model = model or (ai.prefilter_model if stage == "prefilter" else ai.rank_model)
-        self.effort = ai.prefilter_effort if stage == "prefilter" else ai.rank_effort
-        self.schema = Screening if stage == "prefilter" else ranking_schema(profile.weights)
+        base = mirrored_stage(stage)
+        self.model = model or (ai.prefilter_model if base == "prefilter" else ai.rank_model)
+        self.effort = ai.prefilter_effort if base == "prefilter" else ai.rank_effort
+        self.schema = Screening if base == "prefilter" else ranking_schema(profile.weights)
         self.max_chars = ai.max_description_chars
         self.concurrency = ai.concurrency
         self.batch_chunk = ai.batch_chunk
-        self.system = system_prompt(stage, profile)
+        self.system = system_prompt(base, profile)
         #: Stamped on every verdict this stage writes (see profile_fingerprint).
-        self.profile_hash = profile_fingerprint(stage, profile)
+        self.profile_hash = profile_fingerprint(base, profile)
         self.client = _client()
 
     # ------------------------------------------------------------- verdicts
@@ -129,13 +136,17 @@ class AIStage:
         """Save a verdict and write its pipeline-health notes (same as the subagent import)."""
         return store_verdict(self.store, verdict, self.profile.weights)
 
+    def _user_prompt(self, job: Job, fr: FilterResult | None) -> str:
+        """The preamble, then the job prompt with this job's prefix (if any) in front."""
+        return self.preamble + job_prompt(job, fr, self.max_chars, prefix=self.prefixes.get(job.id, ""))
+
     # ------------------------------------------------------------------ one job
     def judge(self, job: Job, fr: FilterResult | None) -> AIVerdict:
         response = self.client.messages.parse(
             model=self.model,
             max_tokens=4000,
             system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": self.preamble + job_prompt(job, fr, self.max_chars)}],
+            messages=[{"role": "user", "content": self._user_prompt(job, fr)}],
             output_format=self.schema,
             thinking={"type": "adaptive"},
             output_config={"effort": self.effort},
@@ -182,7 +193,7 @@ class AIStage:
             model=self.model,
             max_tokens=4000,
             system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": self.preamble + job_prompt(job, fr, self.max_chars)}],
+            messages=[{"role": "user", "content": self._user_prompt(job, fr)}],
             thinking={"type": "adaptive"},
             output_config={"format": output_schema(self.schema), "effort": self.effort},
         )

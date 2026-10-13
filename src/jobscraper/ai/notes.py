@@ -9,8 +9,9 @@ notes come out of either:
 ``criteria_unknown_key``
     A criterion the profile's ``weights`` do not name; it is dropped from the verdict.
 ``rubric_mismatch``
-    A rank verdict whose score is more than :data:`RUBRIC_MISMATCH_POINTS` from the weighted
-    mean of its own criteria. The score still ranks; the note says the two disagree.
+    A rank (or ``sentinel_rank``) verdict whose score is more than :data:`RUBRIC_MISMATCH_POINTS`
+    from the weighted mean of its own criteria. The score still ranks; the note says the two
+    disagree.
 ``verdict_invalid``
     A subagent's verdict line that failed the schema (:func:`note_invalid_verdict`).
 
@@ -23,6 +24,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from jobscraper.ai.schemas import criterion_label
+from jobscraper.models import mirrored_stage
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from jobscraper.models import AIVerdict
@@ -84,9 +86,11 @@ def store_verdict(store: Store, verdict: AIVerdict, weights: Mapping[str, int]) 
         store.add_note(verdict.stage, "criteria_unknown_key",
                        f"dropped criteria the profile's weights do not name: {', '.join(dropped)}",
                        job_id=verdict.job_id, data={"keys": dropped, "known": list(weights)})
-    weighted = weighted_criteria(criteria, weights) if verdict.stage == "rank" else None
+    # A sentinel rank verdict is the ranker's own judgement, so it gets the same check; the note
+    # carries the verdict's stage, which for a real rank verdict is "rank" as before.
+    weighted = weighted_criteria(criteria, weights) if mirrored_stage(verdict.stage) == "rank" else None
     if weighted is not None and abs(verdict.score - weighted) > RUBRIC_MISMATCH_POINTS:
-        store.add_note("rank", "rubric_mismatch",
+        store.add_note(verdict.stage, "rubric_mismatch",
                        f"score {verdict.score}, but its criteria weigh in at {weighted:.0f}",
                        job_id=verdict.job_id,
                        data={"score": verdict.score, "weighted": round(weighted, 1)})

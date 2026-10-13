@@ -278,6 +278,13 @@ ai:
   refine_first_pass: 25
   # How many times `jobscraper refine` may rebuild the shortlist and score whatever is new in it.
   refine_max_passes: 5
+  # Sentinels: a gate's false rejects never reach anything that could notice them (a rule drop
+  # never meets an AI, a screen reject never meets the ranker), so each run judges a small random
+  # sample of them anyway — this many rule drops screened by Sonnet and this many screen rejects
+  # ranked by Opus. They are stored under their own stage names and never enter the shortlist;
+  # the report's "Sentinels" section shows the estimated false-reject rate per gate and every
+  # sentinel find that ranked 70+. 0 turns them off.
+  sentinel_sample: 10
   concurrency: 4
   max_description_chars: 6000
   # Batching sends the whole prefilter as one Message Batch: the same verdicts at half price,

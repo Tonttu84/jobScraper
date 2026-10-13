@@ -705,3 +705,94 @@ def test_the_batch_path_stamps_the_profile_hash(stage, batches):
     stage.run_batch([_job()], {})
     assert stage.store.verdicts("prefilter")[_job().id].profile_hash == \
         profile_fingerprint("prefilter", stage.profile)
+
+
+# ------------------------------------------------------------------------------ sentinels
+# A sentinel stage is the stage it mirrors in every respect but the stage name it stamps: same
+# model, effort, schema, system prompt and fingerprint, so its verdicts measure that stage.
+
+
+@pytest.mark.parametrize(("sentinel", "mirror"), [("sentinel_prefilter", "prefilter"),
+                                                  ("sentinel_rank", "rank")])
+def test_a_sentinel_stage_is_configured_as_the_stage_it_mirrors(settings, tmp_path, monkeypatch,
+                                                                sentinel, mirror):
+    from jobscraper.ai.prompts import profile_fingerprint
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    profile = settings.profile.model_copy(update={"weights": dict(WEIGHTS)})
+    store = Store(tmp_path / "s.db")
+    real, mirrored = AIStage(sentinel, profile, store), AIStage(mirror, profile, store)
+    assert real.stage == sentinel
+    assert (real.model, real.effort, real.system) == (mirrored.model, mirrored.effort, mirrored.system)
+    assert real.schema.model_json_schema() == mirrored.schema.model_json_schema()
+    assert real.profile_hash == profile_fingerprint(mirror, profile)
+
+
+def test_a_sentinel_verdict_is_stamped_with_the_sentinel_stage_and_its_prefix_leads(settings, tmp_path,
+                                                                                    monkeypatch):
+    from jobscraper.ai.prompts import profile_fingerprint
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    store = Store(tmp_path / "s.db")
+    job = _job()
+    fr = FilterResult(job_id=job.id, status="drop", reasons=["asks for 5 years"])
+    st = AIStage("sentinel_prefilter", settings.profile, store, prefixes={job.id: "SENTINEL: line"})
+    st.concurrency = 1
+    calls: dict = {}
+
+    def fake_parse(**kw):
+        calls.update(kw)
+        return _response(Screening(relevant=True, score=64, language_ok=True, seniority_ok=True,
+                                   location_ok=True, summary="Fine junior role.",
+                                   input_notes=["missing_input: no salary"]))
+
+    monkeypatch.setattr(st.client.messages, "parse", fake_parse)
+    st.run([job], {job.id: fr})
+    assert calls["messages"][0]["content"] == "SENTINEL: line\n" + job_prompt(job, fr, st.max_chars)
+    assert calls["output_format"] is Screening
+    v = store.verdicts("sentinel_prefilter")[job.id]
+    assert v.stage == "sentinel_prefilter" and v.score == 64
+    assert v.profile_hash == profile_fingerprint("prefilter", settings.profile)
+    assert store.verdicts("prefilter") == {}  # never mixed into the stage it mirrors
+    [note] = store.notes()
+    assert (note.stage, note.kind) == ("sentinel_prefilter", "missing_input")
+
+
+def test_a_job_without_a_prefix_gets_the_plain_prompt(settings, tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    st = AIStage("sentinel_rank", settings.profile, Store(tmp_path / "s.db"), prefixes={"other": "X"})
+    params = st._params(_job(), None)
+    assert params["messages"][0]["content"] == job_prompt(_job(), None, st.max_chars)
+
+
+def test_the_batch_path_carries_the_sentinel_prefix_too(settings, tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    job = _job()
+    st = AIStage("sentinel_prefilter", settings.profile, Store(tmp_path / "s.db"),
+                 prefixes={job.id: "SENTINEL: line"})
+    fake = FakeBatches()
+    monkeypatch.setattr(st.client.messages, "batches", fake)
+    st.run_batch([job], {})
+    assert fake.submitted[0][0]["params"]["messages"][0]["content"].startswith("SENTINEL: line\nJOB POSTING")
+    assert st.store.verdicts("sentinel_prefilter")[job.id].usage["batch"] is True
+
+
+def test_a_sentinel_rank_verdict_gets_the_rubric_check_under_its_own_stage(settings, tmp_path,
+                                                                           monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    profile = settings.profile.model_copy(update={"weights": dict(WEIGHTS)})
+    st = AIStage("sentinel_rank", profile, Store(tmp_path / "s.db"))
+    st.concurrency = 1
+    parsed = _ranking(st, 95, {"stack fit": 80, "pay": 60})  # weighted 75
+    monkeypatch.setattr(st.client.messages, "parse", lambda **kw: _response(parsed))
+    st.run([_job()], {})
+    [note] = st.store.notes(kind="rubric_mismatch")
+    assert note.stage == "sentinel_rank"
+    assert st.store.verdicts("sentinel_rank")[_job().id].criteria == {"stack_fit": 80, "pay": 60}
+    assert st.store.verdicts("rank") == {}
+
+
+def test_an_unknown_stage_name_is_refused(settings, tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    with pytest.raises(AssertionError):
+        AIStage("refine", settings.profile, Store(tmp_path / "s.db"))

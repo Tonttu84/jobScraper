@@ -1653,3 +1653,167 @@ def test_spearman_lives_in_one_place_and_the_script_imports_it():
 
     assert ai_batches._spearman is compare.spearman is audit.spearman
     assert not hasattr(ai_batches, "_average_ranks")
+
+
+# ------------------------------------------------------------------------------ sentinels
+# The subagent path of `jobscraper sentinel`: one export with both samples, one import.
+
+
+def _sentinel_dir(data_dir: Path) -> Path:
+    return data_dir / "exports" / "ai" / "sentinel"
+
+
+@pytest.fixture
+def gates(data_dir):
+    """Three rule drops and three screen rejects (two irrelevant, one relevant but under 30),
+    next to one job that passed both gates."""
+    drops = [_job(n, f"Dropped Developer {n}") for n in range(3)]
+    rejects = [_job(10 + n, f"Rejected Developer {n}") for n in range(3)]
+    passed = _job(20, "Passed Developer")
+    store = store_mod.Store()
+    try:
+        store.upsert_jobs([*drops, *rejects, passed])
+        store.save_filter_results(
+            [FilterResult(job_id=j.id, status="drop", reasons=["asks for 5 years"]) for j in drops]
+            + [FilterResult(job_id=j.id, status="keep") for j in [*rejects, passed]], "test-rules")
+        for job, score, relevant in [(rejects[0], 0, False), (rejects[1], 5, False),
+                                     (rejects[2], 20, True), (passed, 80, True)]:
+            store.save_verdict(AIVerdict(job_id=job.id, stage="prefilter", model="m",
+                                         prompt_version=PROMPT_VERSION, relevant=relevant,
+                                         score=score, language_ok=True, seniority_ok=True,
+                                         location_ok=True, summary=f"screened {score}"))
+    finally:
+        store.close()
+    return drops, rejects, passed
+
+
+def test_export_sentinel_writes_both_system_prompts_and_both_chunks(gates, data_dir, monkeypatch,
+                                                                     capsys):
+    drops, rejects, passed = gates
+    _run(monkeypatch, "export", "sentinel", "--n", "2", "--seed", "5")
+
+    out = _sentinel_dir(data_dir)
+    assert sorted(p.name for p in out.iterdir() if p.is_file()) == [
+        "chunk-prefilter-01.json", "chunk-rank-01.json", "system-prefilter.txt", "system-rank.txt"]
+    assert "PERMISSIVE" in (out / "system-prefilter.txt").read_text(encoding="utf-8")
+    assert "career advisor" in (out / "system-rank.txt").read_text(encoding="utf-8")
+
+    pre = json.loads((out / "chunk-prefilter-01.json").read_text(encoding="utf-8"))
+    rank = json.loads((out / "chunk-rank-01.json").read_text(encoding="utf-8"))
+    assert len(pre) == 2 and {e["job_id"] for e in pre} <= {j.id for j in drops}
+    assert len(rank) == 2 and {e["job_id"] for e in rank} <= {j.id for j in rejects}
+    assert all(set(e) == {"job_id", "prompt"} for e in pre + rank)
+    assert pre[0]["prompt"].startswith(
+        "SENTINEL: this posting was rejected by an earlier gate (rule filter: asks for 5 years). "
+        "Judge it exactly as you would any other posting")
+    assert "\nJOB POSTING\n" in pre[0]["prompt"]
+    assert rank[0]["prompt"].startswith("SENTINEL: this posting was rejected by an earlier gate (screen: score ")
+    assert passed.id not in {e["job_id"] for e in pre + rank}
+
+    printed = capsys.readouterr().out
+    assert "sentinel: 2 rule drops → chunk-prefilter-01.json, 2 screen rejects → chunk-rank-01.json (seed 5)" \
+        in printed
+    assert "verdicts/chunk-prefilter-01.jsonl" in printed and "verdicts/chunk-rank-01.jsonl" in printed
+
+    # same seed, same sample
+    _run(monkeypatch, "export", "sentinel", "--n", "2", "--seed", "5")
+    assert json.loads((out / "chunk-prefilter-01.json").read_text(encoding="utf-8")) == pre
+
+
+def test_export_sentinel_defaults_to_the_profile_sample_and_cuts_descriptions(gates, data_dir,
+                                                                               monkeypatch, capsys):
+    real = ai_batches.load_settings
+
+    def patched(*args, **kwargs):
+        settings = real(*args, **kwargs)
+        settings.profile.ai.sentinel_sample = 1
+        return settings
+
+    monkeypatch.setattr(ai_batches, "load_settings", patched)
+    _run(monkeypatch, "export", "sentinel", "--max-chars", "10")
+    out = _sentinel_dir(data_dir)
+    pre = json.loads((out / "chunk-prefilter-01.json").read_text(encoding="utf-8"))
+    rank = json.loads((out / "chunk-rank-01.json").read_text(encoding="utf-8"))
+    assert len(pre) == 1 and len(rank) == 1
+    assert "truncated" in pre[0]["prompt"] and "truncated" in rank[0]["prompt"]
+
+
+def _sentinel_answer(data_dir: Path, name: str, lines: list) -> None:
+    verdicts = _sentinel_dir(data_dir) / "verdicts"
+    verdicts.mkdir(parents=True, exist_ok=True)
+    (verdicts / name).write_text("".join((line if isinstance(line, str) else json.dumps(line)) + "\n"
+                                         for line in lines), encoding="utf-8")
+
+
+def test_import_sentinel_stores_both_stages_with_the_mirrored_fingerprints(gates, data_dir, monkeypatch,
+                                                                            capsys):
+    _run(monkeypatch, "export", "sentinel", "--n", "5", "--seed", "1")
+    out = _sentinel_dir(data_dir)
+    pre_ids = [e["job_id"] for e in json.loads((out / "chunk-prefilter-01.json").read_text(encoding="utf-8"))]
+    rank_ids = [e["job_id"] for e in json.loads((out / "chunk-rank-01.json").read_text(encoding="utf-8"))]
+    base = {"language_ok": True, "seniority_ok": True, "location_ok": True, "concerns": []}
+    _sentinel_answer(data_dir, "chunk-prefilter-01.jsonl", [
+        {"job_id": pre_ids[0], "relevant": True, "score": 64, "summary": "Fine junior role.", **base,
+         "input_notes": ["missing_input: no salary"]},
+        {"job_id": "0000000000000000", "relevant": True, "score": 64, "summary": "?", **base},
+        '{"job_id": "x", "score":'])
+    _sentinel_answer(data_dir, "chunk-rank-01.jsonl", [
+        {"job_id": rank_ids[0], "relevant": True, "score": 78, "summary": "Real fit.", **base,
+         "why_apply": ["Go"], "criteria": {}}])
+    capsys.readouterr()
+
+    _run(monkeypatch, "import", "sentinel")
+
+    profile = config.load_settings().profile
+    store = store_mod.Store()
+    try:
+        screened = store.verdicts("sentinel_prefilter", PROMPT_VERSION)
+        ranked = store.verdicts("sentinel_rank", PROMPT_VERSION)
+        assert list(screened) == [pre_ids[0]] and list(ranked) == [rank_ids[0]]
+        assert screened[pre_ids[0]].profile_hash == profile_fingerprint("prefilter", profile)
+        assert screened[pre_ids[0]].model == "claude-sonnet-5 (subagent)"
+        assert ranked[rank_ids[0]].profile_hash == profile_fingerprint("rank", profile)
+        assert ranked[rank_ids[0]].model == "claude-opus-5 (subagent)"
+        assert ranked[rank_ids[0]].why_apply == ["Go"]
+        assert store.verdicts("prefilter", PROMPT_VERSION).get(pre_ids[0]) is None
+        assert store.verdicts("rank") == {}
+        kinds = [(n.stage, n.kind) for n in store.notes()]
+        assert ("sentinel_prefilter", "missing_input") in kinds
+        [invalid] = store.notes(kind="verdict_invalid")
+        assert invalid.stage == "sentinel_prefilter" and invalid.data == {"chunk": "chunk-prefilter-01.jsonl"}
+    finally:
+        store.close()
+    printed = capsys.readouterr().out
+    assert f"sentinel_prefilter: imported 1 verdicts, 2 bad lines, {len(pre_ids) - 1} missing" in printed
+    assert f"sentinel_rank: imported 1 verdicts, 0 bad lines, {len(rank_ids) - 1} missing" in printed
+
+
+def test_import_sentinel_without_an_export_says_so(data_dir, monkeypatch, capsys):
+    _run(monkeypatch, "import", "sentinel")
+    printed = capsys.readouterr().out
+    assert "sentinel_prefilter: imported 0 verdicts, 0 bad lines, 0 missing" in printed
+
+
+def test_a_second_export_skips_jobs_already_measured_and_clears_old_answers(gates, data_dir,
+                                                                            monkeypatch, capsys):
+    drops, _rejects, _passed = gates
+    _run(monkeypatch, "export", "sentinel", "--n", "1", "--seed", "2")
+    out = _sentinel_dir(data_dir)
+    [first] = json.loads((out / "chunk-prefilter-01.json").read_text(encoding="utf-8"))
+    base = {"language_ok": True, "seniority_ok": True, "location_ok": True}
+    _sentinel_answer(data_dir, "chunk-prefilter-01.jsonl",
+                     [{"job_id": first["job_id"], "relevant": False, "score": 0, "summary": "No.", **base}])
+    _run(monkeypatch, "import", "sentinel")
+
+    _run(monkeypatch, "export", "sentinel", "--n", "5", "--seed", "2")
+    again = json.loads((out / "chunk-prefilter-01.json").read_text(encoding="utf-8"))
+    assert first["job_id"] not in {e["job_id"] for e in again} and len(again) == len(drops) - 1
+    assert not list((out / "verdicts").glob("*.jsonl"))
+
+
+def test_stability_export_still_defaults_to_seed_one(data_dir, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(ai_batches, "stability_export",
+                        lambda top, chunk, max_chars, seed: seen.update(seed=seed))
+    _run(monkeypatch, "stability", "export")
+    assert seen == {"seed": 1}

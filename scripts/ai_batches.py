@@ -6,6 +6,8 @@
     python scripts/ai_batches.py export rank [--window 15] [--top N] [--reset-round] [--chunk 15]
                                             [--max-fetch 60] [--sample 20]
     python scripts/ai_batches.py export refine [--top N] [--max-chars N] [--force]
+    python scripts/ai_batches.py export sentinel [--n N] [--seed S] [--max-chars N]
+    python scripts/ai_batches.py import sentinel
     python scripts/ai_batches.py boost
     python scripts/ai_batches.py stability export [--top 30] [--chunk 15] [--seed 1] [--max-chars N]
     python scripts/ai_batches.py stability compare
@@ -15,7 +17,22 @@ it moves the config, the database and the exports into that candidate's own dire
 
 Intended sequence for one round:
 ``hydrate linkedin`` → ``export prefilter`` → (Sonnet subagent) → ``import prefilter`` →
-the rank loop → the refine loop → ``boost`` → ``jobscraper report``.
+the rank loop → the refine loop → ``export sentinel`` → (Sonnet + Opus subagents) →
+``import sentinel`` → ``boost`` → ``jobscraper report``.
+
+**Sentinels** measure the two gates nothing downstream can see: ``export sentinel`` draws
+``--n`` (default ``ai.sentinel_sample``) random rule drops and as many random screen rejects
+(``--seed``, default today's date, so a same-day re-run repeats the draw; jobs already carrying a
+sentinel verdict, and screen rejects with a real rank verdict, are never drawn) and writes
+``sentinel/system-prefilter.txt``, ``system-rank.txt``, ``chunk-prefilter-01.json`` and
+``chunk-rank-01.json`` — the stages' own prompts, each job prompt led by a ``SENTINEL:`` line
+naming the gate that rejected it. No reference scores go with the rank sample (it is a
+measurement, not a window of the queue). A Sonnet subagent answers the prefilter chunk with
+``sentinel/verdicts/chunk-prefilter-01.jsonl`` (Screening fields), an Opus subagent the rank chunk
+with ``verdicts/chunk-rank-01.jsonl`` (Ranking fields), and ``import sentinel`` stores them as
+``sentinel_prefilter`` / ``sentinel_rank`` verdicts stamped with the mirrored stage's profile
+fingerprint. They never enter the queue or the shortlist; the report's ``## Sentinels`` section
+shows the estimated false-reject rate per gate.
 
 Neither AI stage after the screen is a single step any more:
 
@@ -143,7 +160,7 @@ from jobscraper.compare import spearman as _spearman
 from jobscraper.compare import top_set as _top_set
 from jobscraper.config import load_settings, paths
 from jobscraper.http import Http
-from jobscraper.models import AIVerdict, Job
+from jobscraper.models import AIVerdict, Job, mirrored_stage
 from jobscraper.prior import queue_prior
 from jobscraper.report import (
     RANK_TOP_WATCH,
@@ -154,6 +171,14 @@ from jobscraper.report import (
     rank_queue,
     refine_shortlist,
     same_profile,
+)
+from jobscraper.sentinel import (
+    default_seed,
+    rule_drop_gate,
+    sample_rule_drops,
+    sample_screen_rejects,
+    screen_gate,
+    sentinel_prefix,
 )
 from jobscraper.sources import linkedin
 from jobscraper.store import Store, still_listed
@@ -593,31 +618,25 @@ def read_verdict_lines(path: Path, schema) -> Iterator[tuple[str | None, object,
         yield job_id, parsed, None
 
 
-def import_verdicts(stage: str) -> None:
-    """Store a stage's ``verdicts/chunk-NN.jsonl`` answers, ``criteria`` and ``input_notes`` included.
+def _import_answers(store: Store, stage: str, chunks: list[Path], answers: list[Path]) -> list[str]:
+    """Store the answers to ``chunks`` found in ``answers`` as ``stage`` verdicts; print a summary.
 
-    Each verdict goes through :func:`jobscraper.ai.notes.store_verdict`, as on the API path: the
-    criteria are mapped onto the profile's weights and the input notes become run notes. A line
-    that fails the schema is printed and noted as ``verdict_invalid``.
-
-    Every verdict is stamped with ``profile_fingerprint(stage, ...)`` of the profile active at
-    import time, computed the same way export computed the system prompt it wrote. Were the
-    profile edited between export and import, the stamp would name the new profile although the
-    subagent read the old one; nothing here detects that.
+    ``stage`` is the name stamped on the verdicts; a sentinel stage takes the schema, the model
+    label and the profile fingerprint of the stage it mirrors. Returns the job ids stored, in
+    the order the chunks listed them.
     """
-    schema = Screening if stage == "prefilter" else Ranking
+    base = mirrored_stage(stage)
+    schema = Screening if base == "prefilter" else Ranking
     profile = load_settings().profile
     weights = profile.weights
-    profile_hash = profile_fingerprint(stage, profile)
-    out = _out_dir(stage)
+    profile_hash = profile_fingerprint(base, profile)
     expected: dict[str, str] = {}
-    for f in sorted(out.glob("chunk-*.json")):
+    for f in chunks:
         for rec in json.loads(f.read_text(encoding="utf-8")):
             expected[rec["job_id"]] = f.stem
-    store = Store()
     seen: set[str] = set()
     bad = 0
-    for f in sorted((out / "verdicts").glob("chunk-*.jsonl")):
+    for f in answers:
         for job_id, parsed, error in read_verdict_lines(f, schema):
             if error:
                 bad += 1
@@ -631,7 +650,7 @@ def import_verdicts(stage: str) -> None:
             if job_id in seen:
                 continue
             seen.add(job_id)
-            store_verdict(store, AIVerdict(job_id=job_id, stage=stage, model=MODEL[stage], prompt_version=PROMPT_VERSION,
+            store_verdict(store, AIVerdict(job_id=job_id, stage=stage, model=MODEL[base], prompt_version=PROMPT_VERSION,
                                            profile_hash=profile_hash, relevant=parsed.relevant, score=parsed.score, language_ok=parsed.language_ok,
                                            seniority_ok=parsed.seniority_ok, location_ok=parsed.location_ok,
                                            summary=parsed.summary, concerns=parsed.concerns,
@@ -643,9 +662,89 @@ def import_verdicts(stage: str) -> None:
     for job_id in missing:
         by_chunk[expected[job_id]] = by_chunk.get(expected[job_id], 0) + 1
     print(f"{stage}: imported {len(seen)} verdicts, {bad} bad lines, {len(missing)} missing" + (f" {by_chunk}" if by_chunk else ""))
+    return [job_id for job_id in expected if job_id in seen]
+
+
+def import_verdicts(stage: str) -> None:
+    """Store a stage's ``verdicts/chunk-NN.jsonl`` answers, ``criteria`` and ``input_notes`` included.
+
+    Each verdict goes through :func:`jobscraper.ai.notes.store_verdict`, as on the API path: the
+    criteria are mapped onto the profile's weights and the input notes become run notes. A line
+    that fails the schema is printed and noted as ``verdict_invalid``.
+
+    Every verdict is stamped with ``profile_fingerprint(stage, ...)`` of the profile active at
+    import time, computed the same way export computed the system prompt it wrote. Were the
+    profile edited between export and import, the stamp would name the new profile although the
+    subagent read the old one; nothing here detects that.
+    """
+    out = _out_dir(stage)
+    store = Store()
+    seen = _import_answers(store, stage, sorted(out.glob("chunk-*.json")),
+                           sorted((out / "verdicts").glob("chunk-*.jsonl")))
     if stage == "rank":
         # The round's memory: what this window did to the effective top N, and whether to go on.
-        _record_rank_window(store, [job_id for job_id in expected if job_id in seen])
+        _record_rank_window(store, seen)
+
+
+# --------------------------------------------------------------------------- sentinels
+# A random sample of each gate's rejects, judged by the stage after the gate: the only way to
+# measure false rejects that nothing downstream ever sees (see jobscraper.sentinel).
+
+#: What one sentinel export holds, per sentinel stage: (chunk file stem, mirrored stage).
+SENTINEL_CHUNKS = {"sentinel_prefilter": "chunk-prefilter-01", "sentinel_rank": "chunk-rank-01"}
+
+
+def export_sentinel(n: int | None, seed: int | None, max_chars: int | None) -> None:
+    """Write one sample of rule drops (for a Sonnet subagent) and one of screen rejects (Opus).
+
+    Both use the stages' own system prompts (``system-prefilter.txt``, ``system-rank.txt``) and
+    job prompts with the SENTINEL line in front. No reference scores go with the rank sample:
+    it is a measurement, not a window of the queue. Previous answers are cleared — they were
+    imported — and the jobs that already carry a sentinel verdict are not drawn again.
+    """
+    settings = load_settings()
+    ai = settings.profile.ai
+    n = ai.sentinel_sample if n is None else n
+    seed = default_seed() if seed is None else seed
+    store = Store()
+    jobs = _listed(store, settings)
+    filters = store.filter_results()
+    pre = store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS)
+    drops = sample_rule_drops(
+        jobs, filters, n, seed,
+        exclude=set(store.verdicts("sentinel_prefilter", COMPATIBLE_PROMPT_VERSIONS)))
+    rejects = sample_screen_rejects(
+        jobs, filters, pre, n, seed, min_score=ai.prefilter_min_score,
+        exclude=set(store.verdicts("sentinel_rank", COMPATIBLE_PROMPT_VERSIONS))
+        | set(store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)))
+    out = _out_dir("sentinel")
+    for old in [*out.glob("chunk-*.json"), *(out / "verdicts").glob("chunk-*.jsonl")]:
+        old.unlink()
+    for stage, sample, chars, gate in (
+            ("prefilter", drops, max_chars or 1500, lambda job: rule_drop_gate(filters.get(job.id))),
+            ("rank", rejects, max_chars or 6000, lambda job: screen_gate(pre[job.id]))):
+        (out / f"system-{stage}.txt").write_text(system_prompt(stage, settings.profile), encoding="utf-8")
+        batch = [{"job_id": j.id,
+                  "prompt": job_prompt(j, filters.get(j.id), chars, prefix=sentinel_prefix(gate(j)))}
+                 for j in sample]
+        (out / f"chunk-{stage}-01.json").write_text(json.dumps(batch, ensure_ascii=False, indent=0),
+                                                    encoding="utf-8")
+    print(f"sentinel: {len(drops)} rule drops → chunk-prefilter-01.json, {len(rejects)} screen "
+          f"rejects → chunk-rank-01.json (seed {seed}) in {out}")
+    print("  answer: verdicts/chunk-prefilter-01.jsonl (Sonnet, system-prefilter.txt, the Screening "
+          "fields) and verdicts/chunk-rank-01.jsonl (Opus, system-rank.txt, the Ranking fields incl. "
+          "why_apply, criteria); one JSON object per job with job_id and input_notes; then "
+          "`import sentinel`")
+
+
+def import_sentinel() -> None:
+    """Store both sentinel answers under ``sentinel_prefilter`` and ``sentinel_rank``."""
+    out = _out_dir("sentinel")
+    store = Store()
+    for stage, stem in SENTINEL_CHUNKS.items():
+        answer = out / "verdicts" / f"{stem}.jsonl"
+        _import_answers(store, stage, [p for p in [out / f"{stem}.json"] if p.is_file()],
+                        [answer] if answer.is_file() else [])
 
 
 # --------------------------------------------------------------------------- stability
@@ -806,7 +905,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["export", "import", "hydrate", "boost", "stability"])
     ap.add_argument("stage", nargs="?",
-                    choices=["prefilter", "rank", "refine", "linkedin", "export", "compare"],
+                    choices=["prefilter", "rank", "refine", "sentinel", "linkedin", "export", "compare"],
                     default=None,
                     help="stage for export/import, 'linkedin' for hydrate, 'export'/'compare' for"
                          " stability; ignored by boost")
@@ -827,8 +926,11 @@ def main() -> None:
                          "(a new scrape, or after changing the rules)")
     ap.add_argument("--max-fetch", type=int, default=None,
                     help="how many missing LinkedIn descriptions to fetch (0 disables); rank: 60, hydrate: 480")
-    ap.add_argument("--seed", type=int, default=1,
-                    help="stability export only: run-a shuffles with this seed, run-b with seed+1")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="stability export: run-a shuffles with this seed, run-b with seed+1 "
+                         "(default 1); export sentinel: the draw (default: today's date)")
+    ap.add_argument("--n", type=int, default=None,
+                    help="export sentinel: jobs per gate (default ai.sentinel_sample)")
     ap.add_argument("--sample", type=int, default=1, metavar="N",
                     help="export only: keep every N-th candidate (positions 0, N, 2N, ... after --top); 1 = all")
     ap.add_argument("--profile", default=os.environ.get("JOBSCRAPER_PROFILE") or None, metavar="NAME",
@@ -843,7 +945,8 @@ def main() -> None:
         return
     if a.action == "stability":
         if a.stage == "export":
-            stability_export(a.top or 30, a.chunk or 15, a.max_chars or 6000, a.seed)
+            stability_export(a.top or 30, a.chunk or 15, a.max_chars or 6000,
+                             1 if a.seed is None else a.seed)
         elif a.stage == "compare":
             stability_compare()
         else:
@@ -854,8 +957,15 @@ def main() -> None:
             ap.error("hydrate only knows the 'linkedin' stage")
         hydrate_top_linkedin(a.top or 480, 480 if a.max_fetch is None else a.max_fetch)
         return
+    if a.stage == "sentinel":
+        # Both samples in one export, both answers in one import: no chunking, no hydration.
+        if a.action == "export":
+            export_sentinel(a.n, a.seed, a.max_chars)
+        else:
+            import_sentinel()
+        return
     if a.stage not in ("prefilter", "rank", "refine"):
-        ap.error(f"{a.action} needs a stage: prefilter, rank or refine")
+        ap.error(f"{a.action} needs a stage: prefilter, rank, refine or sentinel")
     if a.stage == "refine":
         # One request over the whole shortlist: no chunking, no sampling, no hydration.
         if a.action == "export":
