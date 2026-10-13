@@ -16,13 +16,14 @@ MODE="${1:-push}"
 # What is mirrored (relative paths; a missing one is skipped):
 #   config/profile.yaml           the owner's CV and policies
 #   config/dossier-answers.md     the owner's questionnaire answers (docs/DOSSIER-QUESTIONNAIRE.md)
+#   config/dossier-notes/         notes on the owner's other repositories, read for the dossier
 #   config/profiles/              other candidates' profiles
 #   results/                      every report and diff, all profiles
 #   data/labels/                  hand labels (drop audit, eval sets)
 #   data/exports/ai/              prompt chunks + subagent verdicts of the last AI round
 #   data/serve/decisions.db       applied / skipped decisions from the web UI
 #   data/profiles/*/serve/decisions.db
-CONFIG_ITEMS=(config/profile.yaml config/dossier-answers.md config/profiles)
+CONFIG_ITEMS=(config/profile.yaml config/dossier-answers.md config/dossier-notes config/profiles)
 OUTPUT_ITEMS=(results data/labels data/exports/ai data/serve/decisions.db)
 
 if [ ! -d "$PRIVATE_DIR/.git" ]; then
