@@ -35,6 +35,10 @@ data/browser/
 config/profile.yaml
 # The owner's answers to docs/DOSSIER-QUESTIONNAIRE.md; condensed into the profile's dossier.
 config/dossier-answers.md
+# Notes on the owner's other repositories, read for the dossier (private, synced like the answers).
+config/dossier-notes/
+# Local-only learning plan (not synced anywhere).
+config/learning-plan.md
 
 # transfer archives built for the owner's laptop (see README-restore.txt inside)
 /jobscraper-owner-*.zip
