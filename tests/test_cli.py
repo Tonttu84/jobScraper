@@ -1644,3 +1644,168 @@ def test_the_report_leaves_out_a_posting_that_is_no_longer_listed(data_dir, fake
         store.close()
     text = (data_dir / "results").glob("report-*.md")
     assert "Left out: 1 posting no longer listed on their board" in next(text).read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------------ pipeline health notes
+
+
+def _notes(kind: str | None = None) -> list:
+    store = store_mod.Store()
+    try:
+        return store.notes(kind=kind)
+    finally:
+        store.close()
+
+
+def _serve(monkeypatch, name: str, counts: list[int]) -> None:
+    """Each scrape of ``name`` returns the next count of postings (the same ids every time)."""
+    from jobscraper.sources.base import get_source
+
+    queue = list(counts)
+
+    def fetch(ctx):
+        n = queue.pop(0)
+        return iter([p.model_copy(update={"description": "d" * 300}) for p in _postings(name, n)])
+
+    monkeypatch.setattr(get_source(name), "fetch", fetch)
+
+
+def test_scrape_notes_a_source_that_errored(data_dir, monkeypatch):
+    from jobscraper.sources.base import get_source
+
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: None)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({}))
+
+    def boom(ctx):
+        raise RuntimeError("the board is down")
+
+    monkeypatch.setattr(get_source("jobicy"), "fetch", boom)
+    assert runner.invoke(cli_mod.app, ["scrape", "jobicy"]).exit_code == 0
+    [note] = _notes()
+    assert (note.stage, note.kind, note.source) == ("scrape", "source_error", "jobicy")
+    assert note.message == "RuntimeError: the board is down"
+
+
+def test_scrape_notes_a_count_drop_and_keeps_the_takedown_counter_still(data_dir, monkeypatch):
+    from jobscraper.sources.base import get_source
+
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: None)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({}))
+    monkeypatch.setattr(get_source("remotive"), "complete_listing", True, raising=False)
+    _serve(monkeypatch, "remotive", [30, 5, 30, 29])
+
+    assert runner.invoke(cli_mod.app, ["scrape", "remotive"]).exit_code == 0
+    assert _notes() == []                          # nothing to compare the first run with
+
+    result = runner.invoke(cli_mod.app, ["scrape", "remotive"])
+    assert result.exit_code == 0, result.output
+    assert [n.kind for n in _notes()] == ["source_count_drop", "takedown_skipped"]
+    drop, skipped = _notes()
+    assert drop.data["fetched"] == 5 and drop.data["previous"] == 30
+    assert skipped.source == "remotive" and "5" in skipped.message and "30" in skipped.message
+    store = store_mod.Store()
+    try:
+        assert store.gone_ids(1) == set()          # 25 postings did not come back: not a takedown
+    finally:
+        store.close()
+
+    # the count recovers: the baseline is the last good run (30), and the counter works again
+    assert runner.invoke(cli_mod.app, ["scrape", "remotive"]).exit_code == 0
+    assert runner.invoke(cli_mod.app, ["scrape", "remotive"]).exit_code == 0
+    assert len(_notes()) == 2
+    store = store_mod.Store()
+    try:
+        assert len(store.gone_ids(1)) == 1         # the 30th posting is gone this time
+    finally:
+        store.close()
+
+
+def test_a_limited_scrape_is_not_compared_with_the_previous_count(data_dir, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: None)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({}))
+    _serve(monkeypatch, "remotive", [30, 2])
+    assert runner.invoke(cli_mod.app, ["scrape", "remotive"]).exit_code == 0
+    assert runner.invoke(cli_mod.app, ["scrape", "remotive", "--limit", "2"]).exit_code == 0
+    assert _notes("source_count_drop") == []
+
+
+def test_scrape_notes_a_source_whose_descriptions_are_missing(data_dir, monkeypatch):
+    from jobscraper.sources.base import get_source
+
+    monkeypatch.setattr(cli_mod, "_browser", lambda settings: None)
+    monkeypatch.setattr(cli_mod, "_http", lambda settings: FakeHttp({}))
+    monkeypatch.setattr(get_source("himalayas"), "fetch", lambda ctx: iter(_postings("himalayas", 12)))
+    assert runner.invoke(cli_mod.app, ["scrape", "himalayas"]).exit_code == 0
+    [note] = _notes()
+    assert (note.kind, note.source) == ("empty_descriptions", "himalayas")
+    assert note.data == {"thin": 12, "missing": 12, "fetched": 12, "share": 1.0}
+
+
+def test_filter_command_writes_borderline_language_notes(data_dir, monkeypatch):
+    from jobscraper.models import Job
+
+    monkeypatch.setattr(rules_mod, "detect_language", lambda text, minimum: ("pl", 0.81))
+    job = Job(source="arbeitnow", source_id="pl-1", url="https://x.test/pl", country="FI",
+              location_raw="Helsinki, Finland", title="Junior Software Developer",
+              company="Acme Oy", description="Lorem ipsum " * 20)
+    store = store_mod.Store()
+    try:
+        store.upsert_jobs([job])
+    finally:
+        store.close()
+
+    result = runner.invoke(cli_mod.app, ["filter"])
+    assert result.exit_code == 0, result.output
+    [note] = _notes("language_borderline")
+    assert (note.stage, note.source, note.job_id) == ("filter", "arbeitnow", job.id)
+    assert note.data == {"language": "pl", "confidence": 0.81, "min_confidence": 0.75}
+    assert "pl" in note.message and "0.81" in note.message and "0.75" in note.message
+
+
+def test_report_shows_the_notes_recorded_since_the_previous_report(data_dir, fake_http):
+    _scrape_and_filter(data_dir)
+    store = store_mod.Store()
+    try:
+        store.add_note("scrape", "source_error", "RuntimeError: the board is down", source="jobicy")
+    finally:
+        store.close()
+
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0
+    report_md = next((data_dir / "results").glob("report-*.md")).read_text(encoding="utf-8")
+    appendix = report_md[report_md.index("## Pipeline health"):]
+    assert "- **source_error**: 1 note" in appendix
+    assert "  - jobicy — RuntimeError: the board is down" in appendix
+    store = store_mod.Store()
+    try:
+        assert store.report().note_counts["source_error"] == 1
+    finally:
+        store.close()
+    diff_md = next((data_dir / "results").glob("diff-*.md")).read_text(encoding="utf-8")
+    assert "Pipeline health: new note kinds: source_error" in diff_md
+
+    # the next report starts from this one: the scrape's note was already shown
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0
+    report_md = next((data_dir / "results").glob("report-*.md")).read_text(encoding="utf-8")
+    assert report_md.rstrip().endswith("## Pipeline health\n\nNo pipeline notes this run.")
+
+
+def test_report_records_a_pass_disagreement_and_lists_it(data_dir, fake_http):
+    jobs = [p.model_copy(update={"title": f"Junior Developer {n}"})
+            for n, p in enumerate(_postings("arbeitnow", 4))]
+    store = store_mod.Store()
+    try:
+        store.upsert_jobs(jobs)
+        store.save_filter_results([FilterResult(job_id=j.id, status="keep") for j in jobs], "test")
+        for job, (rank_score, refine_score) in zip(jobs, [(80, 60), (80, 60), (80, 60), (90, 40)]):
+            _seed_verdict(store, job, "rank", rank_score)
+            _seed_verdict(store, job, "refine", refine_score, position=1)
+        flagged = jobs[3]
+    finally:
+        store.close()
+
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0
+    [note] = _notes("pass_disagreement")
+    assert note.job_id == flagged.id and note.data["residual"] == 22
+    report_md = next((data_dir / "results").glob("report-*.md")).read_text(encoding="utf-8")
+    appendix = report_md[report_md.index("## Pipeline health"):]
+    assert f"  - arbeitnow · {flagged.title} — rank 90" in appendix

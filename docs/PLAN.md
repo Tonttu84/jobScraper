@@ -548,6 +548,43 @@ the stored data — the owner wants one fresh run once the pending features are 
   `rules.today_utc`) — the arbeitnow fixture is from 2026-09-07 and `max_age_days: 20` had started
   dropping it, 15 tests failed on 2026-10-10 for no code reason.
 
+## Pipeline self-observation (agreed 2026-10-13, in progress)
+Why: the stages hide their own input problems. Measured on the stored verdicts: 992 of 6,266
+screen verdicts judge a title because the description never arrived; rule drops and screen
+rejects are never sampled, so `eval` cannot see a false reject (survivorship); the EPAM Junior
+C++ posting was re-posted after 35 days and the ranker called it fresh (fixed 2026-10-13: the job
+prompt now shows the pipeline's first-seen date). Rank vs refine agree after the 19.5-point
+offset (residual sd 9.3; one job over 20), so disagreement is a health line, not a system.
+
+Tasks, one Opus subagent each, sequential (shared files; browser tests fail under contention),
+each committed after a green `scripts/check.sh`:
+- **A. Pipeline health**: `run_notes` table + Store API; producers: source count drop vs the
+  previous complete run (and the takedown guard: a half-returned listing does not count misses),
+  source error, empty-description share per source, borderline language drops, rank/refine
+  residual > 20, cross-board duplicates in the ranked section; `## Pipeline health` appendix in
+  the report; `diff` names new note kinds.
+- **B. AI verdict fields**: `input_notes` on both AI schemas (categories: missing/truncated input,
+  a detected signal contradicting the text, an instruction that could not be applied, *profile
+  gap* = the verdict hinges on a fact about the candidate the profile does not state; "usually
+  empty"); `criteria` sub-scores (one 0-100 per rubric weight) on the rank verdict, stored beside
+  the holistic score, which still ranks; consistency note when |score − weighted sum| > 15;
+  notes flow into `run_notes`; import validates them on the subagent path.
+- **C. Versioning**: `profile_hash` (hash of the rendered system prompt) on every verdict;
+  reference anchors restricted to the current hash (first window after a profile change runs
+  without anchors); `jobscraper compare-verdicts --old V --new V` (deltas, flips, top-N overlap,
+  biggest movers) for comparing prompt versions.
+- **E. Skip reasons**: one-tap reasons on the web UI's skip button (wrong stack, level, location,
+  consultancy, company, duplicate/applied, posting gone, pay, other+note), stored on the
+  decision; `eval` prints their distribution. Answers questionnaire 8.2 continuously and gives
+  lever 2 structured anchors.
+- **D. Sentinels**: each run, rank ~10 random screen rejects and screen ~10 random rule drops,
+  stored under their own stage names so they never enter the shortlist; the report shows the
+  false-reject estimate per gate and any sentinel find scoring 70+.
+- **Then**: bump `PROMPT_VERSION`, keep `COMPATIBLE_PROMPT_VERSIONS` to the new one, and re-run
+  screen → rank → refine through subagents on the *existing* scrape (no re-scrape). The old
+  verdicts stay under the old version; `compare-verdicts` shows what the dossier and the new
+  fields changed. Owner 2026-10-13: "don't overwrite the old ones, keep both".
+
 ## Later ideas
 - ~~Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.~~
   Done: `jobscraper report` diffs itself against the previous snapshot in the same database and

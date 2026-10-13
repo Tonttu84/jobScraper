@@ -1102,3 +1102,181 @@ def test_build_snapshot_counts_the_postings_left_out(state):
     snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1", gone=3)
     assert snap.counts["gone"] == 3
     assert snap.counts["jobs"] == 3  # the jobs that are still listed, as everywhere else
+
+
+# ------------------------------------------------------------------ pipeline health
+
+
+def _note(kind: str, message: str, *, stage: str = "scrape", source: str | None = None,
+          job_id: str | None = None, n: int = 1):
+    from jobscraper.models import RunNote
+
+    return RunNote(id=n, created_at=datetime(2026, 10, 13, 6, 0, tzinfo=UTC), stage=stage,
+                   kind=kind, source=source, job_id=job_id, message=message)
+
+
+@pytest.fixture
+def disagreement_state():
+    """Four shortlisted jobs; the refine pass marked the last one far below its rank score."""
+    jobs = [make_job(f"s-{n}", f"Junior Developer {n}") for n in range(4)]
+    filters = {j.id: FilterResult(job_id=j.id, status="keep", location_tier=1) for j in jobs}
+    rank = {j.id: make_verdict(j.id, "rank", s) for j, s in zip(jobs, (80, 80, 80, 90))}
+    refine = {j.id: make_refine(j.id, s, p) for j, s, p in zip(jobs, (60, 60, 60, 40), (1, 2, 3, 4))}
+    return jobs, filters, rank, refine
+
+
+def test_pass_disagreements_flag_a_residual_over_twenty(disagreement_state):
+    from jobscraper.report import pass_disagreements
+
+    jobs, filters, rank, refine = disagreement_state
+    # offset = mean(20, 20, 20, 50) = 27.5; 40 + 27.5 -> 68; 90 - 68 = 22
+    [d] = pass_disagreements(jobs, filters, rank, refine)
+    assert d.job.id == jobs[3].id
+    assert (d.rank, d.refine, d.calibrated, d.offset, d.residual) == (90, 40, 68, 27.5, 22)
+
+
+def test_pass_disagreements_skip_drops_and_jobs_with_one_verdict(disagreement_state):
+    from jobscraper.report import pass_disagreements
+
+    jobs, filters, rank, refine = disagreement_state
+    filters[jobs[3].id] = FilterResult(job_id=jobs[3].id, status="drop")
+    assert pass_disagreements(jobs, filters, rank, refine) == []
+    filters[jobs[3].id] = FilterResult(job_id=jobs[3].id, status="keep")
+    del refine[jobs[3].id]
+    assert pass_disagreements(jobs, filters, rank, refine) == []
+
+
+def test_duplicate_listings_pair_ranked_jobs_with_the_same_company_and_title():
+    from jobscraper.report import duplicate_listings
+
+    a = make_job("a", "Junior Developer", source="linkedin", company="Acme Oy")
+    b = make_job("b", "Junior developer", source="duunitori", company="Acme")
+    c = make_job("c", "Junior Developer", source="indeed", company="Other")
+    unranked = make_job("d", "Junior Developer", source="jobly", company="Acme")
+    nameless = make_job("e", "Junior Developer", source="linkedin", company=None)  # no key at all
+    jobs = [a, b, c, unranked, nameless]
+    filters = {j.id: FilterResult(job_id=j.id, status="keep") for j in jobs}
+    rank = {j.id: make_verdict(j.id, "rank", 70) for j in (a, b, c, nameless)}
+
+    pairs = duplicate_listings(jobs, filters, rank)
+    assert [{x.id, y.id} for x, y in pairs] == [{a.id, b.id}]
+    # an alias folds the third company into the same group: two pairs, both against one job
+    folded = duplicate_listings(jobs, filters, rank, aliases={"Other": "Acme"})
+    assert len(folded) == 2 and len({x.id for x, _ in folded}) == 1
+    filters[b.id] = FilterResult(job_id=b.id, status="drop")
+    assert duplicate_listings(jobs, filters, rank) == []
+
+
+def test_record_report_notes_writes_disagreements_and_duplicates(tmp_path, disagreement_state):
+    from jobscraper.report import record_report_notes
+    from jobscraper.store import Store
+
+    jobs, filters, rank, refine = disagreement_state
+    twin = make_job("twin", jobs[0].title, source="linkedin")
+    jobs = [*jobs, twin]
+    filters[twin.id] = FilterResult(job_id=twin.id, status="keep")
+    rank = {**rank, twin.id: make_verdict(twin.id, "rank", 50)}
+
+    store = Store(tmp_path / "jobs.db")
+    try:
+        assert record_report_notes(store, jobs, filters, rank, refine) == 2
+        notes = {n.kind: n for n in store.notes(stage="report")}
+    finally:
+        store.close()
+    gap = notes["pass_disagreement"]
+    assert gap.job_id == jobs[3].id and gap.source == "teamtailor"
+    assert gap.data == {"rank": 90, "refine": 40, "refine_calibrated": 68, "offset": 27.5,
+                        "residual": 22}
+    assert "rank 90" in gap.message and "refine 68" in gap.message and "+22" in gap.message
+    dup = notes["duplicate_listing"]
+    assert set(dup.data["job_ids"]) == {jobs[0].id, twin.id}
+    assert set(dup.data["sources"]) == {"teamtailor", "linkedin"}
+    assert "linkedin" in dup.message and "teamtailor" in dup.message
+
+
+def test_write_report_ends_with_the_pipeline_health_appendix(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    ranked_job = jobs[0]
+    notes = [
+        _note("source_error", "RuntimeError: the board is down", source="jobicy", n=1),
+        *[_note("empty_descriptions", f"{n} of 10 thin", source=f"src{n}", n=10 + n) for n in range(7)],
+        _note("language_borderline", "pl at 0.80", stage="filter", job_id="not-in-window", n=20),
+        _note("pass_disagreement", "rank 90 vs refine 68: residual +22", stage="report",
+              source="teamtailor", job_id=ranked_job.id, n=30),
+    ]
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md",
+                        notes=notes).read_text(encoding="utf-8")
+
+    appendix = text[text.index("## Pipeline health"):]
+    assert text.rstrip().endswith(appendix.rstrip())   # the last section of the report
+    assert "- **source_error**: 1 note\n" in appendix
+    assert "  - jobicy — RuntimeError: the board is down" in appendix
+    assert "- **empty_descriptions**: 7 notes" in appendix
+    assert "  - src4 — 4 of 10 thin" in appendix
+    assert "src5" not in appendix and "  - … and 2 more" in appendix   # five examples at most
+    assert "  - pl at 0.80" in appendix                  # no source, job outside the window
+    assert "- **pass_disagreement**: 1 note" in appendix
+    assert f"  - teamtailor · {ranked_job.title} — rank 90 vs refine 68: residual +22" in appendix
+    # kinds in the order the pipeline wrote them
+    assert appendix.index("source_error") < appendix.index("empty_descriptions") \
+        < appendix.index("language_borderline") < appendix.index("pass_disagreement")
+
+
+def test_write_report_lists_every_pass_disagreement_and_duplicate(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    notes = [_note("duplicate_listing", f"pair {n}", stage="report", n=n) for n in range(7)]
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md",
+                        notes=notes).read_text(encoding="utf-8")
+    assert all(f"  - pair {n}" in text for n in range(7))
+    assert "more" not in text[text.index("## Pipeline health"):]
+
+
+def test_write_report_says_so_when_there_are_no_pipeline_notes(tmp_path, state):
+    jobs, filters, prefilter, ranked = state
+    text = write_report(jobs, filters, prefilter, ranked, tmp_path / "r.md").read_text(
+        encoding="utf-8")
+    assert text.rstrip().endswith("## Pipeline health\n\nNo pipeline notes this run.")
+
+
+def test_build_snapshot_counts_the_notes_by_kind(state):
+    jobs, filters, prefilter, ranked = state
+    notes = [_note("source_error", "a"), _note("source_error", "b"), _note("takedown_skipped", "c")]
+    snap = build_snapshot(jobs, filters, prefilter, ranked, days=7, prompt_version="v1", notes=notes)
+    assert snap.note_counts == {"source_error": 2, "takedown_skipped": 1}
+    assert build_snapshot(jobs, filters, prefilter, ranked, days=7,
+                          prompt_version="v1").note_counts == {}
+
+
+def test_diff_reports_names_the_note_kinds_that_are_new():
+    old = make_snapshot(1)
+    old.note_counts = {"source_error": 1}
+    new = make_snapshot(2)
+    new.note_counts = {"source_error": 3, "takedown_skipped": 1, "empty_descriptions": 2}
+    assert diff_reports(new, old).new_note_kinds == ["empty_descriptions", "takedown_skipped"]
+    assert diff_reports(old, None).new_note_kinds == ["source_error"]
+    assert diff_reports(old, new).new_note_kinds == []
+
+
+def test_render_diff_prints_the_new_note_kinds(diff_state):
+    jobs_by_id, ranked_verdicts, prefilter_verdicts, old, new = diff_state
+    new.note_counts = {"source_count_drop": 1, "takedown_skipped": 1}
+    text = render_diff(diff_reports(new, old), jobs_by_id, ranked_verdicts, prefilter_verdicts)
+    assert "Pipeline health: new note kinds: source_count_drop, takedown_skipped" in text
+
+    new.note_counts = {}
+    quiet = render_diff(diff_reports(new, old), jobs_by_id, ranked_verdicts, prefilter_verdicts)
+    assert "Pipeline health" not in quiet
+
+
+def test_notes_anchor_is_the_newest_stored_report(tmp_path):
+    from jobscraper.report import notes_anchor
+    from jobscraper.store import Store
+
+    store = Store(tmp_path / "jobs.db")
+    try:
+        assert notes_anchor(store) is None
+        store.save_report(make_snapshot(created_at=datetime(2026, 10, 1, tzinfo=UTC)))
+        store.save_report(make_snapshot(created_at=datetime(2026, 10, 12, tzinfo=UTC)))
+        assert notes_anchor(store) == datetime(2026, 10, 12, tzinfo=UTC)
+    finally:
+        store.close()

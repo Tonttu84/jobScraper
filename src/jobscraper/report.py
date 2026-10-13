@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jobscraper.config import paths
-from jobscraper.filters.rules import CLOSING_SOON_DAYS
+from jobscraper.filters.rules import CLOSING_SOON_DAYS, fold_aliases, posting_key
 from jobscraper.models import (
     AIVerdict,
     FilterResult,
@@ -18,6 +20,7 @@ from jobscraper.models import (
     ReportItem,
     ReportMove,
     ReportSnapshot,
+    RunNote,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle: store imports models, not report
@@ -293,9 +296,145 @@ def gone_line(gone: int) -> str:
     return f"Left out: {gone} posting{'s' if gone != 1 else ''} no longer listed on their board"
 
 
+# ------------------------------------------------------------------ pipeline health
+
+#: A shortlisted job whose rank score and calibrated refine score differ by more than this is a
+#: posting the two passes read differently (measured 2026-10-13: residual sd 9.3, offset 19.5).
+PASS_DISAGREEMENT_POINTS = 20
+
+#: Example lines per note kind in the report's appendix...
+HEALTH_EXAMPLES = 5
+#: ...except for these, which name postings the owner should read himself: all of them are listed.
+HEALTH_LIST_ALL = frozenset({"pass_disagreement", "duplicate_listing"})
+
+
+def _ranked_section(jobs: list[Job], filters: dict[str, FilterResult],
+                    ranked: dict[str, AIVerdict]) -> dict[str, AIVerdict]:
+    """The rank verdicts the report's ranked section shows: not dropped, job in the window."""
+    in_window = {j.id for j in jobs}
+    dropped = {f.job_id for f in filters.values() if f.status == "drop"}
+    return {k: v for k, v in ranked.items() if k not in dropped and k in in_window}
+
+
+@dataclass(frozen=True)
+class PassDisagreement:
+    """One shortlisted job the rank and refine passes scored far apart."""
+
+    job: Job
+    rank: int
+    refine: int
+    calibrated: int
+    offset: float
+    residual: int
+
+
+def pass_disagreements(jobs: list[Job], filters: dict[str, FilterResult],
+                       ranked: dict[str, AIVerdict], refine: dict[str, AIVerdict], *,
+                       threshold: int = PASS_DISAGREEMENT_POINTS) -> list[PassDisagreement]:
+    """Ranked jobs with both verdicts whose residual (rank minus calibrated refine) is more than
+    ``threshold`` either way, in ranked order.
+
+    The offset is the one :func:`write_report` calibrates with, so the residual is exactly what
+    the averaged score hides: two passes that agree on the ordering in general but not on this
+    posting.
+    """
+    dropped = {f.job_id for f in filters.values() if f.status == "drop"}
+    offset = refine_offset({k: v for k, v in ranked.items() if k not in dropped}, refine)
+    by_id = {j.id: j for j in jobs}
+    out: list[PassDisagreement] = []
+    for v in sorted(_ranked_section(jobs, filters, ranked).values(), key=rank_order(refine, offset)):
+        r = refine.get(v.job_id)
+        if r is None:
+            continue
+        calibrated = calibrated_refine(r.score, offset)
+        residual = v.score - calibrated
+        if abs(residual) > threshold:
+            out.append(PassDisagreement(by_id[v.job_id], v.score, r.score, calibrated, offset, residual))
+    return out
+
+
+def duplicate_listings(jobs: list[Job], filters: dict[str, FilterResult],
+                       ranked: dict[str, AIVerdict], *,
+                       aliases: dict[str, str] | None = None) -> list[tuple[Job, Job]]:
+    """Pairs of ranked jobs that are one posting on two boards, by dedupe's own key.
+
+    Dedupe runs over one filter window, so a copy seen on another day, or spelled differently
+    then, can still reach the ranked section twice. Each extra copy is paired with the first
+    one in score order.
+    """
+    alias_map = fold_aliases(aliases)
+    by_id = {j.id: j for j in jobs}
+    groups: dict[tuple[str, str], list[Job]] = {}
+    for v in sorted(_ranked_section(jobs, filters, ranked).values(), key=lambda v: (-v.score, v.job_id)):
+        job = by_id[v.job_id]
+        if job.company:
+            groups.setdefault(posting_key(job, alias_map), []).append(job)
+    return [(first, other) for first, *others in groups.values() for other in others]
+
+
+def record_report_notes(store: Store, jobs: list[Job], filters: dict[str, FilterResult],
+                        ranked: dict[str, AIVerdict], refine: dict[str, AIVerdict] | None = None,
+                        *, aliases: dict[str, str] | None = None) -> int:
+    """Write the report-time notes (``pass_disagreement``, ``duplicate_listing``); returns how many."""
+    written = 0
+    for d in pass_disagreements(jobs, filters, ranked, refine or {}):
+        store.add_note(
+            "report", "pass_disagreement",
+            f"rank {d.rank} vs refine {d.calibrated} on the rank scale (raw {d.refine}, "
+            f"offset {d.offset:+.1f}): residual {d.residual:+d}",
+            source=d.job.source, job_id=d.job.id,
+            data={"rank": d.rank, "refine": d.refine, "refine_calibrated": d.calibrated,
+                  "offset": d.offset, "residual": d.residual})
+        written += 1
+    for first, other in duplicate_listings(jobs, filters, ranked, aliases=aliases):
+        store.add_note(
+            "report", "duplicate_listing",
+            f"ranked twice: on {first.source} and on {other.source} as {other.title!r} "
+            f"({other.company})",
+            source=first.source, job_id=first.id,
+            data={"job_ids": [first.id, other.id], "sources": [first.source, other.source]})
+        written += 1
+    return written
+
+
+def notes_anchor(store: Store) -> datetime | None:
+    """Where the current run's notes start: the newest stored report's ``created_at``.
+
+    ``report`` asks before it stores its own snapshot, so the cut is the previous report.
+    Everything one pipeline run writes (scrape, filter, the report itself) lands after it, and
+    each note is shown in exactly one report: re-running ``report`` without a new scrape shows
+    only its own report-time notes. None (no report yet) means every note in the database.
+    """
+    latest = next(iter(store.reports()), None)
+    return latest.created_at if latest else None
+
+
+def health_lines(notes: list[RunNote], by_id: dict[str, Job]) -> list[str]:
+    """The ``## Pipeline health`` appendix: per kind a count line, then example lines."""
+    lines = ["## Pipeline health", ""]
+    if not notes:
+        return [*lines, "No pipeline notes this run.", ""]
+    groups: dict[str, list[RunNote]] = {}
+    for note in notes:  # oldest first: kinds appear in the order the pipeline wrote them
+        groups.setdefault(note.kind, []).append(note)
+    for kind, group in groups.items():
+        lines.append(f"- **{kind}**: {len(group)} note{'s' if len(group) != 1 else ''}")
+        shown = group if kind in HEALTH_LIST_ALL else group[:HEALTH_EXAMPLES]
+        for note in shown:
+            job = by_id.get(note.job_id) if note.job_id else None
+            where = " · ".join(part for part in (note.source, job.title if job else None) if part)
+            lines.append(f"  - {where} — {note.message}" if where else f"  - {note.message}")
+        if len(group) > len(shown):
+            lines.append(f"  - … and {len(group) - len(shown)} more")
+    lines.append("")
+    return lines
+
+
 def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
                  ranked: dict[str, AIVerdict], path: Path | None = None, cost: dict | None = None,
-                 refine: dict[str, AIVerdict] | None = None, gone: int = 0) -> Path:
+                 refine: dict[str, AIVerdict] | None = None, gone: int = 0,
+                 notes: list[RunNote] | None = None) -> Path:
+    """The markdown report; ``notes`` (this run's, see :func:`notes_anchor`) form its appendix."""
     refine = refine or {}
     path = path or paths().results / f"report-{datetime.now(UTC):%Y-%m-%d}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -344,6 +483,7 @@ def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: d
                 lines.append(f"| [{j.title}]({j.url}) | {j.company or ''} | {j.source} | {'; '.join(f.reasons)} |")
         lines.append("")
 
+    lines += health_lines(notes or [], by_id)
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
 
@@ -351,7 +491,8 @@ def write_report(jobs: list[Job], filters: dict[str, FilterResult], prefilter: d
 def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter: dict[str, AIVerdict],
                    ranked: dict[str, AIVerdict], *, days: int, cost: dict | None = None,
                    path: Path | None = None, prompt_version: str,
-                   refine: dict[str, AIVerdict] | None = None, gone: int = 0) -> ReportSnapshot:
+                   refine: dict[str, AIVerdict] | None = None, gone: int = 0,
+                   notes: list[RunNote] | None = None) -> ReportSnapshot:
     """The same content as :func:`write_report`, in structured form for the DB and the web UI.
 
     Sections and their ordering mirror the markdown exactly: ranked by effective score desc
@@ -360,7 +501,8 @@ def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter:
     reached the AI (capped at 300, as in the markdown).
 
     The refine scores are read on the rank stage's scale first; the shift that took them there
-    is measured once here and kept on the snapshot as ``refine_offset``.
+    is measured once here and kept on the snapshot as ``refine_offset``. ``note_counts`` holds
+    how many of the appendix's ``notes`` there were per kind, for :func:`diff_reports`.
     """
     refine = refine or {}
     by_id = {j.id: j for j in jobs}
@@ -399,7 +541,8 @@ def build_snapshot(jobs: list[Job], filters: dict[str, FilterResult], prefilter:
     }
     return ReportSnapshot(days=days, prompt_version=prompt_version, counts=counts,
                           cost=dict(cost or {}), path=str(path) if path else None, items=items,
-                          refine_offset=offset if refine else None)
+                          refine_offset=offset if refine else None,
+                          note_counts=dict(Counter(n.kind for n in notes or [])))
 
 
 # ------------------------------------------------- "what's new" between reports
@@ -441,6 +584,10 @@ def diff_reports(new: ReportSnapshot, old: ReportSnapshot | None) -> ReportDiff:
         gone_ranked=[i for i in old_ranked_items if i.job_id not in now_ranked],
         new_prefilter=[i for i in new_pre if i.job_id not in old_pre and i.job_id not in old_ranked],
         moved=moved,
+        # A kind seen for the first time is the one worth a line in the diff: a source that has
+        # been failing for a week is old news, one that started failing today is not.
+        new_note_kinds=sorted(k for k, n in new.note_counts.items()
+                              if n and not (old.note_counts.get(k) if old else 0)),
     )
 
 
@@ -465,6 +612,8 @@ def render_diff(diff: ReportDiff, jobs_by_id: dict[str, Job], ranked_verdicts: d
     if diff.old_id is None:
         lines += ["First report in this database — nothing to diff against.", ""]
     lines += [_counts_line(diff), ""]
+    if diff.new_note_kinds:
+        lines += [f"Pipeline health: new note kinds: {', '.join(diff.new_note_kinds)}", ""]
 
     new_ranked = [(i, jobs_by_id[i.job_id]) for i in diff.new_ranked if i.job_id in jobs_by_id]
     if new_ranked:

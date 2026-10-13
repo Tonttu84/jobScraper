@@ -159,6 +159,30 @@ class ReportSnapshot(BaseModel):
                           "refine pass did not run",
     )
     items: list[ReportItem] = Field(default_factory=list)
+    note_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Pipeline-health notes shown in this report, per kind (see RunNote); empty "
+                    "for a report written before notes existed",
+    )
+
+
+class RunNote(BaseModel):
+    """One thing that went wrong with the pipeline's inputs or process, not with a job's fit.
+
+    A source that returned a fraction of its listing, descriptions that never arrived, two AI
+    passes that disagree on one posting: facts the report owes the owner, because otherwise they
+    only show up as a quietly worse shortlist. Append-only; ``created_at`` places a note in the
+    pipeline run that wrote it (see ``report.notes_anchor``).
+    """
+
+    id: int | None = None
+    created_at: datetime
+    stage: str = Field(description="Pipeline stage that wrote it: scrape, filter, report")
+    kind: str = Field(description="Machine-readable class, e.g. 'source_count_drop'")
+    source: str | None = None
+    job_id: str | None = None
+    message: str
+    data: dict[str, Any] | None = Field(None, description="The numbers behind the message")
 
 
 class ReportMove(BaseModel):
@@ -192,6 +216,8 @@ class ReportDiff(BaseModel):
     gone_ranked: list[ReportItem] = Field(default_factory=list, description="Ranked before, not ranked now")
     new_prefilter: list[ReportItem] = Field(default_factory=list, description="In prefilter now, in neither section before")
     moved: list[ReportMove] = Field(default_factory=list, description="Ranked in both, score moved by ≥ MOVED_THRESHOLD")
+    new_note_kinds: list[str] = Field(default_factory=list,
+                                      description="Pipeline-health note kinds present now, absent before")
 
 
 class JobFacets(BaseModel):

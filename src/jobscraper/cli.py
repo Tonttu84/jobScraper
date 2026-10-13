@@ -36,7 +36,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from jobscraper import config
+from jobscraper import config, health
 from jobscraper import store as store_mod
 from jobscraper.audit import (
     read_labels,
@@ -238,16 +238,25 @@ def _book_fetch(store: Store, name: str, src: Source, run_id: int, t0: float, li
     try:
         jobs = result()
     except Exception as exc:
-        console.print(f"[red]✗ {name}[/red]: {type(exc).__name__}: {exc}")
-        store.finish_run(run_id, 0, 0, f"{type(exc).__name__}: {exc}")
+        error = f"{type(exc).__name__}: {exc}"
+        console.print(f"[red]✗ {name}[/red]: {error}")
+        store.finish_run(run_id, 0, 0, error)
+        health.note_source_error(store, name, error)
         return
     new = store.upsert_jobs(jobs, run_id)
     store.finish_run(run_id, len(jobs), new)
+    # A --limit'ed fetch is short on purpose; holding it to the last full run says nothing.
+    previous = health.check_count(store, name, run_id, len(jobs)) if limit is None else None
+    health.check_descriptions(store, name, jobs)
     # Only a run that really enumerated the whole listing may call anything gone: an
-    # empty fetch, a keyword-search source and a --limit'ed fetch all say nothing.
+    # empty fetch, a keyword-search source and a --limit'ed fetch all say nothing — and
+    # neither does a listing that came back at a fraction of its usual size.
     if jobs and limit is None and enumerates_listing(src):
-        log.debug("%s: %d posting(s) did not come back in this run", name,
-                  store.mark_missing(name, run_id))
+        if previous is not None:
+            health.note_takedown_skipped(store, name, fetched=len(jobs), previous=previous)
+        else:
+            log.debug("%s: %d posting(s) did not come back in this run", name,
+                      store.mark_missing(name, run_id))
     console.print(f"[green]✓ {name}[/green]: {len(jobs)} jobs, {new} new ({time.monotonic() - t0:.0f}s)")
 
 
@@ -259,7 +268,18 @@ def filter_cmd(days: int = 30, verbose: bool = typer.Option(False, "--verbose", 
     store = Store()
     jobs = store.jobs(seen_within_days=days)
     unique, dups = dedupe(jobs, settings.profile.location, aliases=settings.company_aliases)
-    results = apply_rules(unique, settings.profile)
+    borderline: list = []
+    results = apply_rules(unique, settings.profile, borderline=borderline)
+    # A drop decided by a detection barely over the threshold is the rule filter's least certain
+    # call; the report lists them so a misread language is visible (the decision stands).
+    minimum = settings.profile.languages.min_confidence
+    for b in borderline:
+        store.add_note("filter", "language_borderline",
+                       f"dropped as written in {b.language} at confidence {b.confidence:.2f} "
+                       f"(threshold {minimum:.2f})",
+                       source=b.source, job_id=b.job_id,
+                       data={"language": b.language, "confidence": round(b.confidence, 3),
+                             "min_confidence": minimum})
     dup_results = []
     from jobscraper.models import FilterResult
     for kept, others in dups.items():
@@ -711,26 +731,36 @@ def report(days: int = 30, out: Path | None = None) -> None:
         build_snapshot,
         diff_reports,
         export_jsonl,
+        notes_anchor,
         prepend_section,
         previous_report,
+        record_report_notes,
         render_diff,
         render_new_section,
         write_report,
     )
 
+    settings = load_settings()
     store = Store()
     jobs, gone = partition_listed(store.jobs(seen_within_days=days), store,
-                                  load_settings().profile.gone_after_misses)
+                                  settings.profile.gone_after_misses)
     filters = store.filter_results()
     pre = store.verdicts("prefilter", COMPATIBLE_PROMPT_VERSIONS)
     ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
     refined = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
     cost = estimate_cost(list(pre.values()) + list(ranked.values()) + list(refined.values()))
-    path = write_report(jobs, filters, pre, ranked, out, cost, refine=refined, gone=len(gone))
+    # This run's pipeline-health notes: everything since the previous report, plus the ones only
+    # the finished state can show (two passes far apart, one posting ranked twice).
+    since = notes_anchor(store)
+    record_report_notes(store, jobs, filters, ranked, refined, aliases=settings.company_aliases)
+    notes = store.notes(since=since)
+    path = write_report(jobs, filters, pre, ranked, out, cost, refine=refined, gone=len(gone),
+                        notes=notes)
     jsonl = export_jsonl([j for j in jobs if filters.get(j.id) and filters[j.id].status != "drop"], filters, {**pre, **ranked},
                          config.paths().data / "exports" / "filtered.jsonl")
     snap = store.save_report(build_snapshot(jobs, filters, pre, ranked, days=days, cost=cost, path=path,
-                                            prompt_version=PROMPT_VERSION, refine=refined, gone=len(gone)))
+                                            prompt_version=PROMPT_VERSION, refine=refined, gone=len(gone),
+                                            notes=notes))
 
     # The web UI needs facets for everything it shows; fill in whatever `filter` never saw.
     item_ids = list(dict.fromkeys(i.job_id for i in snap.items))

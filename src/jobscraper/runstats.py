@@ -134,6 +134,8 @@ def collect(store: Store, snapshot: ReportSnapshot, settings: Settings, *,
         # How far apart the two AI raters' 0-100 scales were on this shortlist; null when the
         # refine pass did not run. A counter about the graders, not about any posting.
         "refine_offset": snapshot.refine_offset,
+        # How many pipeline-health notes the report carried: a count, never their text.
+        "pipeline_notes": sum(snapshot.note_counts.values()),
         "versions": {"rules": RULES_VERSION, "prompt": snapshot.prompt_version},
         "models": {"prefilter": ai.prefilter_model, "rank": ai.rank_model},
         "cost_usd": round(float(snapshot.cost.get("total", 0.0)), 4),

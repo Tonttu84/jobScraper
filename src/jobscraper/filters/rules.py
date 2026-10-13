@@ -11,6 +11,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from datetime import UTC, date, datetime
+from typing import NamedTuple
 
 from jobscraper.config import LocationPolicy, Profile
 from jobscraper.filters.deadline import find_deadline
@@ -23,6 +24,19 @@ RULES_VERSION = "2026-10-10a"
 
 #: A deadline this near is worth putting in front of the reader (report bullet, UI tag).
 CLOSING_SOON_DAYS = 7
+
+#: A language drop whose detection confidence is less than this far above
+#: ``languages.min_confidence`` is reported as borderline (it is still dropped).
+LANGUAGE_BORDERLINE_MARGIN = 0.10
+
+
+class LanguageBorderline(NamedTuple):
+    """A posting dropped for its language alone, on a detection just over the threshold."""
+
+    job_id: str
+    source: str
+    language: str
+    confidence: float
 
 _YEARS_RE = re.compile(
     r"(?:(?:at least|minimum|min\.?|minimum of|over|more than|vähintään|yli|mindestens|mind\.|über|"
@@ -110,7 +124,14 @@ def today_utc() -> date:
     return datetime.now(UTC).date()
 
 
-def evaluate(job: Job, profile: Profile, today: date | None = None) -> FilterResult:
+def evaluate(job: Job, profile: Profile, today: date | None = None, *,
+             borderline: list[LanguageBorderline] | None = None) -> FilterResult:
+    """The rule filter's verdict on one job.
+
+    ``borderline``, when given, collects the job if the posting language alone dropped it on a
+    detection within :data:`LANGUAGE_BORDERLINE_MARGIN` of the threshold. It only listens: the
+    verdict is the same with or without it.
+    """
     reasons: list[str] = []
     review: list[str] = []
     signals: dict = {}
@@ -166,11 +187,13 @@ def evaluate(job: Job, profile: Profile, today: date | None = None) -> FilterRes
     # ------------------------------------------------------------- language
     lang = profile.languages
     code, conf = detect_language(job.description or job.title, lang.min_confidence)
+    language_reason = None
     if code:
         job.posting_language = code
         signals["posting_language"] = code
         if code in lang.drop_if_written_in:
-            reasons.append(f"posting written in {code} (confidence {conf:.2f})")
+            language_reason = f"posting written in {code} (confidence {conf:.2f})"
+            reasons.append(language_reason)
         elif code in lang.weak:
             review.append(f"posting written in {code}")
     req = find_language_requirements(text)
@@ -244,6 +267,9 @@ def evaluate(job: Job, profile: Profile, today: date | None = None) -> FilterRes
         signals["evergreen"] = cue
 
     status = "drop" if reasons else ("review" if review else "keep")
+    if (borderline is not None and language_reason is not None and reasons == [language_reason]
+            and conf < lang.min_confidence + LANGUAGE_BORDERLINE_MARGIN):
+        borderline.append(LanguageBorderline(job.id, job.source, code, conf))
     return FilterResult(job_id=job.id, status=status, reasons=reasons + review, signals=signals, location_tier=tier)
 
 
@@ -284,6 +310,22 @@ def company_key(name: str | None) -> str:
     return " ".join(words)
 
 
+def fold_aliases(aliases: dict[str, str] | None) -> dict[str, str]:
+    """``company_aliases`` from sources.yaml with both sides put through :func:`company_key`."""
+    return {company_key(k): company_key(v) for k, v in (aliases or {}).items()}
+
+
+def posting_key(job: Job, alias_map: dict[str, str] | None = None) -> tuple[str, str]:
+    """(company, title) normalised the way :func:`dedupe` compares postings across boards.
+
+    ``alias_map`` is the output of :func:`fold_aliases`. The report reuses this to spot a
+    duplicate that slipped past dedupe into the ranked section.
+    """
+    title = re.sub(r"[^a-z0-9]+", " ", (job.title or "").lower()).strip()
+    company = company_key(job.company)
+    return (alias_map or {}).get(company, company), title
+
+
 def dedupe(jobs: list[Job], location: LocationPolicy | None = None, *,
            aliases: dict[str, str] | None = None) -> tuple[list[Job], dict[str, list[str]]]:
     """Collapse the same posting seen on several boards. Returns (unique_jobs, {kept_id: [dup_ids]}).
@@ -305,12 +347,7 @@ def dedupe(jobs: list[Job], location: LocationPolicy | None = None, *,
     reach; a remote posting is kept whatever its country says, when the profile keeps all remote.
     With no location given every copy ranks the same and the source priority decides, as before.
     """
-    alias_map = {company_key(k): company_key(v) for k, v in (aliases or {}).items()}
-
-    def key(j: Job) -> tuple[str, ...]:
-        t = re.sub(r"[^a-z0-9]+", " ", (j.title or "").lower()).strip()
-        c = company_key(j.company)
-        return alias_map.get(c, c), t
+    alias_map = fold_aliases(aliases)
 
     # Prefer direct company boards over aggregators when the same job appears twice.
     # valtiolle/kuntarekry outrank Työmarkkinatori although TMT carries the same public-sector
@@ -336,7 +373,7 @@ def dedupe(jobs: list[Job], location: LocationPolicy | None = None, *,
 
     groups: dict[tuple[str, ...], list[Job]] = defaultdict(list)
     for j in jobs:
-        groups[key(j) if j.company else (j.id,)].append(j)
+        groups[posting_key(j, alias_map) if j.company else (j.id,)].append(j)
 
     # Prefix merge, compared only among groups that share a title. Sorted, a parent name comes
     # before the longer names that extend it; a one-word name is never a parent (the guard).
@@ -367,5 +404,7 @@ def dedupe(jobs: list[Job], location: LocationPolicy | None = None, *,
     return unique, dups
 
 
-def apply_rules(jobs: list[Job], profile: Profile) -> list[FilterResult]:
-    return [evaluate(j, profile) for j in jobs]
+def apply_rules(jobs: list[Job], profile: Profile, *,
+                borderline: list[LanguageBorderline] | None = None) -> list[FilterResult]:
+    """:func:`evaluate` over ``jobs``; ``borderline`` collects the near-threshold language drops."""
+    return [evaluate(j, profile, borderline=borderline) for j in jobs]

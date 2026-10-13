@@ -20,6 +20,7 @@ from jobscraper.models import (
     JobFacets,
     ReportItem,
     ReportSnapshot,
+    RunNote,
 )
 
 SCHEMA = """
@@ -112,7 +113,8 @@ CREATE TABLE IF NOT EXISTS reports (
     counts TEXT NOT NULL,
     cost TEXT NOT NULL,
     path TEXT,
-    refine_offset REAL
+    refine_offset REAL,
+    note_counts TEXT
 );
 
 CREATE TABLE IF NOT EXISTS report_items (
@@ -124,6 +126,19 @@ CREATE TABLE IF NOT EXISTS report_items (
     PRIMARY KEY (report_id, job_id)
 );
 CREATE INDEX IF NOT EXISTS report_items_report ON report_items(report_id, section, position);
+
+-- What went wrong with the pipeline's inputs or process (see models.RunNote). Append-only.
+CREATE TABLE IF NOT EXISTS run_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    source TEXT,
+    job_id TEXT,
+    message TEXT NOT NULL,
+    data TEXT
+);
+CREATE INDEX IF NOT EXISTS run_notes_created ON run_notes(created_at);
 """
 
 
@@ -133,6 +148,7 @@ _ADDED_COLUMNS = (
     ("reports", "refine_offset", "REAL"),
     ("jobs", "last_run_id", "INTEGER"),
     ("jobs", "missed_runs", "INTEGER NOT NULL DEFAULT 0"),
+    ("reports", "note_counts", "TEXT"),
 )
 
 
@@ -448,6 +464,7 @@ class Store:
             path=row["path"],
             # A read-only copy written before the column existed cannot be migrated on open.
             refine_offset=row["refine_offset"] if "refine_offset" in columns else None,
+            note_counts=json.loads(row["note_counts"] or "{}") if "note_counts" in columns else {},
             items=items or [],
         )
 
@@ -455,10 +472,10 @@ class Store:
         """Insert the report row and its items in one transaction; returns a copy with the id."""
         with self.tx() as c:
             cur = c.execute(
-                "INSERT INTO reports (created_at, days, prompt_version, counts, cost, path, refine_offset)"
-                " VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO reports (created_at, days, prompt_version, counts, cost, path, refine_offset,"
+                " note_counts) VALUES (?,?,?,?,?,?,?,?)",
                 (snap.created_at.isoformat(), snap.days, snap.prompt_version, dumps(snap.counts),
-                 dumps(snap.cost), snap.path, snap.refine_offset),
+                 dumps(snap.cost), snap.path, snap.refine_offset, dumps(snap.note_counts)),
             )
             report_id = cur.lastrowid
             c.executemany(
@@ -557,6 +574,24 @@ class Store:
             return set()
         return {r["id"] for r in self.conn.execute("SELECT id FROM jobs WHERE missed_runs >= ?", (min_misses,))}
 
+    def last_good_run(self, source: str, before_run_id: int) -> dict | None:
+        """The newest run of ``source`` before ``before_run_id`` that a new count can be held to.
+
+        That is a run which finished without an error and brought something back (an unfinished
+        row still reads 0), and which was not itself flagged ``source_count_drop``: were it the
+        baseline, a listing that stays broken would look healthy from its second bad run on, and
+        the takedown counter would start charging misses against it.
+        """
+        row = self.conn.execute(
+            "SELECT id, started_at, fetched FROM runs"
+            " WHERE source=? AND id<? AND error IS NULL AND fetched > 0"
+            " AND id NOT IN (SELECT json_extract(data, '$.run_id') FROM run_notes"
+            "                WHERE kind='source_count_drop' AND source=? AND data IS NOT NULL)"
+            " ORDER BY id DESC LIMIT 1",
+            (source, before_run_id, source),
+        ).fetchone()
+        return dict(row) if row else None
+
     def latest_runs(self) -> list[dict]:
         """The newest ``runs`` row per source — one line per source of the last scrape."""
         rows = self.conn.execute(
@@ -565,6 +600,57 @@ class Store:
             " ORDER BY r.source"
         )
         return [dict(r) for r in rows]
+
+    # -------------------------------------------------------------- run notes
+    def add_note(self, stage: str, kind: str, message: str, *, source: str | None = None,
+                 job_id: str | None = None, data: dict | None = None) -> int:
+        """Record one pipeline-health fact (see :class:`RunNote`); returns its id."""
+        with self.tx() as c:
+            cur = c.execute(
+                "INSERT INTO run_notes (created_at, stage, kind, source, job_id, message, data)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (_now(), stage, kind, source, job_id, message,
+                 dumps(data) if data is not None else None),
+            )
+        return cur.lastrowid
+
+    def _has_notes(self) -> bool:
+        """False for a read-only copy written before the table existed (it cannot be migrated)."""
+        return self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_notes'").fetchone() is not None
+
+    def _note_where(self, since: datetime | None, stage: str | None = None,
+                    kind: str | None = None) -> tuple[str, list]:
+        clauses, args = [], []
+        if since is not None:
+            # created_at is an ISO-8601 UTC string, so the cut is a string compare; a naive
+            # datetime is read as UTC rather than compared as a different string format.
+            clauses.append("created_at >= ?")
+            args.append((since if since.tzinfo else since.replace(tzinfo=UTC)).astimezone(UTC).isoformat())
+        for column, value in (("stage", stage), ("kind", kind)):
+            if value is not None:
+                clauses.append(f"{column}=?")
+                args.append(value)
+        return (" WHERE " + " AND ".join(clauses)) if clauses else "", args
+
+    def notes(self, *, since: datetime | None = None, stage: str | None = None,
+              kind: str | None = None) -> list[RunNote]:
+        """Notes written at or after ``since`` (all of them when None), oldest first."""
+        if not self._has_notes():
+            return []
+        where, args = self._note_where(since, stage, kind)
+        rows = self.conn.execute(f"SELECT * FROM run_notes{where} ORDER BY id", args)
+        return [RunNote(**{**dict(r), "data": json.loads(r["data"]) if r["data"] else None})
+                for r in rows]
+
+    def note_counts(self, since: datetime | None) -> dict[tuple[str, str], int]:
+        """How many notes of each (stage, kind) were written at or after ``since``."""
+        if not self._has_notes():
+            return {}
+        where, args = self._note_where(since)
+        rows = self.conn.execute(
+            f"SELECT stage, kind, COUNT(*) n FROM run_notes{where} GROUP BY stage, kind ORDER BY MIN(id)", args)
+        return {(r["stage"], r["kind"]): r["n"] for r in rows}
 
     def new_jobs_since(self, when: datetime | str | None) -> int:
         """How many jobs were first seen at or after ``when`` (every job when it is None).

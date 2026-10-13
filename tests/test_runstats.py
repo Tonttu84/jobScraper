@@ -107,7 +107,7 @@ def test_collect_builds_one_flat_anonymous_row(state, settings):
     assert set(row) == {
         "recorded_at", "report_id", "report_created_at", "profile", "jobs_total", "new_jobs",
         "by_source", "rules", "drops_by_category", "prefilter", "ranked", "refine_offset",
-        "versions", "models", "cost_usd", "scrape",
+        "versions", "models", "cost_usd", "scrape", "pipeline_notes",
     }
     assert row["refine_offset"] is None  # this run never refined anything
     assert row["report_id"] == snap.id
@@ -126,7 +126,16 @@ def test_collect_builds_one_flat_anonymous_row(state, settings):
                              "rank": settings.profile.ai.rank_model}
     assert row["cost_usd"] == 1.25
     assert row["scrape"] == {"sources": 2, "fetched": 12, "new": 0, "errors": 1}
+    assert row["pipeline_notes"] == 0
     datetime.fromisoformat(row["recorded_at"])  # parses
+
+
+def test_collect_counts_the_pipeline_notes_of_the_report(state, settings):
+    """A count only: the notes themselves name sources and postings, the public row does not."""
+    snap = state.save_report(ReportSnapshot(days=30, prompt_version="v1",
+                                            note_counts={"source_error": 2, "takedown_skipped": 1}))
+    row = runstats.collect(state, snap, settings, profile=None, usage_path=None)
+    assert row["pipeline_notes"] == 3
 
 
 def test_collect_counts_the_postings_dropped_for_a_passed_deadline(state, settings):

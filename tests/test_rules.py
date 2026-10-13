@@ -263,6 +263,43 @@ def test_polish_as_a_plus_in_warsaw_is_not_dropped(settings):
     assert res.location_tier == 2
 
 
+def _detected(monkeypatch, code: str, confidence: float) -> None:
+    """Pin the language detector's answer (min_confidence is 0.75 in the profile)."""
+    from jobscraper.filters import rules as rules_mod
+
+    monkeypatch.setattr(rules_mod, "detect_language", lambda text, minimum: (code, confidence))
+
+
+def test_a_language_drop_just_over_the_threshold_is_reported_as_borderline(settings, monkeypatch):
+    from jobscraper.filters.rules import LanguageBorderline, apply_rules
+
+    _detected(monkeypatch, "pl", 0.80)
+    job = make_job(location_raw="Helsinki, Finland", country="FI")
+    seen: list = []
+    res = evaluate(job, settings.profile, borderline=seen)
+    assert res.status == "drop"
+    assert seen == [LanguageBorderline(job_id=job.id, source="test", language="pl", confidence=0.80)]
+    # the decision is the same with or without anyone listening
+    assert evaluate(job, settings.profile) == res
+    collected: list = []
+    assert apply_rules([job], settings.profile, borderline=collected) == [res]
+    assert collected == seen
+
+
+@pytest.mark.parametrize(("code", "confidence", "country"), [
+    ("pl", 0.86, "FI"),   # confidently Polish: not borderline
+    ("sv", 0.76, "FI"),   # a weak language is reviewed, not dropped
+    ("en", 0.76, "FI"),   # not a dropped language at all
+    ("pl", 0.80, "US"),   # dropped for its location as well: the language did not decide it
+])
+def test_a_language_note_only_when_a_near_threshold_detection_alone_dropped_it(
+        settings, monkeypatch, code, confidence, country):
+    _detected(monkeypatch, code, confidence)
+    seen: list = []
+    evaluate(make_job(location_raw="Somewhere", country=country), settings.profile, borderline=seen)
+    assert seen == []
+
+
 def test_required_dutch_is_dropped(settings):
     job = make_job(
         title="Junior Software Developer",
