@@ -595,6 +595,28 @@ catch and degrade to ASCII) is a small TDD task still to do.
   verdicts stay under the old version; `compare-verdicts` shows what the dossier and the new
   fields changed. Owner 2026-10-13: "don't overwrite the old ones, keep both".
 
+## Run of 2026-10-13: report #12, first run with the dossier and the self-observation stack
+Scrape 25 sources, 13,474 fetched, 2,737 new (one aborted attempt first: cp1252 console crash,
+see above). Filter: 2,358 keep / 835 review / 17,743 drop. Screen 2,890 (29 Sonnet chunks) +
+147 re-screened after LinkedIn hydration; rank 90 in two windows (stop: budget, miss run 0/30 —
+the top was still gaining entrants when the budget ran out); refine 28; sentinels 10 + 10.
+`compare-verdicts --old 2026-09-11.1 --new 2026-10-13.1`:
+- rank, 47 jobs on both sides: mean +10.3 (sd 10.9), Spearman +0.88, top-30 Jaccard 0.82. The
+  dossier lifted the scale by about ten points without reordering much; the first window ran
+  without anchors, so this is the new scale, not noise around the old one.
+- refine, 9 jobs: +3.6, Spearman +0.85. prefilter, 1,844 jobs: −0.35, 43 true→false, 69
+  false→true (several French "Stage" internships 0→50; the screen prompt changed only by the
+  INPUT NOTES block, so read these as noise plus a few genuine second looks).
+- Sentinels: 0/10 rule drops would have passed the screen; 0/10 screen rejects scored 70+.
+- Pipeline health: 1,042 missing_input (descriptions truncated or absent: devitjobs 89%, linkedin
+  until hydration, justjoin 52%, cvee 50%, tyomarkkinatori 34%), 102 signal_conflict (a cluster:
+  postings located in the UK or CH tagged country DE — a source's country default, to fix),
+  19 profile_gap (law studies as a legal qualification; whether he is enrolled in a degree
+  programme for thesis/internship postings — dossier questions), 16 rubric_mismatch (holistic
+  score well under the weighted criteria, mostly where a hard gate like enrolment applies).
+Open: one more rank round (`export rank --reset-round`) would rank another 90 of the 1,363-job
+queue; the stop rule did not reach patience.
+
 ## Later ideas
 - ~~Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.~~
   Done: `jobscraper report` diffs itself against the previous snapshot in the same database and
