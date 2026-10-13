@@ -140,6 +140,14 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _read_job(row: sqlite3.Row) -> Job:
+    """A stored job, with ``first_seen`` taken from its column: the column is the truth, and
+    whatever the ``data`` JSON may carry (an older write) is overwritten."""
+    job = Job.model_validate_json(row["data"])
+    job.first_seen = datetime.fromisoformat(row["first_seen"]) if row["first_seen"] else None
+    return job
+
+
 #: Set by the CLI's --db option (and by `run`, which creates a database per run).
 DB_OVERRIDE: Path | None = None
 
@@ -290,7 +298,7 @@ class Store:
         return new
 
     def jobs(self, *, source: str | None = None, seen_within_days: int | None = None, ids: list[str] | None = None) -> list[Job]:
-        sql, args = "SELECT data FROM jobs", []
+        sql, args = "SELECT data, first_seen FROM jobs", []
         clauses = []
         if source:
             clauses.append("source=?")
@@ -305,7 +313,7 @@ class Store:
             args.extend(ids)
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        return [Job.model_validate_json(r["data"]) for r in self.conn.execute(sql, args)]
+        return [_read_job(r) for r in self.conn.execute(sql, args)]
 
     def job_meta(self, job_id: str) -> dict | None:
         row = self.conn.execute("SELECT first_seen, last_seen FROM jobs WHERE id=?", (job_id,)).fetchone()

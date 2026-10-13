@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
@@ -72,6 +73,41 @@ def test_upsert_counts_only_new_jobs_and_refreshes_last_seen(store):
     assert second["first_seen"] == first["first_seen"]
     assert second["last_seen"] > first["last_seen"]
     assert len(store.jobs()) == 2
+
+
+def test_jobs_read_back_carry_first_seen_from_the_column(store):
+    job = make_job(source_id="1")
+    assert job.first_seen is None
+    store.upsert_jobs([job])
+    [read] = store.jobs()
+    assert read.first_seen == datetime.fromisoformat(store.job_meta(job.id)["first_seen"])
+
+
+def test_a_job_upserted_twice_keeps_its_original_first_seen(store):
+    store.upsert_jobs([make_job(source_id="1")])
+    stamp = store.jobs()[0].first_seen
+    store.upsert_jobs([make_job(source_id="1", title="Junior Developer (m/f/d)")])
+    store.upsert_jobs(store.jobs(), run_id=store.start_run("arbeitnow"))  # a read-back job re-saved
+    [read] = store.jobs()
+    assert read.first_seen == stamp and read.title == "Junior Developer (m/f/d)"
+
+
+def test_first_seen_is_never_written_into_the_job_json(store):
+    job = make_job(source_id="1", first_seen=datetime(2020, 1, 1, tzinfo=UTC))
+    store.upsert_jobs([job])
+    data = store.conn.execute("SELECT data FROM jobs WHERE id=?", (job.id,)).fetchone()["data"]
+    assert "first_seen" not in json.loads(data)
+
+
+def test_a_stale_first_seen_inside_the_job_json_loses_to_the_column(store):
+    job = make_job(source_id="1")
+    store.upsert_jobs([job])
+    stale = job.model_dump(mode="json") | {"first_seen": "2020-01-01T00:00:00+00:00"}
+    store.conn.execute("UPDATE jobs SET data=? WHERE id=?", (json.dumps(stale), job.id))
+    store.conn.commit()
+    [read] = store.jobs()
+    assert read.first_seen == datetime.fromisoformat(store.job_meta(job.id)["first_seen"])
+    assert read.first_seen.year != 2020
 
 
 def test_upsert_is_idempotent_per_id_and_updates_title(store):

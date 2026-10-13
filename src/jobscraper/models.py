@@ -48,6 +48,11 @@ class Job(BaseModel):
     posted_at: datetime | None = None
     fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     raw: dict[str, Any] = Field(default_factory=dict)
+    first_seen: datetime | None = Field(
+        None, exclude=True,
+        description="When this pipeline first stored the posting. Set by the store when it reads a "
+                    "job back (from the jobs.first_seen column); never set by adapters, never serialized.",
+    )
 
     @property
     def id(self) -> str:

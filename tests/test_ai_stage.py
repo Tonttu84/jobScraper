@@ -3,6 +3,7 @@ prompt content, structured-output mapping, caching of verdicts, refusal handling
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -72,6 +73,46 @@ def test_the_prompt_names_an_evergreen_advert_and_the_phrase_that_gave_it_away()
 def test_a_live_vacancy_says_nothing_about_evergreen_adverts():
     fr = FilterResult(job_id="x", status="keep", signals={"years_required": 3})
     assert "evergreen" not in job_prompt(_job(), fr, 400)
+
+
+_NOW = datetime(2026, 10, 12, 9, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(("posted", "first_seen", "expected"), [
+    (datetime(2026, 10, 11, tzinfo=UTC), datetime(2026, 9, 7, 6, 30, tzinfo=UTC),
+     "Posted: 2026-10-11; first seen by this pipeline: 2026-09-07 (35 days ago; reposted or long open)\n"),
+    (datetime(2026, 10, 11, tzinfo=UTC), datetime(2026, 10, 12, 1, 0, tzinfo=UTC),
+     "Posted: 2026-10-11; first seen by this pipeline: 2026-10-12\n"),
+    (None, datetime(2026, 9, 6, tzinfo=UTC),
+     "Posted: unknown; first seen by this pipeline: 2026-09-06 (36 days ago; long open)\n"),
+    (datetime(2026, 10, 11, tzinfo=UTC), None, "Posted: 2026-10-11\n"),
+])
+def test_the_prompt_shows_when_the_pipeline_first_saw_a_posting(posted, first_seen, expected):
+    """Boards re-post: the board's date alone made a 36-day-old listing look one day old."""
+    job = _job(posted_at=posted, first_seen=first_seen)
+    assert expected in job_prompt(job, None, 400, now=_NOW)
+
+
+def test_a_posting_listed_three_weeks_without_a_repost_reads_as_long_open():
+    job = _job(posted_at=datetime(2026, 9, 20, tzinfo=UTC), first_seen=datetime(2026, 9, 21, tzinfo=UTC))
+    assert ("Posted: 2026-09-20; first seen by this pipeline: 2026-09-21 (21 days ago; long open)\n"
+            in job_prompt(job, None, 400, now=_NOW))
+
+
+def test_a_listing_just_under_three_weeks_old_gets_no_note():
+    job = _job(posted_at=datetime(2026, 9, 21, tzinfo=UTC), first_seen=datetime(2026, 9, 22, tzinfo=UTC))
+    assert "first seen by this pipeline: 2026-09-22\n" in job_prompt(job, None, 400, now=_NOW)
+
+
+def test_a_repost_inside_three_weeks_is_still_flagged():
+    job = _job(posted_at=datetime(2026, 10, 11, tzinfo=UTC), first_seen=datetime(2026, 10, 1, tzinfo=UTC))
+    assert ("first seen by this pipeline: 2026-10-01 (11 days ago; reposted or long open)\n"
+            in job_prompt(job, None, 400, now=_NOW))
+
+
+def test_the_first_seen_age_defaults_to_the_current_clock():
+    job = _job(first_seen=datetime.now(UTC) - timedelta(days=30))
+    assert "(30 days ago; long open)" in job_prompt(job, None, 400)
 
 
 def test_judge_maps_structured_output(stage, monkeypatch):

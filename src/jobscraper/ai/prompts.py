@@ -15,6 +15,8 @@ language and location bullets are generated from the same policies the rule filt
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from jobscraper.config import LanguagePolicy, LocationPolicy, Profile
 from jobscraper.filters.language import LANGUAGE_NAMES
 from jobscraper.models import AIVerdict, FilterResult, Job
@@ -248,7 +250,26 @@ def _evergreen_note(signals: dict) -> str:
     return f'; evergreen advert ("{cue}")' if cue else ""
 
 
-def job_prompt(job: Job, fr: FilterResult | None, max_chars: int) -> str:
+def _posted_line(job: Job, now: datetime | None) -> str:
+    """The board's date plus, once the store has it, the date this pipeline first saw the posting.
+
+    Boards re-post: a listing first seen five weeks ago can carry yesterday's date. A note goes in
+    when the board's date is more than a week after first sight (reposted), or the posting has been
+    listed three weeks or more (long open)."""
+    posted = job.posted_at.date().isoformat() if job.posted_at else "unknown"
+    if job.first_seen is None:
+        return f"Posted: {posted}"
+    first = job.first_seen.date()
+    age = ((now or datetime.now(UTC)).date() - first).days
+    line = f"Posted: {posted}; first seen by this pipeline: {first.isoformat()}"
+    if job.posted_at and (job.posted_at.date() - first).days > 7:
+        return f"{line} ({age} days ago; reposted or long open)"
+    if age >= 21:
+        return f"{line} ({age} days ago; long open)"
+    return line
+
+
+def job_prompt(job: Job, fr: FilterResult | None, max_chars: int, now: datetime | None = None) -> str:
     desc = (job.description or "")[:max_chars]
     if job.description and len(job.description) > max_chars:
         desc += "\n[…truncated…]"
@@ -258,7 +279,7 @@ def job_prompt(job: Job, fr: FilterResult | None, max_chars: int) -> str:
         f"Source: {job.source}",
         f"Location: {job.location_raw or 'unknown'} (country={job.country or '?'}, remote={job.remote}, remote_region={job.remote_region or '?'})",
         f"Employment type: {job.employment_type or 'unknown'}; seniority label: {job.seniority_raw or 'none'}",
-        f"Posted: {job.posted_at.date().isoformat() if job.posted_at else 'unknown'}",
+        _posted_line(job, now),
         f"Salary: {job.salary_text or 'not stated'}",
         f"Tags: {', '.join(job.tags) if job.tags else '-'}",
     ]
