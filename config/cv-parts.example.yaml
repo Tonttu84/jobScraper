@@ -1,0 +1,129 @@
+# CV parts library — template. Copy to config/cv-parts.yaml (gitignored: it holds personal data)
+# and replace the fake person below with your own text.
+#
+# Every sentence your CV may contain is written here once, by you. A tailored CV is only ever a
+# *selection* from these parts (a summary, a few projects with some of their bullets, some
+# bullets of each job), so nothing can appear on the page that you did not write.
+# Check the file with:  jobscraper cv-parts
+#
+# ids: lowercase letters, digits, '-' and '_' (start with a letter or digit); unique within
+# summaries, within projects, within work, and within one entry's bullets.
+# tags: optional lowercase keywords; later used to match parts to a job posting.
+
+# Bump this whenever you change the parts; tailored CVs are cached per version.
+version: "2026-10-14.1"
+
+# How much the CV page holds.
+slots:
+  projects: 3          # project entries on the page (>= 1)
+  project_bullets: 2   # default max bullets per project (an entry can override with max_bullets)
+  work_bullets: 4      # default max bullets per work entry
+
+# Fixed text at the top of the page; never selected. Any keys; name and title are shown first,
+# the rest on one contact line. Quote values that YAML would otherwise read as numbers.
+header:
+  name: Jane Example
+  title: Junior software developer
+  phone: "+358 40 000 0000"
+  email: jane@example.com
+  github: github.com/jane-example
+
+# One of these is selected. The first one is the default.
+summaries:
+  - id: general
+    tags: [general]
+    text: >
+      Junior developer with a systems programming background in C and C++, used to
+      reading unfamiliar code and shipping small tools that other people rely on.
+  - id: web
+    tags: [web, python]
+    text: >
+      Junior developer who builds small web services in Python and TypeScript and
+      cares about tests, clear APIs and readable code.
+
+# An ordered subset of at most slots.projects is selected. The `default: true` ones, in file
+# order, form the untailored CV; their `default: true` bullets are shown (else the first ones).
+projects:
+  - id: http-server
+    title: HTTP server
+    tags: [systems, cpp, networking]
+    lead: A non-blocking HTTP/1.1 server in C++ with CGI support.
+    default: true
+    bullets:
+      - id: event-loop
+        text: Built a single-threaded event loop over poll() serving hundreds of clients.
+        tags: [networking]
+        default: true
+      - id: parser
+        text: Wrote an incremental request parser with chunked transfer encoding.
+        tags: [cpp]
+        default: true
+      - id: cgi
+        text: Ran CGI scripts with timeouts and isolated environments.
+  - id: shell
+    title: Unix shell
+    tags: [systems, c]
+    lead: A bash-like shell in C, written in a team of two.
+    default: true
+    max_bullets: 3     # this entry may show up to 3 bullets instead of slots.project_bullets
+    bullets:
+      - id: pipes
+        text: Implemented pipelines, redirections and here-documents.
+        default: true
+      - id: signals
+        text: Handled signals and exit statuses the way bash does.
+        default: true
+      - id: tests
+        text: Wrote a comparison test suite that runs every case against bash.
+        tags: [testing]
+  - id: todo-api
+    title: Task tracker API
+    tags: [web, python]
+    lead: A REST API in Python (FastAPI) with a PostgreSQL backend.
+    default: true
+    bullets:
+      - id: endpoints
+        text: Designed the endpoints and documented them with OpenAPI.
+        tags: [api]
+      - id: ci
+        text: Set up GitHub Actions running the tests on every push.
+        tags: [ci]
+  - id: raycaster
+    title: Raycaster game
+    tags: [graphics, c]
+    lead: A Wolfenstein-style 3D maze renderer in C.
+    bullets:
+      - id: dda
+        text: Implemented DDA ray casting with textured walls.
+
+# Every work entry is always shown, in file order; only bullets are selected
+# (`default: true` ones in the untailored CV, else the first ones). `lead` may be left out.
+work:
+  - id: cafe
+    title: Shift supervisor, Example Café
+    period: "2019-2023"
+    lead: Ran evening shifts in a busy city-centre café.
+    bullets:
+      - id: team
+        text: Planned shifts and trained new staff.
+        default: true
+      - id: stock
+        text: Kept the weekly stock orders within budget.
+        default: true
+      - id: customers
+        text: Handled customer complaints calmly.
+  - id: warehouse
+    title: Warehouse worker
+    period: "2017-2019"
+    bullets:
+      - id: picking
+        text: Picked and packed orders with a low error rate.
+
+# Fixed side column; never selected. Free-form: strings, lists or mappings.
+sidebar:
+  technical: [C, C++, Python, TypeScript, Git, Linux]
+  education: Hive Helsinki (coding school), 2024-2026
+  soft_skills: [Calm under pressure, Patient teacher]
+  languages:
+    english: fluent
+    finnish: basic

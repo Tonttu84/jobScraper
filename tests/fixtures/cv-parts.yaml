@@ -1,0 +1,82 @@
+# A small, generic CV parts library for tests/test_cv_parts.py (fake person, no personal data).
+version: "test-1"
+slots:
+  projects: 2
+  project_bullets: 2
+  work_bullets: 2
+header:
+  name: Test Person
+  title: Junior developer
+  email: test@example.com
+  github: github.com/test
+summaries:
+  - id: default
+    tags: [general]
+    text: >
+      A general summary about the test person,
+      folded over two lines.
+  - id: systems
+    tags: [systems, cpp]
+    text: A systems-flavoured summary.
+projects:
+  - id: webserver
+    title: Webserver
+    tags: [systems, cpp]
+    lead: An HTTP server in C++.
+    default: true
+    bullets:
+      - id: parse
+        text: Wrote an incremental request parser.
+        tags: [cpp]
+        default: true
+      - id: poll
+        text: Served many clients with poll().
+        default: true
+      - id: cgi
+        text: Ran CGI scripts.
+  - id: shell
+    title: Shell
+    tags: [c]
+    lead: A small Unix shell.
+    max_bullets: 3
+    bullets:
+      - id: pipes
+        text: Implemented pipes.
+      - id: signals
+        text: Handled signals.
+      - id: builtins
+        text: Wrote builtins.
+      - id: heredoc
+        text: Supported heredocs.
+  - id: game
+    title: Raycaster
+    lead: A raycasting game.
+    default: true
+    bullets:
+      - id: dda
+        text: Implemented DDA.
+work:
+  - id: poker
+    title: Poker professional
+    period: "2010-2024"
+    lead: Self-employed.
+    bullets:
+      - id: discipline
+        text: Kept detailed records.
+        default: true
+      - id: math
+        text: Used probability daily.
+      - id: risk
+        text: Managed bankroll risk.
+  - id: shop
+    title: Shop assistant
+    period: "2008-2010"
+    bullets:
+      - id: service
+        text: Served customers.
+sidebar:
+  technical: [C, C++, Python]
+  education: Hive Helsinki
+  languages:
+    finnish: native
+    english: fluent

@@ -617,6 +617,35 @@ the top was still gaining entrants when the budget ran out); refine 28; sentinel
 Open: one more rank round (`export rank --reset-round`) would rank another 90 of the 1,363-job
 queue; the stop rule did not reach patience.
 
+## Tailored CV (started 2026-10-14)
+Goal: a CV customised per job, built by *selecting* pre-written parts, never by writing text, so
+a hallucinated claim is structurally impossible. The Canva design stays the reference: page 1 is
+the CV, page 2 the parts bin the owner drags projects from; `data/cv/` (gitignored) holds the
+PDF/PNG exports (`cv-canva-2026-10.*`).
+- Decisions (2026-10-14):
+  - Where it runs: a separate `tailor` stage after refine, over the effective top 20, cached per
+    job and per parts-library fingerprint — not folded into the refine prompt (that would
+    invalidate every cached verdict through `PROMPT_VERSION`). The same function behind a button
+    in the web UI next to the apply decision and `jobscraper tailor <job_id>`, for rank-only jobs
+    the owner applies to anyway. Cost is about one more verdict per job; the unused tailorings for
+    skipped jobs are cheap, and the report can show "what the CV would lead with".
+  - Parts library `config/cv-parts.yaml` (gitignored, mirrored by `sync_private.sh`; template
+    `config/cv-parts.example.yaml`): summaries (one chosen), projects (ordered subset of
+    `slots.projects`, each with a bullet subset), work (all shown, bullets selected), fixed header
+    and sidebar. `jobscraper.cv.parts` loads, validates, resolves a `Selection` of ids to text and
+    renders markdown; `jobscraper cv-parts` prints the default selection (= page 1 today).
+  - The model returns ids only; free text (one job-specific sentence, always shown to the owner
+    before it lands) is a later, optional step. Rendering to PDF: reproduce the two-column layout
+    in HTML/CSS and print with Playwright (already a dependency); Canva's autofill API is
+    enterprise-only. Until then the markdown tells the owner what to drag into the Canva slot.
+  - Text changes made while building the library (owner to confirm): typos fixed
+    (programming, hackathons, competitive, architecture, entrepreneurial); Full Stack Open bullet
+    says Zustand instead of Redux and ESLint/Prettier instead of CI/CD (the notes found neither
+    Redux nor an own CI pipeline in those repos); Python is still absent from the sidebar
+    languages line.
+- Next: the tailor prompt + stage (Opus, ids only, validated with `validate_selection`), the
+  report/web-UI surface, then the HTML renderer.
+
 ## Later ideas
 - ~~Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.~~
   Done: `jobscraper report` diffs itself against the previous snapshot in the same database and

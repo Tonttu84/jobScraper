@@ -37,6 +37,8 @@ config/profile.yaml
 config/dossier-answers.md
 # Notes on the owner's other repositories, read for the dossier (private, synced like the answers).
 config/dossier-notes/
+# The CV parts library (every sentence a tailored CV may contain) holds personal data.
+config/cv-parts.yaml
 # Local-only learning plan (not synced anywhere).
 config/learning-plan.md
 

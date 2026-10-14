@@ -18,6 +18,7 @@
     jobscraper serve                # web UI over data/jobs.db
     jobscraper profiles             # candidate profiles under config/profiles
     jobscraper profile-init NAME    # start a new profile from config/profile.example.yaml
+    jobscraper cv-parts             # check config/cv-parts.yaml, print the default CV as markdown
 
 Every command takes a global --profile NAME (or $JOBSCRAPER_PROFILE), which moves config, data
 and results into config/profiles/NAME/, data/profiles/NAME/ and results/NAME/.
@@ -1013,6 +1014,28 @@ def profile_init(name: str = typer.Argument(..., help="Name of the new profile")
     for filename in config.PROFILE_FILES:
         shutil.copyfile(sources[filename], dst / filename)
     console.print(f"created {dst} — edit profile.yaml, then run commands with --profile {name}")
+
+
+@app.command("cv-parts")
+def cv_parts() -> None:
+    """Validate config/cv-parts.yaml and print the untailored (default) CV as markdown."""
+    import yaml
+
+    from jobscraper.cv.parts import default_selection, load_cv_parts, resolve, to_markdown
+
+    try:
+        parts = load_cv_parts()
+        markdown = to_markdown(resolve(parts, default_selection(parts)))
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
+        typer.echo(f"cv-parts: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    slots = parts.slots
+    # typer.echo, not the rich console: CV text may contain [brackets] rich would eat as markup.
+    typer.echo(f"cv parts {parts.version}: {len(parts.summaries)} summaries, {len(parts.projects)} "
+               f"projects, {len(parts.work)} work entries; slots: {slots.projects} projects × "
+               f"{slots.project_bullets} bullets, {slots.work_bullets} bullets per work entry")
+    typer.echo("")
+    typer.echo(markdown, nl=False)
 
 
 def _rank_and_refine(days: int, verbose: bool) -> None:
