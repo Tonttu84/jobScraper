@@ -42,3 +42,6 @@ config/learning-plan.md
 
 # transfer archives built for the owner's laptop (see README-restore.txt inside)
 /jobscraper-owner-*.zip
+
+# The owner's CV exports (Canva PDF/PNG) and generated tailored CVs: personal data, never tracked.
+data/cv/
