@@ -643,6 +643,15 @@ PDF/PNG exports (`cv-canva-2026-10.*`).
     says Zustand instead of Redux and ESLint/Prettier instead of CI/CD (the notes found neither
     Redux nor an own CI pipeline in those repos); Python is still absent from the sidebar
     languages line.
+- Canva geometry measured 2026-10-14 (reference for the HTML renderer; both pages follow it):
+  project slot = title (Aileron 11.1, X 8.12 cm), lead line (Aileron 11.1, X 8.12 cm, flush with
+  the title), bullet box (Aileron 10.1, X 7.93 cm so the bullet marker sits under the title's
+  first letter). Section headings Now 14.6; profile paragraph Lato 12; sidebar Lato 10; name
+  Now 23; work entries: title bold, lead Aileron 12, dates Aileron 10 right-aligned at ~20.2 cm.
+  Page 2 (the parts bin) uses the same X values, so an entry can be dragged into a page-1 slot
+  without re-aligning. Lesson from editing Canva through the browser: select a text box, press
+  Escape once to leave edit mode, then type into the Position panel's X/Y fields; the panel's
+  field positions move when a selection exists, and its values lag one selection behind.
 - Next: the tailor prompt + stage (Opus, ids only, validated with `validate_selection`), the
   report/web-UI surface, then the HTML renderer.
 
