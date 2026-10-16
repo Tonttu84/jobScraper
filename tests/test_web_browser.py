@@ -1043,3 +1043,63 @@ def test_the_skip_reason_filter_is_built_from_meta_and_finds_jobs_skipped_for_it
     page.locator("#reset").click()
     assert selected_of(page, "f-reason") == []
     expect(count(page)).to_have_text("1 of 1")  # the two skipped ones are out of the default view
+
+
+# ------------------------------------------------------------------ tailor CV hand-off
+
+
+@pytest.fixture
+def tailor_site(tmp_path):
+    """The seeded database served the way ``serve`` does when config/cv-parts.yaml exists."""
+    db = tmp_path / "jobs.db"
+    jobs = _seed(db)
+    with _serving(create_app(db, languages=["en", "pt"], tailor=True)) as base_url:
+        yield base_url, jobs
+
+
+def test_the_tailor_cv_button_copies_a_hand_off_and_leaves_the_decision_alone(browser,
+                                                                               tailor_site):
+    base_url, jobs = tailor_site
+    # Granted so headless Chromium lets the page write (and the test read) the clipboard.
+    with _visiting(browser, base_url, permissions=["clipboard-read", "clipboard-write"]) as page:
+        web = card(page, jobs["web"])
+        button = web.locator("button.act.tailor")
+        expect(button).to_have_text("Tailor CV")
+        assert button.get_attribute("data-status") is None  # not a decision button
+        # the extra button does not push the note box onto a second line
+        row, note = web.locator(".actions").bounding_box(), web.locator("input.note").bounding_box()
+        assert row is not None and note is not None
+        assert row["height"] < note["height"] + 12, f"action row wrapped: {row['height']}px"
+
+        job = {"id": "abc123", "title": "Junior Dev", "company": "Acme Oy",
+               "url": "https://jobs.example.test/abc123"}
+        assert page.evaluate("job => tailorHandoff(job)", job) == (
+            "Tailor my CV for this job: jobscraper tailor abc123\n"
+            "Junior Dev — Acme Oy\n"
+            "https://jobs.example.test/abc123"
+        )
+        assert page.evaluate("job => tailorHandoff(job)", {**job, "company": None}) \
+            .splitlines()[1] == "Junior Dev — unknown company"
+
+        sign_in(page)
+        web = card(page, jobs["web"])
+        web.locator('button.act[data-status="applied"]').click()
+        expect(web.locator("button.act.on")).to_have_attribute("data-status", "applied")
+
+        web.locator("button.act.tailor").click()
+        expect(web.locator("button.act.tailor")).to_have_text("Copied ✓")
+        # (the Windows clipboard hands the lines back with CRLF)
+        copied = page.evaluate("() => navigator.clipboard.readText()").replace("\r\n", "\n")
+        assert copied == page.evaluate(
+            "job => tailorHandoff(job)", {"id": jobs["web"].id, "title": jobs["web"].title,
+                                          "company": jobs["web"].company, "url": jobs["web"].url})
+        # the label goes back, and by then a stray decision request would have landed
+        expect(web.locator("button.act.tailor")).to_have_text("Tailor CV", timeout=5000)
+        expect(web.locator("button.act.on")).to_have_attribute("data-status", "applied")
+        assert stored_decision(page, base_url, jobs["web"])["status"] == "applied"
+
+
+def test_without_a_cv_parts_library_there_is_no_tailor_cv_button(page, site):
+    _, jobs = site
+    expect(card(page, jobs["web"]).locator("button.act")).not_to_have_count(0)
+    expect(page.locator("button.tailor")).to_have_count(0)

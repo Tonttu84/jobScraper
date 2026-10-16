@@ -652,8 +652,17 @@ PDF/PNG exports (`cv-canva-2026-10.*`).
   without re-aligning. Lesson from editing Canva through the browser: select a text box, press
   Escape once to leave edit mode, then type into the Position panel's X/Y fields; the panel's
   field positions move when a selection exists, and its values lag one selection behind.
-- Next: the tailor prompt + stage (Opus, ids only, validated with `validate_selection`), the
-  report/web-UI surface, then the HTML renderer.
+- Done 2026-10-16: `jobscraper tailor <id>` (`jobscraper.cv.tailor`). One request per job; the
+  model returns ids plus notes for the owner (`focus`, `rationale`, `gaps` for the cover letter),
+  a bad answer is sent back once with its problems, then it is an error. Cached in
+  `cv_tailorings` on library fingerprint + `TAILOR_PROMPT_VERSION` + model. The ranker's
+  why_apply/concerns ride along in the user prompt. No API key here, so `--export` / `--import`
+  is the subagent path (CLAUDE.md, "Tailor my CV for this job"). Web UI: a "Tailor CV" button
+  per card (only when the server has a `cv-parts.yaml`) copies the hand-off line for a Claude
+  Code chat. Not yet in the pipeline run: tailoring stays on demand until it has proven itself.
+- Next: the HTML renderer (two-column layout, Playwright print to PDF), so the hand-off ends in
+  a PDF instead of drag instructions for Canva; library review with the owner (libft, so_long,
+  the rest of the Hive core curriculum are not parts yet).
 
 ## Later ideas
 - ~~Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.~~

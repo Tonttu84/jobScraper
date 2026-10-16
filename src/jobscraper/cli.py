@@ -19,6 +19,7 @@
     jobscraper profiles             # candidate profiles under config/profiles
     jobscraper profile-init NAME    # start a new profile from config/profile.example.yaml
     jobscraper cv-parts             # check config/cv-parts.yaml, print the default CV as markdown
+    jobscraper tailor JOB_ID ...    # pick CV parts for a job; prints and saves data/cv/tailored/*.md
 
 Every command takes a global --profile NAME (or $JOBSCRAPER_PROFILE), which moves config, data
 and results into config/profiles/NAME/, data/profiles/NAME/ and results/NAME/.
@@ -925,9 +926,12 @@ def serve(dir: Path | None = typer.Option(None, "--dir", help="Directory of data
     """Run the web UI over the copies in the serve directory (newest wins, read-only, decisions in decisions.db)."""
     import uvicorn
 
+    from jobscraper.cv.parts import CV_PARTS_FILE
     from jobscraper.web.app import create_app
 
     serve_dir = None if db else (dir or config.paths().data / "serve")
+    # The cards' "Tailor CV" hand-off is only useful where `jobscraper tailor` can run.
+    tailor = (config.paths().config / CV_PARTS_FILE).is_file()
     profile = load_settings().profile
     languages = list(profile.languages.ok)
     if serve_dir is not None:
@@ -941,10 +945,12 @@ def serve(dir: Path | None = typer.Option(None, "--dir", help="Directory of data
             os.environ["JOBSCRAPER_SERVE_DIR"] = str(serve_dir)
         # --reload builds the app in a worker process from the factory string, which takes no
         # arguments: the profile's spoken languages and web preset are not applied there — the
-        # page falls back to the observed languages and the student preset.
+        # page falls back to the observed languages and the student preset, and the "Tailor CV"
+        # button is off.
         uvicorn.run("jobscraper.web.app:create_app", host=host, port=port, reload=True, factory=True)
     else:
-        uvicorn.run(create_app(db, serve_dir, languages=languages, preset=profile.web.preset),
+        uvicorn.run(create_app(db, serve_dir, languages=languages, preset=profile.web.preset,
+                               tailor=tailor),
                     host=host, port=port)
 
 
@@ -1036,6 +1042,89 @@ def cv_parts() -> None:
                f"{slots.project_bullets} bullets, {slots.work_bullets} bullets per work entry")
     typer.echo("")
     typer.echo(markdown, nl=False)
+
+
+def _resolve_job_id(store: Store, given: str) -> str:
+    """An exact job id, or a prefix that matches exactly one; else a BadParameter."""
+    if store.jobs(ids=[given]):
+        return given
+    matches = store.job_ids_with_prefix(given)
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise typer.BadParameter(f"no job {given!r} in {store.path.name}")
+    raise typer.BadParameter(f"{given!r} matches several jobs: {', '.join(matches)}")
+
+
+@app.command()
+def tailor(job_ids: list[str] = typer.Argument(..., help="Job ids (or unique prefixes) from the web UI or report"),
+           export: bool = typer.Option(False, "--export", help="Write the prompt for a Claude Code subagent instead of calling the API"),
+           import_: bool = typer.Option(False, "--import", help="Read the subagent's answer written after --export"),
+           force: bool = typer.Option(False, "--force", help="Ask again even when a tailoring is cached"),
+           model: str | None = typer.Option(None, help="Model to use (default: ai.rank_model; 'subagent' with --import)")) -> None:
+    """Pick CV parts for each job (ids only, from config/cv-parts.yaml) and print the hand-off.
+
+    With an API key this is one call per job. Without one: `--export` writes
+    data/cv/tailored/prompts/<id>.md, a subagent writes data/cv/tailored/answers/<id>.json, and
+    `--import` validates it. Each hand-off is saved to data/cv/tailored/<date>-<id>.md. Cached per
+    job and parts library, so asking again is free until the library or the prompt changes.
+    """
+    import yaml
+
+    from jobscraper.cv.parts import load_cv_parts
+    from jobscraper.cv.tailor import Tailor, TailorError, export_prompt, to_handoff_markdown
+
+    if export and import_:
+        typer.echo("tailor: use either --export or --import, not both", err=True)
+        raise typer.Exit(1)
+    try:
+        parts = load_cv_parts()
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
+        typer.echo(f"tailor: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    store = Store()
+    try:
+        try:
+            ids = [_resolve_job_id(store, given) for given in job_ids]
+        except typer.BadParameter as exc:
+            typer.echo(f"tailor: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        tailor_stage = Tailor(load_settings().profile, store, parts,
+                              model=model or ("subagent" if import_ else None))
+        filters, ranked = store.filter_results(), store.verdicts("rank")
+        out_dir = config.paths().data / "cv" / "tailored"
+        for sub in ("prompts", "answers"):
+            (out_dir / sub).mkdir(parents=True, exist_ok=True)
+        failed = False
+        for job in store.jobs(ids=ids):
+            answer_path = out_dir / "answers" / f"{job.id}.json"
+            if export:
+                prompt_path = out_dir / "prompts" / f"{job.id}.md"
+                prompt_path.write_text(export_prompt(tailor_stage, job, filters.get(job.id),
+                                                     ranked.get(job.id), answer_path), encoding="utf-8")
+                typer.echo(f"{job.id} ({job.title}): prompt {prompt_path}; answer goes to {answer_path}")
+                continue
+            try:
+                if import_:
+                    if not answer_path.is_file():
+                        raise TailorError(f"no answer at {answer_path}; run --export and a subagent first")
+                    result = tailor_stage.import_answer(job, answer_path.read_text(encoding="utf-8"))
+                else:
+                    result = tailor_stage.tailor(job, filters.get(job.id), ranked.get(job.id), force=force)
+            except TailorError as exc:
+                typer.echo(f"tailor: {job.id} ({job.title}): {exc}", err=True)
+                failed = True
+                continue
+            markdown = to_handoff_markdown(job, result)
+            path = out_dir / f"{datetime.now(UTC):%Y-%m-%d}-{job.id}.md"
+            path.write_text(markdown, encoding="utf-8")
+            # typer.echo, not the rich console: CV text may contain [brackets] rich would eat.
+            typer.echo(markdown)
+            typer.echo(f"saved {path}")
+        if failed:
+            raise typer.Exit(1)
+    finally:
+        store.close()
 
 
 def _rank_and_refine(days: int, verbose: bool) -> None:

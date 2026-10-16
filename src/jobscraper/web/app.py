@@ -209,6 +209,10 @@ class UIConfig(BaseModel):
     web_dev_toggle: bool = Field(
         True, description="Whether to show the 'I have done Full Stack Open' box at all"
     )
+    tailor: bool = Field(
+        False, description="Show the 'Tailor CV' copy button on each card (the server has a CV "
+                           "parts library)"
+    )
 
 
 class SkipReasonView(BaseModel):
@@ -487,7 +491,8 @@ def _counter(values) -> dict[str, int]:
 
 
 def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
-               languages: list[str] | None = None, preset: WebPreset = "student") -> FastAPI:
+               languages: list[str] | None = None, preset: WebPreset = "student",
+               tailor: bool = False) -> FastAPI:
     """Build the app over one database (``db_path``) or over a directory of copies.
 
     With neither argument the app serves ``$JOBSCRAPER_SERVE_DIR`` or ``data/serve/``: whatever
@@ -500,6 +505,9 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
     students: every observed language is on offer, only English starts ticked, and the "I have
     done Full Stack Open" box is there. ``tailored`` is a one-person search: only the profile's
     languages are offered, all of them ticked, and no Full Stack Open box.
+
+    ``tailor`` puts a "Tailor CV" button on each card that copies a ``jobscraper tailor <id>``
+    hand-off for a Claude Code chat; ``serve`` turns it on when the config has a CV parts library.
     """
     if db_path is None and serve_dir is None:
         from jobscraper.config import paths
@@ -518,6 +526,7 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
     app.state.serve_dir = Path(serve_dir) if serve_dir is not None else None
     app.state.languages = [code.lower() for code in (languages or [])]
     app.state.preset = preset
+    app.state.tailor = tailor
 
     def _ui(jobs: list[JobView]) -> tuple[list[str], UIConfig]:
         """The languages to offer as tick boxes and how the page should present itself."""
@@ -525,13 +534,14 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
         if app.state.preset == "tailored":
             # A page for one known person: their languages, all ticked, no profile questions.
             return spoken, UIConfig(preset="tailored", default_languages=spoken,
-                                    web_dev_toggle=False)
+                                    web_dev_toggle=False, tailor=app.state.tailor)
         offered = sorted(
             {j.facets.posting_language for j in jobs if j.facets.posting_language}
             | {c for j in jobs for c in j.facets.languages_required}
             | {"en", *app.state.languages}
         )
-        return offered, UIConfig(preset="student", default_languages=["en"], web_dev_toggle=True)
+        return offered, UIConfig(preset="student", default_languages=["en"], web_dev_toggle=True,
+                                 tailor=app.state.tailor)
 
     @app.get("/api/meta", response_model=Meta)
     def meta(store: StoreDep, report_id: int | None = None) -> Meta:

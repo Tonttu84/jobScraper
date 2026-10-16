@@ -268,7 +268,8 @@ def test_meta_ui_block_describes_the_student_preset(seeded):
     """The default page is the one shared with fellow students: pick your languages, FSO box."""
     client, _jobs = seeded
     ui = client.get("/api/meta").json()["ui"]
-    assert ui == {"preset": "student", "default_languages": ["en"], "web_dev_toggle": True}
+    assert ui == {"preset": "student", "default_languages": ["en"], "web_dev_toggle": True,
+                  "tailor": False}
 
 
 def test_meta_ui_block_for_the_tailored_preset(tmp_path):
@@ -279,9 +280,20 @@ def test_meta_ui_block_for_the_tailored_preset(tmp_path):
     # the observed "de" is not offered: nobody else is going to use this page
     assert meta["languages_offered"] == ["en", "pt"]
     assert meta["ui"] == {"preset": "tailored", "default_languages": ["en", "pt"],
-                          "web_dev_toggle": False}
+                          "web_dev_toggle": False, "tailor": False}
     # the observed counts are unchanged — only what is offered as a tick box narrows
     assert meta["languages"] == {"en": 3, "de": 1}
+
+
+@pytest.mark.parametrize("preset", ["student", "tailored"])
+def test_meta_ui_block_says_whether_to_show_the_tailor_cv_button(tmp_path, preset):
+    """``serve`` turns the button on when the config has a CV parts library; off by default."""
+    _seed(tmp_path / "t.db")
+    with TestClient(create_app(tmp_path / "t.db", preset=preset)) as client:
+        assert client.get("/api/meta").json()["ui"]["tailor"] is False
+    with TestClient(create_app(tmp_path / "t.db", preset=preset, tailor=True)) as client:
+        ui = client.get("/api/meta").json()["ui"]
+    assert (ui["preset"], ui["tailor"]) == (preset, True)
 
 
 def test_meta_is_null_for_an_on_the_fly_view(unreported):

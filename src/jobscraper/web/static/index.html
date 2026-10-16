@@ -100,6 +100,8 @@
   .actions button:hover { border-color: var(--accent); color: var(--accent); }
   .actions button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .actions button.toggle { color: var(--muted); }
+  /* Not a decision: dashed, so it does not read as one more status. */
+  .actions button.tailor { border-style: dashed; }
   /* Why a job was skipped: one tap each, only on a skipped card, a row of small chips. */
   .reasons { margin-top: 6px; align-items: center; }
   .reasons .why { font-size: 12px; }
@@ -108,6 +110,9 @@
   /* 120, not 160: with seven status buttons the row has ~157px left, and a wider minimum
      pushed the note onto a second line on every card. */
   .actions input.note { flex: 1; min-width: 120px; }
+  /* The "Tailor CV" button takes ~76px of that row: the note gives up the room so the row still
+     does not wrap. */
+  .actions button.tailor + input.note { min-width: 60px; }
   .badge {
     font-size: 11px; border-radius: 999px; padding: 1px 8px;
     background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe;
@@ -191,11 +196,14 @@
 "use strict";
 
 var STATE = { offset: 0, total: 0, shown: 0 };
+// Card id → the job object that card was last drawn from (render and refreshCard both go
+// through cardHtml), for the buttons that need more than the id.
+var CARD_JOBS = {};
 var LIMIT = 50;
 
 // /api/meta's "ui" block: how this profile wants the page's profile-fact controls presented
 // (see config WebPolicy). These values stand in until the first /api/meta answer arrives.
-var UI = { preset: "student", default_languages: ["en"], web_dev_toggle: true };
+var UI = { preset: "student", default_languages: ["en"], web_dev_toggle: true, tailor: false };
 
 // The decision statuses in the order the cards show their buttons; /api/meta lists the same
 // set, and its order is mapped onto this one so both rows read alike.
@@ -408,6 +416,7 @@ function closesText(job) {
 }
 
 function cardHtml(job) {
+  CARD_JOBS[job.id] = job;
   var facets = job.facets || {};
   var tags = "";
   var stacks = facets.stacks || [];
@@ -446,6 +455,10 @@ function cardHtml(job) {
     actions += '<button class="act' + on + '" data-status="' + buttons[b] + '">' + esc(buttons[b]) + "</button>";
   }
   actions += '<button class="act" data-status="">clear</button>';
+  if (UI.tailor) {
+    // No data-status: the click handler sends it to copyTailorHandoff, never to saveDecision.
+    actions += '<button class="act tailor" type="button" title="Copy a hand-off for a tailored CV">Tailor CV</button>';
+  }
   actions += '<input class="note" type="text" placeholder="note" value="' +
     esc(job.decision && job.decision.note ? job.decision.note : "") + '">';
 
@@ -464,6 +477,48 @@ function cardHtml(job) {
     '<div class="actions">' + actions + "</div>" +
     reasonsHtml(job) +
     '<div class="detail" hidden></div>';
+}
+
+// What the "Tailor CV" button copies: pasted into a Claude Code chat, the first line is the
+// command to run and the other two say which job it is without looking the id up.
+function tailorHandoff(job) {
+  return "Tailor my CV for this job: jobscraper tailor " + job.id + "\n" +
+    job.title + " — " + (job.company || "unknown company") + "\n" +
+    job.url;
+}
+
+// The clipboard API where the page may use it; otherwise (or when it refuses) the old
+// select-a-textarea-and-copy trick. Resolves when the text is on the clipboard.
+function copyText(text) {
+  function fallback() {
+    var area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(area);
+    if (!ok) { throw new Error("copy command refused"); }
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).catch(fallback);
+  }
+  return new Promise(function (resolve) { fallback(); resolve(); });
+}
+
+function copyTailorHandoff(card, button) {
+  var job = CARD_JOBS[card.dataset.id];
+  if (!job) { return; }
+  function flash(label) {
+    button.textContent = label;
+    setTimeout(function () { button.textContent = "Tailor CV"; }, 1500);
+  }
+  copyText(tailorHandoff(job))
+    .then(function () { flash("Copied ✓"); })
+    .catch(function (err) { console.warn("tailor hand-off not copied:", err); flash("Copy failed"); });
 }
 
 // The skip-reason chips: only on a skipped card, one toggle per reason from /api/meta.
@@ -597,7 +652,7 @@ function toggleDetail(card) {
 
 function render(payload, append) {
   var list = $("list");
-  if (!append) { list.innerHTML = ""; STATE.shown = 0; }
+  if (!append) { list.innerHTML = ""; STATE.shown = 0; CARD_JOBS = {}; }
   for (var i = 0; i < payload.items.length; i++) {
     var job = payload.items[i];
     var card = document.createElement("div");
@@ -876,6 +931,10 @@ function wire() {
     if (event.target.closest("button.toggle")) { toggleDetail(card); return; }
     var chip = event.target.closest("button.reason");
     if (chip) { toggleReason(card, chip); return; }
+    // Before the decision buttons: it is a button.act for the styling, but has no status, and
+    // saveDecision would read that as "clear".
+    var tailor = event.target.closest("button.tailor");
+    if (tailor) { copyTailorHandoff(card, tailor); return; }
     var button = event.target.closest("button.act");
     if (button) {
       var note = card.querySelector("input.note");

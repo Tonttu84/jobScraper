@@ -143,6 +143,17 @@ CREATE TABLE IF NOT EXISTS run_notes (
     data TEXT
 );
 CREATE INDEX IF NOT EXISTS run_notes_created ON run_notes(created_at);
+
+-- A tailored-CV selection per job (see jobscraper.cv.tailor); cache_key = library fingerprint,
+-- tailor prompt version and model, so an edited library or prompt re-tailors.
+CREATE TABLE IF NOT EXISTS cv_tailorings (
+    job_id TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    model TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (job_id, cache_key)
+);
 """
 
 
@@ -421,6 +432,25 @@ class Store:
             v = AIVerdict.model_validate_json(row["data"])
             out[v.job_id] = v  # latest wins
         return out
+
+    # ------------------------------------------------------- tailored CVs
+    def save_tailoring(self, job_id: str, cache_key: str, model: str, data: str) -> None:
+        with self.tx() as c:
+            c.execute("INSERT OR REPLACE INTO cv_tailorings (job_id, cache_key, model, created_at, data)"
+                      " VALUES (?,?,?,?,?)", (job_id, cache_key, model, _now(), data))
+
+    def tailoring(self, job_id: str, cache_key: str) -> str | None:
+        """The stored answer (JSON) for this job under this cache key, if any."""
+        row = self.conn.execute("SELECT data FROM cv_tailorings WHERE job_id=? AND cache_key=?",
+                                (job_id, cache_key)).fetchone()
+        return row["data"] if row else None
+
+    def job_ids_with_prefix(self, prefix: str) -> list[str]:
+        """Job ids starting with ``prefix`` (a hand-typed short id); at most a few, sorted."""
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        rows = self.conn.execute("SELECT id FROM jobs WHERE id LIKE ? ESCAPE '\\' ORDER BY id LIMIT 5",
+                                 (escaped + "%",))
+        return [row["id"] for row in rows]
 
     # --------------------------------------------------------- AI batch jobs
     def save_batch(self, batch_id: str, stage: str, model: str, prompt_version: str,

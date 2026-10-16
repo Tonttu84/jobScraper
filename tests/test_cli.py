@@ -8,6 +8,7 @@ Everything up to ``report`` runs for real against a temporary SQLite file.
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import date
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from jobscraper import cli as cli_mod
+from jobscraper import config
 from jobscraper import store as store_mod
 from jobscraper.browser import BrowserFactory
 from jobscraper.filters import rules as rules_mod
@@ -234,6 +236,34 @@ def test_serve_with_reload_passes_the_factory_string(data_dir, monkeypatch):
     assert calls["kwargs"]["factory"] is True
     assert calls["kwargs"]["reload"] is True
     assert calls["kwargs"]["port"] == 8000
+
+@pytest.mark.parametrize("has_parts", [False, True])
+def test_serve_shows_the_tailor_cv_button_only_with_a_cv_parts_library(data_dir, monkeypatch,
+                                                                         has_parts):
+    """``jobscraper tailor`` needs config/cv-parts.yaml; without it the card button is no use."""
+    from jobscraper.cv.parts import CV_PARTS_FILE
+
+    cfg = data_dir / "config"
+    cfg.mkdir()
+    shutil.copy(config.ROOT / "config" / "profile.example.yaml", cfg / "profile.yaml")
+    shutil.copy(config.ROOT / "config" / "sources.yaml", cfg / "sources.yaml")
+    if has_parts:
+        (cfg / CV_PARTS_FILE).write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("JOBSCRAPER_CONFIG_DIR", str(cfg))
+    built: dict = {}
+
+    def fake_create_app(*args, **kwargs):
+        built.update(kwargs)
+        return "app"
+
+    monkeypatch.setattr("jobscraper.web.app.create_app", fake_create_app)
+    calls = _fake_uvicorn(monkeypatch)
+    result = runner.invoke(cli_mod.app, ["serve"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["app"] == "app"
+    assert built["tailor"] is has_parts
+
 
 def test_short_verbose_flag_is_accepted(data_dir, fake_http):
     """README documents ``-v`` as the short form of ``--verbose`` on every command that logs."""
