@@ -660,9 +660,17 @@ PDF/PNG exports (`cv-canva-2026-10.*`).
   is the subagent path (CLAUDE.md, "Tailor my CV for this job"). Web UI: a "Tailor CV" button
   per card (only when the server has a `cv-parts.yaml`) copies the hand-off line for a Claude
   Code chat. Not yet in the pipeline run: tailoring stays on demand until it has proven itself.
-- Next: the HTML renderer (two-column layout, Playwright print to PDF), so the hand-off ends in
-  a PDF instead of drag instructions for Canva; library review with the owner (libft, so_long,
-  the rest of the Hive core curriculum are not parts yet).
+- Done 2026-10-16: the PDF. `jobscraper.cv.render` rebuilds the Canva page in HTML/CSS (Lato;
+  League Spartan for Now, Roboto for Aileron) and prints it with headless Chromium;
+  `cv-render [JOB_ID]` re-renders without the AI. Page fit is part of validation: an answer that
+  overflows one page is sent back ("overflows by N mm"), on import too. Prompt 2026-10-16.2 starts
+  from the untailored CV: projects are the lever, the summary changes only when clearly better,
+  work entries swap at most two bullets and never grow. Batch: `tailor --interested | --top N`,
+  cached jobs skipped, a summary table; the hand-off lists the changes from the standard CV.
+  Library review done with the owner the same day: Hive core curriculum entry (Philosophers
+  folded into it), so_long, a second Inception bullet.
+- Next: exact fonts (Aileron is free; "Now" to check) if the owner wants them; tailoring as a
+  stage of `run` once an API key exists.
 
 ## Later ideas
 - ~~Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.~~

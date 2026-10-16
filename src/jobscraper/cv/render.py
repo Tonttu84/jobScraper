@@ -5,7 +5,8 @@
 lines and the fixed sidebar sections, and a white main column with the profile, the selected
 projects and the work entries. :func:`render_pdf` prints it with a headless Chromium through
 Playwright and says whether it fits: a page that holds too many bullets grows past 297 mm, and
-the overflow in mm is what the caller warns about.
+the overflow in mm is what the caller warns about. :func:`measure_overflow` takes the same
+measurement without printing, for the tailor step's page-fit check.
 
 Measurements come from the Canva export (docs/PLAN.md, "Tailored CV"). Canva's fonts "Now" and
 "Aileron" are not on Google Fonts; the closest substitutes found there sit in the ``FONT_*``
@@ -16,6 +17,8 @@ the layout.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
@@ -302,8 +305,9 @@ _OVERFLOW_JS = """() => {
 }"""
 
 
-def render_pdf(html: str, pdf_path: Path, png_path: Path | None = None) -> RenderResult:
-    """Print ``html`` to ``pdf_path`` (A4) with headless Chromium; optionally a PNG of the page.
+@contextmanager
+def _chromium_page(html: str) -> Iterator[Any]:
+    """A headless Chromium page with ``html`` loaded and its fonts ready; closed afterwards.
 
     Raises :class:`RenderUnavailable` when Playwright or its browser is not installed.
     """
@@ -312,8 +316,6 @@ def render_pdf(html: str, pdf_path: Path, png_path: Path | None = None) -> Rende
         from playwright.sync_api import sync_playwright
     except ImportError as exc:  # the dev extra is not installed
         raise RenderUnavailable(INSTALL_HINT) from exc
-    pdf_path = Path(pdf_path)
-    pdf_path.parent.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as pw:
         try:
             browser = pw.chromium.launch()
@@ -324,13 +326,38 @@ def render_pdf(html: str, pdf_path: Path, png_path: Path | None = None) -> Rende
                                     device_scale_factor=PNG_WIDTH / (210 / _MM_PER_PX))
             page.set_content(html, wait_until="load")
             page.evaluate("document.fonts.ready.then(() => true)")
-            height_mm = page.evaluate(_OVERFLOW_JS) * _MM_PER_PX
-            page.pdf(path=str(pdf_path), format="A4", print_background=True,
-                     prefer_css_page_size=True)
-            if png_path is not None:
-                Path(png_path).parent.mkdir(parents=True, exist_ok=True)
-                page.locator(".page").screenshot(path=str(png_path))
+            yield page
         finally:
             browser.close()
-    overflow = round(max(0.0, height_mm - 297.0), 1)
+
+
+def _overflow_mm(page: Any) -> float:
+    """How far the loaded page runs past one A4 page, in mm (0.0 when it fits)."""
+    height_mm = page.evaluate(_OVERFLOW_JS) * _MM_PER_PX
+    return round(max(0.0, height_mm - 297.0), 1)
+
+
+def measure_overflow(cv: TailoredCV, *, fonts: bool = True) -> float:
+    """The overflow :func:`render_pdf` would report for ``cv``, without writing anything: the
+    page-fit check of a tailoring. ``fonts=True`` loads the web fonts, as the real print does.
+
+    Raises :class:`RenderUnavailable` when Playwright or its browser is not installed.
+    """
+    with _chromium_page(to_html(cv, fonts=fonts)) as page:
+        return _overflow_mm(page)
+
+
+def render_pdf(html: str, pdf_path: Path, png_path: Path | None = None) -> RenderResult:
+    """Print ``html`` to ``pdf_path`` (A4) with headless Chromium; optionally a PNG of the page.
+
+    Raises :class:`RenderUnavailable` when Playwright or its browser is not installed.
+    """
+    pdf_path = Path(pdf_path)
+    with _chromium_page(html) as page:
+        overflow = _overflow_mm(page)
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        page.pdf(path=str(pdf_path), format="A4", print_background=True, prefer_css_page_size=True)
+        if png_path is not None:
+            Path(png_path).parent.mkdir(parents=True, exist_ok=True)
+            page.locator(".page").screenshot(path=str(png_path))
     return RenderResult(pages=count_pdf_pages(pdf_path.read_bytes()), overflow_mm=overflow)

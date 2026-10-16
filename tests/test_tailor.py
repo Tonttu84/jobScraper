@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
 from jobscraper import cli as cli_mod
@@ -33,7 +34,7 @@ from jobscraper.cv.tailor import (
     to_handoff_markdown,
     to_selection,
 )
-from jobscraper.models import AIVerdict, FilterResult, Job
+from jobscraper.models import AIVerdict, Decision, FilterResult, Job, ReportItem, ReportSnapshot
 from jobscraper.store import Store
 
 FIXTURE = Path(__file__).parent / "fixtures" / "cv-parts.yaml"
@@ -93,8 +94,8 @@ def make_tailor(settings, parts, tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     store = Store(tmp_path / "tailor.db")
 
-    def _make(*responses, model: str | None = None) -> tuple[Tailor, FakeMessages]:
-        t = Tailor(settings.profile, store, parts, model=model)
+    def _make(*responses, model: str | None = None, fit=None) -> tuple[Tailor, FakeMessages]:
+        t = Tailor(settings.profile, store, parts, model=model, fit=fit)
         fake = FakeMessages(*responses)
         t.client = SimpleNamespace(messages=fake)
         return t, fake
@@ -253,6 +254,94 @@ def test_thinking_is_left_to_opus_and_set_for_other_models(make_tailor):
     assert fake2.calls[0]["thinking"] == {"type": "adaptive"}
 
 
+# ---------------------------------------------------------------------- page fit
+
+
+class FakeFit:
+    """Stands in for ``render.measure_overflow``: hands out the queued overflows in mm."""
+
+    def __init__(self, *overflows: float):
+        self.overflows = list(overflows)
+        self.calls: list = []
+
+    def __call__(self, cv) -> float:
+        self.calls.append(cv)
+        return self.overflows.pop(0)
+
+
+def test_without_a_fit_check_nothing_is_measured(make_tailor):
+    t, _ = make_tailor(_response(_answer()))
+    assert t.tailor(_job(), None).overflow_mm is None
+
+
+def test_an_overflowing_answer_is_sent_back_with_the_overflow(make_tailor):
+    fit = FakeFit(12.3, 0.0)
+    t, fake = make_tailor(_response(_answer()), _response(_answer(summary="default")), fit=fit)
+    result = t.tailor(_job(), None)
+    assert result.selection.summary == "default" and result.overflow_mm == 0.0
+    assert len(fake.calls) == 2 and len(fit.calls) == 2
+    assert fit.calls[0].summary == "A systems-flavoured summary."  # the answer's own CV
+    retry = fake.calls[1]["messages"][2]["content"]
+    assert ("the page overflows by 12.3 mm (about 3 lines of 5 mm); drop or swap bullets for "
+            "shorter ones") in retry
+    assert t.store.tailoring(_job().id, t.cache_key) is not None
+
+
+def test_a_tiny_overflow_is_tolerated(make_tailor):
+    fit = FakeFit(0.5)
+    t, fake = make_tailor(_response(_answer()), fit=fit)
+    assert t.tailor(_job(), None).overflow_mm == 0.5
+    assert len(fake.calls) == 1
+
+
+def test_an_answer_with_bad_ids_is_not_measured(make_tailor):
+    fit = FakeFit(0.0)
+    bad = _answer(summary="nope")
+    t, fake = make_tailor(_response(bad), _response(_answer()), fit=fit)
+    t.tailor(_job(), None)
+    assert len(fit.calls) == 1  # only the second, valid answer
+    assert "overflows" not in fake.calls[1]["messages"][2]["content"]
+
+
+def test_still_overflowing_after_the_retry_raises(make_tailor):
+    fit = FakeFit(10.0, 4.2)
+    t, _ = make_tailor(_response(_answer()), _response(_answer()), fit=fit)
+    with pytest.raises(TailorError, match=r"overflows by 4\.2 mm \(about 1 lines") as exc:
+        t.tailor(_job(), None)
+    assert exc.value.problems[0].startswith("the page overflows by 4.2 mm")
+    assert t.store.tailoring(_job().id, t.cache_key) is None
+
+
+def test_a_cached_tailoring_is_not_measured_again(make_tailor):
+    t, _ = make_tailor(_response(_answer()), fit=FakeFit(0.0))
+    t.tailor(_job(), None)
+    fit = FakeFit()
+    again, _ = make_tailor(fit=fit)
+    assert again.tailor(_job(), None).cached and fit.calls == []
+
+
+def test_import_rejects_an_overflowing_answer_and_caches_nothing(make_tailor):
+    t, _ = make_tailor(fit=FakeFit(37.0))
+    with pytest.raises(TailorError) as exc:
+        t.import_answer(_job(), _answer().model_dump_json())
+    assert ("the page overflows by 37.0 mm (about 8 lines of 5 mm); drop or swap bullets for "
+            "shorter ones") in str(exc.value)
+    assert exc.value.problems == [str(exc.value).splitlines()[1]]
+    assert t.store.tailoring(_job().id, t.cache_key) is None
+
+
+def test_import_accepts_an_answer_that_fits(make_tailor):
+    t, _ = make_tailor(fit=FakeFit(0.0))
+    result = t.import_answer(_job(), _answer().model_dump_json())
+    assert result.overflow_mm == 0.0
+    assert t.store.tailoring(_job().id, t.cache_key) is not None
+
+
+def test_tailor_error_problems():
+    assert TailorError("one\ntwo").problems == ["one"]
+    assert TailorError("head:\nx", ["x"]).problems == ["x"]
+
+
 # -------------------------------------------------------- subagent path (no API key)
 
 
@@ -304,10 +393,10 @@ def test_the_client_is_only_built_when_the_api_is_used(settings, parts, tmp_path
 # ---------------------------------------------------------------------- hand-off
 
 
-def test_handoff_markdown_has_the_job_the_steps_and_the_cv(make_tailor):
+def test_handoff_markdown_has_the_job_the_steps_and_the_cv(make_tailor, parts):
     t, _ = make_tailor(_response(_answer()))
     job = _job()
-    md = to_handoff_markdown(job, t.tailor(job, None))
+    md = to_handoff_markdown(job, t.tailor(job, None), parts)
     assert md.startswith("# Tailored CV: C++ Developer — Acme\n")
     assert "https://example.test/1" in md and job.id in md
     assert "Leads with the server" in md
@@ -318,6 +407,61 @@ def test_handoff_markdown_has_the_job_the_steps_and_the_cv(make_tailor):
     assert "Poker professional" in md
     # Then the full CV text.
     assert "## SAMPLE PROJECTS" in md and "- Served many clients with poll()." in md
+    assert "PDF:" not in md
+
+
+def _changes(md: str) -> str:
+    """The "Changes from your standard CV" section, which sits right before the Canva steps."""
+    rest = md.split("## Changes from your standard CV\n", 1)[1]
+    return rest.split("## Into the Canva layout", 1)[0]
+
+
+def test_handoff_lists_the_changes_from_the_standard_cv(make_tailor, parts):
+    t, _ = make_tailor()
+    md = to_handoff_markdown(_job(), t.import_answer(_job(), _answer().model_dump_json()), parts)
+    changes = _changes(md)
+    assert "- Summary: `default` → `systems`" in changes
+    assert "- Projects in: **Shell** (`shell`)" in changes
+    assert "- Projects out: **Raycaster** (`game`)" in changes
+    assert ('- **Poker professional**: + "Used probability daily."; − "Kept detailed records."'
+            in changes)
+    assert "Shop assistant" not in changes  # left out of the answer: its default bullets
+
+
+def test_handoff_changes_when_nothing_changed(make_tailor, parts):
+    t, _ = make_tailor()
+    same = _answer(summary="default",
+                   projects=[PickedEntry(id="webserver", bullets=["parse", "poll"]),
+                             PickedEntry(id="game", bullets=["dda"])],
+                   work=[PickedEntry(id="poker", bullets=["discipline"]),
+                         PickedEntry(id="shop", bullets=["service"])])
+    changes = _changes(to_handoff_markdown(_job(), t.import_answer(_job(), same.model_dump_json()),
+                                           parts))
+    assert "- Summary: unchanged (`default`)" in changes
+    assert "- Projects: the standard ones\n" in changes
+    assert "- Work bullets: unchanged" in changes
+    reordered = same.model_copy(update={"projects": list(reversed(same.projects))})
+    changes = _changes(to_handoff_markdown(
+        _job(), t.import_answer(_job(), reordered.model_dump_json()), parts))
+    assert "- Projects: the standard ones, reordered" in changes
+
+
+def test_handoff_changes_shorten_long_bullets_and_show_removed_work(parts, settings, tmp_path):
+    raw = parts.model_dump()
+    raw["work"][0]["bullets"][1]["text"] = "Used probability daily " + "and very carefully " * 6
+    long_parts = type(parts).model_validate(raw)
+    t = Tailor(settings.profile, Store(tmp_path / "long.db"), long_parts)
+    answer = _answer(work=[PickedEntry(id="poker", bullets=["discipline", "math"]),
+                           PickedEntry(id="shop", bullets=[])])
+    md = to_handoff_markdown(_job(), t.import_answer(_job(), answer.model_dump_json()), long_parts,
+                             pdf_path=tmp_path / "cv.pdf")
+    changes = _changes(md)
+    line = next(x for x in changes.splitlines() if x.startswith("- **Poker professional**"))
+    added = line.split('+ "', 1)[1].split('"', 1)[0]
+    assert added.endswith("…") and len(added) <= 60
+    assert "−" not in line
+    assert '- **Shop assistant**: − "Served customers."' in changes
+    assert f"- PDF: {tmp_path / 'cv.pdf'}" in md
 
 
 # --------------------------------------------------------------------------- CLI
@@ -343,9 +487,15 @@ def cli_env(tmp_path, monkeypatch):
     fake = FakeMessages(_response(_answer()))
     monkeypatch.setattr(tailor_mod, "_client", lambda: SimpleNamespace(messages=fake))
     # The PDF step is covered by test_cv_render*.py; here it must not start a browser.
-    monkeypatch.setattr(render_mod, "render_pdf",
-                        lambda html, pdf, png=None: render_mod.RenderResult(pages=1, overflow_mm=0.0))
-    return SimpleNamespace(job=job, fake=fake, data=tmp_path / "data", config=config_dir)
+    def render_pdf(html, pdf, png=None):
+        Path(pdf).write_bytes(b"%PDF")
+        return render_mod.RenderResult(pages=1, overflow_mm=0.0)
+
+    monkeypatch.setattr(render_mod, "render_pdf", render_pdf)
+    measured: list = []
+    monkeypatch.setattr(render_mod, "measure_overflow", lambda cv: measured.append(cv) or 0.0)
+    return SimpleNamespace(job=job, fake=fake, data=tmp_path / "data", config=config_dir,
+                           db=db, measured=measured)
 
 
 def test_cli_tailor_prints_and_saves_the_handoff(cli_env):
@@ -422,3 +572,183 @@ def test_cli_tailor_export_then_import(cli_env):
 def test_cli_tailor_export_and_import_together_is_an_error(cli_env):
     result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--export", "--import"])
     assert result.exit_code == 1 and "either" in result.output
+
+
+def test_cli_tailor_checks_the_page_fit(cli_env):
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id])
+    assert result.exit_code == 0, result.output
+    assert len(cli_env.measured) == 1
+    no_pdf = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--no-pdf", "--force"])
+    assert no_pdf.exit_code == 1  # the one queued answer is spent; the point is no measuring
+    assert len(cli_env.measured) == 1
+
+
+# ------------------------------------------------------------------ CLI batches
+
+
+@pytest.fixture
+def batch_env(cli_env, monkeypatch):
+    """Three jobs, two stored reports (the latest one counts) and a wide console, so the summary
+    table never wraps a cell."""
+    jobs = [cli_env.job, _job(source_id="2", title="Go Developer", company="Beta"),
+            _job(source_id="3", title="Data [Platform] Engineer", company="Gamma")]
+    store = Store(cli_env.db)
+    store.upsert_jobs(jobs[1:])
+
+    def ranked(*order):
+        return [ReportItem(job_id=j.id, section="ranked", position=n, score=90 - n)
+                for n, j in enumerate(order, start=1)]
+
+    store.save_report(ReportSnapshot(days=30, prompt_version="v", items=ranked(*jobs)))
+    store.save_report(ReportSnapshot(days=30, prompt_version="v", items=[
+        *ranked(jobs[2], jobs[0], jobs[1]),
+        ReportItem(job_id="prefilteronly", section="prefilter", position=1, score=99)]))
+    store.close()
+    monkeypatch.setattr(cli_mod, "console", Console(width=250))
+    cli_env.jobs = jobs
+    return cli_env
+
+
+def _decide(env, *rows: tuple[str, str, str]) -> None:
+    store = Store(env.db, decisions_path=env.data / "serve" / "decisions.db")
+    for job_id, user, status in rows:
+        store.save_decision(Decision(job_id=job_id, user=user, status=status))
+    store.close()
+
+
+def _row(output: str, job: Job) -> str:
+    """The summary table's line for ``job`` (its short id is the first column)."""
+    return next(line for line in output.splitlines() if job.id[:8] in line)
+
+
+def test_cli_tailor_needs_exactly_one_job_source(batch_env):
+    for args in ([], [batch_env.job.id, "--top", "2"], ["--interested", "--top", "1"]):
+        result = runner.invoke(cli_mod.app, ["tailor", *args])
+        assert result.exit_code == 1, args
+        assert "exactly one of" in result.output
+
+
+def test_cli_tailor_top_n_follows_the_latest_report(batch_env):
+    jobs = batch_env.jobs
+    batch_env.fake.responses.append(_response(_answer()))
+    result = runner.invoke(cli_mod.app, ["tailor", "--top", "2"])
+    assert result.exit_code == 0, result.output
+    asked = [call["messages"][0]["content"] for call in batch_env.fake.calls]
+    assert "Data [Platform] Engineer" in asked[0] and "C++ Developer" in asked[1]
+    assert len(asked) == 2
+    # A batch prints the summary only; the hand-offs are still written.
+    assert "# Tailored CV" not in result.output
+    assert len(list((batch_env.data / "cv" / "tailored").glob("*.md"))) == 2
+    row = _row(result.output, jobs[2])
+    assert "Data [Platform] Engineer" in row and "Gamma" in row and "tailored" in row
+    assert "0.0" in row and f"-{jobs[2].id}.pdf" in row
+    assert result.output.index(jobs[2].id[:8]) < result.output.index(jobs[0].id[:8])
+    assert jobs[1].id[:8] not in result.output
+
+
+def test_cli_tailor_without_a_report(cli_env):
+    result = runner.invoke(cli_mod.app, ["tailor", "--top", "3"])
+    assert result.exit_code == 1 and "no report" in result.output
+
+
+def test_cli_tailor_batch_skips_cached_jobs_unless_forced(batch_env):
+    jobs = batch_env.jobs
+    assert runner.invoke(cli_mod.app, ["tailor", jobs[0].id]).exit_code == 0  # cached now
+    batch_env.fake.responses.append(_response(_answer()))
+    result = runner.invoke(cli_mod.app, ["tailor", "--top", "2"])
+    assert result.exit_code == 0, result.output
+    assert "cached" in _row(result.output, jobs[0]) and "tailored" in _row(result.output, jobs[2])
+    assert len(batch_env.fake.calls) == 2
+    # The cached one still points at its PDF.
+    assert f"-{jobs[0].id}.pdf" in _row(result.output, jobs[0])
+
+    batch_env.fake.responses += [_response(_answer()), _response(_answer())]
+    forced = runner.invoke(cli_mod.app, ["tailor", "--top", "2", "--force"])
+    assert forced.exit_code == 0, forced.output
+    assert "tailored" in _row(forced.output, jobs[0]) and len(batch_env.fake.calls) == 4
+
+
+def test_cli_tailor_batch_export_writes_batch_txt(batch_env):
+    jobs = batch_env.jobs
+    assert runner.invoke(cli_mod.app, ["tailor", jobs[0].id]).exit_code == 0  # cached now
+    result = runner.invoke(cli_mod.app, ["tailor", "--top", "3", "--export"])
+    assert result.exit_code == 0, result.output
+    out = batch_env.data / "cv" / "tailored"
+    lines = (out / "prompts" / "batch.txt").read_text(encoding="utf-8").splitlines()
+    assert [line.split("\t") for line in lines] == [
+        [j.id, str(out / "prompts" / f"{j.id}.md"), str(out / "answers" / f"{j.id}.json")]
+        for j in (jobs[2], jobs[1])]
+    assert (out / "prompts" / f"{jobs[2].id}.md").is_file()
+    assert not (out / "prompts" / f"{jobs[0].id}.md").exists()
+    assert "exported" in _row(result.output, jobs[1]) and "cached" in _row(result.output, jobs[0])
+    assert "batch.txt" in result.output
+
+
+def test_cli_tailor_several_ids_are_a_batch(batch_env):
+    jobs = batch_env.jobs
+    result = runner.invoke(cli_mod.app, ["tailor", jobs[0].id, jobs[1].id, "--export"])
+    assert result.exit_code == 0, result.output
+    batch = batch_env.data / "cv" / "tailored" / "prompts" / "batch.txt"
+    assert len(batch.read_text(encoding="utf-8").splitlines()) == 2
+    assert "exported" in _row(result.output, jobs[1])
+
+
+def test_cli_tailor_batch_import(batch_env):
+    jobs = batch_env.jobs
+    answers = batch_env.data / "cv" / "tailored" / "answers"
+    answers.mkdir(parents=True)
+    (answers / f"{jobs[2].id}.json").write_text(_answer().model_dump_json(), encoding="utf-8")
+    (answers / f"{jobs[0].id}.json").write_text(_answer(summary="nope").model_dump_json(),
+                                                encoding="utf-8")
+    result = runner.invoke(cli_mod.app, ["tailor", "--top", "3", "--import"])
+    assert result.exit_code == 1
+    assert "imported" in _row(result.output, jobs[2])
+    assert "error: unknown summary 'nope'" in _row(result.output, jobs[0])
+    assert "no answer" in _row(result.output, jobs[1])
+    assert batch_env.fake.calls == []
+
+
+def test_cli_tailor_batch_without_a_browser_warns_once(batch_env, monkeypatch):
+    def missing(cv):
+        raise render_mod.RenderUnavailable("no chromium here")
+
+    monkeypatch.setattr(render_mod, "measure_overflow", missing)
+    batch_env.fake.responses.append(_response(_answer()))
+    result = runner.invoke(cli_mod.app, ["tailor", "--top", "2"])
+    assert result.exit_code == 0, result.output
+    assert result.output.count("no chromium here") == 1
+    assert "tailored" in _row(result.output, batch_env.jobs[0])
+
+
+def test_cli_tailor_interested_picks_the_only_handle(batch_env):
+    jobs = batch_env.jobs
+    _decide(batch_env, (jobs[1].id, "tonttu", "interested"), (jobs[2].id, "tonttu", "skipped"),
+            ("ghost123456789ab", "tonttu", "interested"))
+    result = runner.invoke(cli_mod.app, ["tailor", "--interested", "--export"])
+    assert result.exit_code == 0, result.output
+    assert "exported" in _row(result.output, jobs[1])
+    assert jobs[2].id[:8] not in result.output
+    assert "ghost123456789ab" in result.output and "not in" in result.output
+
+
+def test_cli_tailor_interested_with_several_handles(batch_env):
+    jobs = batch_env.jobs
+    _decide(batch_env, (jobs[1].id, "tonttu", "interested"), (jobs[2].id, "other", "interested"))
+    result = runner.invoke(cli_mod.app, ["tailor", "--interested", "--export"])
+    assert result.exit_code == 1
+    assert "other, tonttu" in result.output and "--user" in result.output
+    chosen = runner.invoke(cli_mod.app, ["tailor", "--interested", "--user", "other", "--export"])
+    assert chosen.exit_code == 0, chosen.output
+    assert "exported" in _row(chosen.output, jobs[2]) and jobs[1].id[:8] not in chosen.output
+
+
+def test_cli_tailor_interested_without_decisions(batch_env):
+    result = runner.invoke(cli_mod.app, ["tailor", "--interested"])
+    assert result.exit_code == 1 and "no decisions" in result.output
+
+
+def test_cli_tailor_interested_with_nothing_marked(batch_env):
+    _decide(batch_env, (batch_env.jobs[1].id, "tonttu", "skipped"))
+    result = runner.invoke(cli_mod.app, ["tailor", "--interested"])
+    assert result.exit_code == 0, result.output
+    assert "no jobs to tailor" in result.output

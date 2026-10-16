@@ -14,12 +14,18 @@ and the model: editing a single bullet re-tailors, asking twice does not pay twi
 Two ways to get the answer, as with the other AI stages: :meth:`Tailor.tailor` calls the API;
 without an API key, :func:`export_prompt` writes the whole request to a file, a Claude Code
 subagent writes the answer JSON, and :meth:`Tailor.import_answer` validates and caches it.
+
+With a ``fit`` measure (the CLI passes :func:`jobscraper.cv.render.measure_overflow`), "fits on
+one page" is part of that validation: an answer whose page overflows is sent back (API) or
+rejected (import) with the overflow in mm, like an unknown id.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,6 +40,7 @@ from jobscraper.cv.parts import (
     Selection,
     SelectionError,
     TailoredCV,
+    default_selection,
     effective_max_bullets,
     parts_fingerprint,
     resolve,
@@ -46,7 +53,7 @@ from jobscraper.store import Store
 log = logging.getLogger(__name__)
 
 #: Bump on any wording change below; it is part of the cache key.
-TAILOR_PROMPT_VERSION = "2026-10-16.1"
+TAILOR_PROMPT_VERSION = "2026-10-16.2"  # start from the untailored CV; page budget
 
 
 def tailoring_key_prefix(parts: CvParts) -> str:
@@ -54,8 +61,21 @@ def tailoring_key_prefix(parts: CvParts) -> str:
     return f"{parts_fingerprint(parts)}|{TAILOR_PROMPT_VERSION}|"
 
 
+#: Overflow up to this many mm counts as fitting: rounding, not a line of text.
+FIT_TOLERANCE_MM = 0.5
+#: About one line of CV text, for telling the model how much to cut.
+LINE_MM = 5
+
+
 class TailorError(RuntimeError):
-    """The model gave no usable selection (refused, or twice an answer that does not fit)."""
+    """The model gave no usable selection (refused, or twice an answer that does not fit).
+
+    ``problems`` lists what was wrong, one line each; without a list, the message's first line.
+    """
+
+    def __init__(self, message: str, problems: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.problems = problems or [message.splitlines()[0]]
 
 
 # --------------------------------------------------------------------------- schema
@@ -84,6 +104,15 @@ def to_selection(answer: TailorAnswer) -> Selection:
     return Selection(summary=answer.summary,
                      projects=[EntryPick(id=p.id, bullets=list(p.bullets)) for p in answer.projects],
                      work={w.id: list(w.bullets) for w in answer.work})
+
+
+def overflow_problem(overflow_mm: float) -> str | None:
+    """The page-fit problem for an overflow in mm, or None when it fits."""
+    if overflow_mm <= FIT_TOLERANCE_MM:
+        return None
+    lines = math.ceil(overflow_mm / LINE_MM)
+    return (f"the page overflows by {overflow_mm:.1f} mm (about {lines} lines of {LINE_MM} mm); "
+            "drop or swap bullets for shorter ones")
 
 
 def answer_problems(parts: CvParts, answer: TailorAnswer) -> list[str]:
@@ -142,22 +171,29 @@ TAILOR_SYSTEM = """You are tailoring the one-page CV of a specific {role_label} 
 You never write CV text. Every sentence on the page comes from the CV PARTS LIBRARY below, written
 by the candidate, and you answer with ids only. An id that is not in the library is an error.
 
-How to choose:
-- Summary: the one whose angle matches what the posting is mostly about; the first one when no
-  other fits clearly better.
+Start from the untailored CV (the parts marked "on the untailored CV") and change what this
+posting gives a reason to change. The projects are the main lever; the summary and the work
+entries change only a little.
 - Projects: fill every project slot. Order them by what a recruiter for THIS posting should read
   first: evidence of the posting's core stack and of the work the role actually does beats an
   impressive but unrelated project. A project that only matches on a soft skill goes last.
-- Bullets: within each chosen entry, pick the bullets that speak to the posting, up to the entry's
-  limit, in the order they should be read. A bullet with concrete technology or numbers beats a
-  generic one when both fit. Fewer than the limit is fine when the rest would be noise.
-- Work: list every work entry once and choose its bullets the same way; these jobs are not in
-  software, so pick the bullets that transfer to this role (analysis, teaching, ownership, ...).
+- Project bullets: pick the ones that speak to the posting, in the order they should be read. A
+  bullet with concrete technology or numbers beats a generic one when both fit. Fewer than the
+  limit is fine when the rest would be noise.
+- Summary: keep the first one unless another one's angle fits the posting clearly better.
+- Work: list every work entry once. Keep its untailored bullets, swapping at most two of them per
+  entry for a bullet that transfers clearly better to this role (analysis, teaching, ownership,
+  ...). Do not add bullets beyond the untailored count.
 - Projects tagged ai-directed were built by directing coding agents (their own text says so).
   They show specification, testing, product and operations skill. For a posting that is about
   writing code by hand in a given language, lead with hand-written projects in that language and
   use ai-directed ones as support; for product, AI, automation or generalist roles they can lead.
 - Mirror the posting: when a part names a technology the posting asks for, prefer it.
+
+The page is full. The untailored CV fills it exactly, so the tailored one may hold no more text:
+a longer project lead or bullet has to be paid for with a shorter or dropped bullet elsewhere.
+When an answer does not fit, you are told by how many millimetres it overflows (one line of text
+is about 5 mm); drop or swap bullets until it fits.
 
 Also return, for the candidate (none of this goes on the CV): `focus`, what the posting most wants;
 `rationale`, why these picks and which strong part you left out and why; `gaps`, requirements the
@@ -207,12 +243,15 @@ class Tailoring:
     gaps: list[str] = field(default_factory=list)
     model: str = ""
     cached: bool = False
+    overflow_mm: float | None = None  # measured by the fit check; None when there was none
 
 
 class Tailor:
     """Picks CV parts for one job at a time; see the module docstring."""
 
-    def __init__(self, profile: Profile, store: Store, parts: CvParts, model: str | None = None) -> None:
+    def __init__(self, profile: Profile, store: Store, parts: CvParts, model: str | None = None,
+                 fit: Callable[[TailoredCV], float] | None = None) -> None:
+        """``fit`` measures how many mm a CV overflows its page; when given, an answer must fit."""
         ai = profile.ai
         self.profile = profile
         self.store = store
@@ -222,6 +261,7 @@ class Tailor:
         self.max_chars = ai.max_description_chars
         self.system = tailor_system_prompt(profile, parts)
         self.cache_key = tailoring_key_prefix(parts) + self.model
+        self.fit = fit
         self._client = None
 
     @property
@@ -255,11 +295,22 @@ class Tailor:
             raise TailorError(f"{self.model} gave no structured answer (stop_reason={response.stop_reason})")
         return response.parsed_output
 
-    def _result(self, answer: TailorAnswer, *, cached: bool) -> Tailoring:
+    def _result(self, answer: TailorAnswer, *, cached: bool,
+                overflow_mm: float | None = None) -> Tailoring:
         selection = to_selection(answer)
         return Tailoring(selection=selection, cv=resolve(self.parts, selection), focus=answer.focus,
                          rationale=answer.rationale, gaps=list(answer.gaps), model=self.model,
-                         cached=cached)
+                         cached=cached, overflow_mm=overflow_mm)
+
+    def _check(self, answer: TailorAnswer) -> tuple[list[str], str, float | None]:
+        """``(problems, what it does not fit, overflow)``: the library's id check first, then —
+        only for an answer that passed it, and only with a ``fit`` measure — the page fit."""
+        problems = answer_problems(self.parts, answer)
+        if problems or self.fit is None:
+            return problems, "the library", None
+        overflow = self.fit(resolve(self.parts, to_selection(answer)))
+        problem = overflow_problem(overflow)
+        return ([problem] if problem else []), "the page", overflow
 
     def tailor(self, job: Job, fr: FilterResult | None, verdict: AIVerdict | None = None, *,
                force: bool = False) -> Tailoring:
@@ -270,23 +321,24 @@ class Tailor:
                 return self._result(TailorAnswer.model_validate_json(stored), cached=True)
         messages = [{"role": "user", "content": self.user_prompt(job, fr, verdict)}]
         answer = self._ask(messages)
-        problems = answer_problems(self.parts, answer)
+        problems, where, overflow = self._check(answer)
         if problems:
-            log.warning("tailor: answer for %s did not fit the library, asking again: %s",
-                        job.id, "; ".join(problems))
+            log.warning("tailor: answer for %s did not fit %s, asking again: %s",
+                        job.id, where, "; ".join(problems))
+            again = (", using only ids from the CV PARTS LIBRARY and staying within each entry's "
+                     "limit." if where == "the library" else ", with a selection that fits the page.")
             messages += [
                 {"role": "assistant", "content": answer.model_dump_json()},
-                {"role": "user", "content": "That answer does not fit the library:\n"
-                 + "\n".join(f"- {p}" for p in problems)
-                 + "\nAnswer again, using only ids from the CV PARTS LIBRARY and staying within "
-                   "each entry's limit."},
+                {"role": "user", "content": f"That answer does not fit {where}:\n"
+                 + "\n".join(f"- {p}" for p in problems) + "\nAnswer again" + again},
             ]
             answer = self._ask(messages)
-            problems = answer_problems(self.parts, answer)
+            problems, where, overflow = self._check(answer)
             if problems:
-                raise TailorError("the answer still does not fit the library:\n" + "\n".join(problems))
+                raise TailorError(f"the answer still does not fit {where}:\n" + "\n".join(problems),
+                                  problems)
         self.store.save_tailoring(job.id, self.cache_key, self.model, answer.model_dump_json())
-        return self._result(answer, cached=False)
+        return self._result(answer, cached=False, overflow_mm=overflow)
 
     def user_prompt(self, job: Job, fr: FilterResult | None, verdict: AIVerdict | None) -> str:
         return tailor_user_prompt(job, fr, self.max_chars, verdict)
@@ -297,11 +349,11 @@ class Tailor:
             answer = TailorAnswer.model_validate_json(text)
         except ValidationError as exc:
             raise TailorError(f"not a valid answer: {exc}") from exc
-        problems = answer_problems(self.parts, answer)
-        if problems:
-            raise TailorError("the answer does not fit the library:\n" + "\n".join(problems))
+        problems, where, overflow = self._check(answer)
+        if problems:  # nothing is cached: the subagent fixes the JSON and imports again
+            raise TailorError(f"the answer does not fit {where}:\n" + "\n".join(problems), problems)
         self.store.save_tailoring(job.id, self.cache_key, self.model, answer.model_dump_json())
-        return self._result(answer, cached=False)
+        return self._result(answer, cached=False, overflow_mm=overflow)
 
 
 _EXPORT_TAIL = """
@@ -333,8 +385,47 @@ def _bullet_lines(texts: list[str]) -> list[str]:
     return [f"   - {text}" for text in texts]
 
 
-def to_handoff_markdown(job: Job, result: Tailoring) -> str:
-    """What the owner works from: the job, the model's notes, what goes where, then the CV text."""
+def _short(text: str, most: int = 60) -> str:
+    return text if len(text) <= most else text[:most - 1].rstrip() + "…"
+
+
+def changes_from_standard(parts: CvParts, selection: Selection) -> list[str]:
+    """Markdown bullets: how ``selection`` differs from the untailored CV (summary, projects in
+    and out, work bullets added and removed, by text)."""
+    std = default_selection(parts)
+    lines = [f"- Summary: unchanged (`{std.summary}`)" if selection.summary == std.summary
+             else f"- Summary: `{std.summary}` → `{selection.summary}`"]
+    old, new = [p.id for p in std.projects], [p.id for p in selection.projects]
+    added, dropped = [i for i in new if i not in old], [i for i in old if i not in new]
+
+    def named(ids: list[str]) -> str:
+        return ", ".join(f"**{parts.project(i).title}** (`{i}`)" for i in ids)  # type: ignore[union-attr]
+
+    if added:
+        lines.append(f"- Projects in: {named(added)}")
+    if dropped:
+        lines.append(f"- Projects out: {named(dropped)}")
+    if not added and not dropped:
+        lines.append("- Projects: the standard ones" + (", reordered" if new != old else ""))
+    work = []
+    for entry in parts.work:
+        before = std.work[entry.id]
+        after = selection.work.get(entry.id, before)
+
+        def text(b: str, entry=entry) -> str:
+            return _short(entry.bullet(b).text)  # type: ignore[union-attr]  # validated ids
+
+        diff = [f'+ "{text(b)}"' for b in after if b not in before]
+        diff += [f'− "{text(b)}"' for b in before if b not in after]
+        if diff:
+            work.append(f"- **{entry.title}**: " + "; ".join(diff))
+    return lines + (work or ["- Work bullets: unchanged"])
+
+
+def to_handoff_markdown(job: Job, result: Tailoring, parts: CvParts,
+                        pdf_path: Path | None = None) -> str:
+    """What the owner works from: the job, the model's notes, what changed from the standard CV,
+    what goes where, then the CV text. ``pdf_path``: the printed CV, when one was written."""
     sel, cv = result.selection, result.cv
     lines = [
         f"# Tailored CV: {job.title} — {job.company or 'unknown company'}",
@@ -342,6 +433,10 @@ def to_handoff_markdown(job: Job, result: Tailoring) -> str:
         f"- Job: {job.url}",
         f"- Job id: `{job.id}`",
         f"- Library {cv.version}, {result.model}" + (" (cached)" if result.cached else ""),
+    ]
+    if pdf_path is not None:
+        lines.append(f"- PDF: {pdf_path}")
+    lines += [
         "",
         "## What the posting wants",
         "",
@@ -355,6 +450,7 @@ def to_handoff_markdown(job: Job, result: Tailoring) -> str:
         "",
     ]
     lines += [f"- {gap}" for gap in result.gaps] or ["- nothing"]
+    lines += ["", "## Changes from your standard CV", "", *changes_from_standard(parts, sel)]
     lines += ["", "## Into the Canva layout", "", f"Profile: **{sel.summary}**", "",
               "Sample projects, in this order:"]
     for n, (pick, entry) in enumerate(zip(sel.projects, cv.projects, strict=True), start=1):

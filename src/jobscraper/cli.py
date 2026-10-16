@@ -33,6 +33,7 @@ import shutil
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -1045,20 +1046,23 @@ def cv_parts() -> None:
     typer.echo(markdown, nl=False)
 
 
-def _write_cv_pdf(cv, pdf_path: Path, *, png: bool = False, required: bool = False) -> None:
-    """Print ``cv`` to ``pdf_path`` and say where; warn when it overflows one page. Without a
-    browser that is an error when the PDF is the point (``required``), else a warning."""
+def _render_cv(cv, pdf_path: Path, png_path: Path | None = None, *, required: bool = False):
+    """Print ``cv`` to ``pdf_path``; the :class:`~jobscraper.cv.render.RenderResult`, or None
+    without a browser — an error when the PDF is the point (``required``), else a warning."""
     from jobscraper.cv import render
 
-    png_path = pdf_path.with_suffix(".png") if png else None
     try:
-        result = render.render_pdf(render.to_html(cv), pdf_path, png_path)
+        return render.render_pdf(render.to_html(cv), pdf_path, png_path)
     except render.RenderUnavailable as exc:
         if required:
             typer.echo(f"cv-render: {exc}", err=True)
             raise typer.Exit(1) from exc
         typer.echo(f"WARNING: no PDF: {exc}")
-        return
+        return None
+
+
+def _echo_pdf(result, pdf_path: Path, png_path: Path | None = None) -> None:
+    """Say where the PDF went; warn when it overflows one page."""
     if result.overflow_mm > 0:
         typer.echo(f"WARNING: the CV overflows one page by {result.overflow_mm:.1f} mm; "
                    "choose fewer bullets")
@@ -1080,55 +1084,185 @@ def _resolve_job_id(store: Store, given: str) -> str:
     raise typer.BadParameter(f"{given!r} matches several jobs: {', '.join(matches)}")
 
 
+def _interested_ids(store: Store, user: str | None) -> list[str]:
+    """The jobs ``user`` marked "interested" in the web UI (newest decision first); without a
+    user, the only handle that has decisions."""
+    if user is None:
+        handles = store.decision_users()
+        if not handles:
+            typer.echo("tailor: no decisions recorded; mark jobs 'interested' in the web UI first",
+                       err=True)
+            raise typer.Exit(1)
+        if len(handles) > 1:
+            typer.echo(f"tailor: decisions from several users ({', '.join(handles)}); choose one "
+                       "with --user", err=True)
+            raise typer.Exit(1)
+        user = handles[0]
+    return [d.job_id for d in store.decisions(user) if d.status == "interested"]
+
+
+def _top_report_ids(store: Store, n: int) -> list[str]:
+    """The first ``n`` of the latest stored report's ranked section, in the report's order."""
+    snap = store.report()
+    if snap is None:
+        typer.echo(f"tailor: no report stored in {store.path.name}; run `jobscraper report` first",
+                   err=True)
+        raise typer.Exit(1)
+    ranked = sorted((i for i in snap.items if i.section == "ranked"), key=lambda i: i.position)
+    return [i.job_id for i in ranked[:n]]
+
+
+def _tailor_jobs(store: Store, job_ids: list[str] | None, interested: bool, top: int | None,
+                 user: str | None) -> list[Job]:
+    """The jobs to tailor, in order: the given ids, the interested ones, or the report's top N.
+    A selected id that is not in the database is reported and left out."""
+    if job_ids:
+        try:
+            ids = [_resolve_job_id(store, given) for given in job_ids]
+        except typer.BadParameter as exc:
+            typer.echo(f"tailor: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    elif interested:
+        ids = _interested_ids(store, user)
+    else:
+        ids = _top_report_ids(store, top or 0)
+    ids = list(dict.fromkeys(ids))
+    by_id = {j.id: j for j in store.jobs(ids=ids)} if ids else {}
+    for job_id in ids:
+        if job_id not in by_id:
+            typer.echo(f"tailor: {job_id} is not in {store.path.name}; skipped")
+    return [by_id[i] for i in ids if i in by_id]
+
+
+class _PageFit:
+    """``tailor``'s page-fit check (:func:`~jobscraper.cv.render.measure_overflow`). Without a
+    browser it warns once and lets every answer through unmeasured; ``missing`` then also tells
+    the caller not to try the PDF."""
+
+    def __init__(self) -> None:
+        self.missing = False
+
+    def __call__(self, cv) -> float:
+        from jobscraper.cv import render
+
+        if self.missing:
+            return 0.0
+        try:
+            return render.measure_overflow(cv)
+        except render.RenderUnavailable as exc:
+            self.missing = True
+            typer.echo(f"WARNING: no page-fit check and no PDF: {exc}")
+            return 0.0
+
+
+@dataclass
+class _TailorRow:
+    """One line of ``tailor``'s batch summary."""
+
+    job: Job
+    outcome: str = ""
+    overflow_mm: float | None = None
+    pdf: Path | None = None
+    failed: bool = False
+
+
+def _print_tailor_summary(rows: list[_TailorRow], out_dir: Path) -> None:
+    from rich.markup import escape
+
+    table = Table("job", "title", "company", "outcome", "overflow mm", "pdf")
+    for row in rows:
+        # CV and job text may contain [brackets] rich would read as markup.
+        table.add_row(row.job.id[:8], escape(row.job.title), escape(row.job.company or ""),
+                      escape(row.outcome),
+                      "-" if row.overflow_mm is None else f"{row.overflow_mm:.1f}",
+                      escape(row.pdf.name) if row.pdf else "-")
+    console.print(table)
+    typer.echo(f"hand-offs and PDFs in {out_dir}")
+
+
 @app.command()
-def tailor(job_ids: list[str] = typer.Argument(..., help="Job ids (or unique prefixes) from the web UI or report"),
+def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or unique prefixes) from the web UI or report"),
+           interested: bool = typer.Option(False, "--interested", help="Every job marked 'interested' in the web UI (data/serve/decisions.db)"),
+           top: int | None = typer.Option(None, "--top", min=1, help="The N best jobs of the latest stored report, in report order"),
+           user: str | None = typer.Option(None, "--user", help="Whose 'interested' marks (default: the only handle with decisions)"),
            export: bool = typer.Option(False, "--export", help="Write the prompt for a Claude Code subagent instead of calling the API"),
            import_: bool = typer.Option(False, "--import", help="Read the subagent's answer written after --export"),
-           force: bool = typer.Option(False, "--force", help="Ask again even when a tailoring is cached"),
+           force: bool = typer.Option(False, "--force", help="Ask again even when a tailoring is cached (a batch skips cached jobs otherwise)"),
            model: str | None = typer.Option(None, help="Model to use (default: ai.rank_model; 'subagent' with --import)"),
-           no_pdf: bool = typer.Option(False, "--no-pdf", help="Only the markdown hand-off, no PDF")) -> None:
+           no_pdf: bool = typer.Option(False, "--no-pdf", help="Only the markdown hand-off: no PDF and no page-fit check")) -> None:
     """Pick CV parts for each job (ids only, from config/cv-parts.yaml) and print the hand-off.
 
-    With an API key this is one call per job. Without one: `--export` writes
-    data/cv/tailored/prompts/<id>.md, a subagent writes data/cv/tailored/answers/<id>.json, and
-    `--import` validates it. Each hand-off is saved to data/cv/tailored/<date>-<id>.md and the CV
-    printed next to it as <date>-<id>.pdf (unless --no-pdf). Cached per job and parts library, so
-    asking again is free until the library or the prompt changes.
+    Jobs: the given ids, every job marked "interested" in the web UI (--interested), or the
+    latest report's top N (--top N) — exactly one of them. With an API key this is one call per
+    job. Without one: `--export` writes data/cv/tailored/prompts/<id>.md, a subagent writes
+    data/cv/tailored/answers/<id>.json, and `--import` validates it. An answer must fit one page
+    (measured in Chromium unless --no-pdf). Each hand-off is saved to
+    data/cv/tailored/<date>-<id>.md and the CV printed next to it as <date>-<id>.pdf. Cached per
+    job and parts library; --interested and --top skip the cached jobs unless --force. Several
+    jobs print a summary table instead of the hand-offs, and --export then also writes
+    prompts/batch.txt (job id, prompt, answer path per line) for fanning out subagents.
     """
     import yaml
 
     from jobscraper.cv.parts import load_cv_parts
-    from jobscraper.cv.tailor import Tailor, TailorError, export_prompt, to_handoff_markdown
+    from jobscraper.cv.tailor import (
+        Tailor,
+        TailorError,
+        export_prompt,
+        tailoring_key_prefix,
+        to_handoff_markdown,
+    )
+    from jobscraper.web.app import DECISIONS_DB
 
     if export and import_:
         typer.echo("tailor: use either --export or --import, not both", err=True)
+        raise typer.Exit(1)
+    if sum((bool(job_ids), interested, top is not None)) != 1:
+        typer.echo("tailor: give exactly one of: job ids, --interested, --top N", err=True)
         raise typer.Exit(1)
     try:
         parts = load_cv_parts()
     except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
         typer.echo(f"tailor: {exc}", err=True)
         raise typer.Exit(1) from exc
-    store = Store()
+    # The web UI keeps its decisions in a sidecar next to the served copies (as `eval` reads them).
+    sidecar = config.paths().data / "serve" / DECISIONS_DB
+    store = Store(decisions_path=sidecar if interested and sidecar.is_file() else None)
     try:
-        try:
-            ids = [_resolve_job_id(store, given) for given in job_ids]
-        except typer.BadParameter as exc:
-            typer.echo(f"tailor: {exc}", err=True)
-            raise typer.Exit(1) from exc
+        jobs = _tailor_jobs(store, job_ids, interested, top, user)
+        if not jobs:
+            typer.echo("tailor: no jobs to tailor")
+            return
+        skip_cached = (interested or top is not None) and not force and not import_
+        summary = len(jobs) > 1 or not job_ids
+        fit = None if no_pdf or export else _PageFit()
         tailor_stage = Tailor(load_settings().profile, store, parts,
-                              model=model or ("subagent" if import_ else None))
+                              model=model or ("subagent" if import_ else None), fit=fit)
         filters, ranked = store.filter_results(), store.verdicts("rank")
         out_dir = config.paths().data / "cv" / "tailored"
         for sub in ("prompts", "answers"):
             (out_dir / sub).mkdir(parents=True, exist_ok=True)
-        failed = False
-        for job in store.jobs(ids=ids):
+        rows: list[_TailorRow] = []
+        batch_lines: list[str] = []
+        for job in jobs:
+            row = _TailorRow(job)
+            rows.append(row)
+            if skip_cached and store.latest_tailoring(job.id, tailoring_key_prefix(parts)) is not None:
+                row.outcome = "cached"
+                row.pdf = max(out_dir.glob(f"*-{job.id}.pdf"), default=None)
+                continue
             answer_path = out_dir / "answers" / f"{job.id}.json"
             if export:
                 prompt_path = out_dir / "prompts" / f"{job.id}.md"
                 prompt_path.write_text(export_prompt(tailor_stage, job, filters.get(job.id),
                                                      ranked.get(job.id), answer_path), encoding="utf-8")
-                typer.echo(f"{job.id} ({job.title}): prompt {prompt_path}; answer goes to {answer_path}")
+                row.outcome = "exported"
+                batch_lines.append(f"{job.id}\t{prompt_path}\t{answer_path}")
+                if not summary:
+                    typer.echo(f"{job.id} ({job.title}): prompt {prompt_path}; answer goes to {answer_path}")
+                continue
+            if import_ and summary and not answer_path.is_file():
+                row.outcome = "no answer"
                 continue
             try:
                 if import_:
@@ -1138,18 +1272,32 @@ def tailor(job_ids: list[str] = typer.Argument(..., help="Job ids (or unique pre
                 else:
                     result = tailor_stage.tailor(job, filters.get(job.id), ranked.get(job.id), force=force)
             except TailorError as exc:
-                typer.echo(f"tailor: {job.id} ({job.title}): {exc}", err=True)
-                failed = True
+                row.outcome, row.failed = f"error: {exc.problems[0]}", True
+                if not summary:
+                    typer.echo(f"tailor: {job.id} ({job.title}): {exc}", err=True)
                 continue
-            markdown = to_handoff_markdown(job, result)
+            row.outcome = "imported" if import_ else "cached" if result.cached else "tailored"
             path = out_dir / f"{datetime.now(UTC):%Y-%m-%d}-{job.id}.md"
+            rendered = None
+            if not no_pdf and not (fit is not None and fit.missing):
+                rendered = _render_cv(result.cv, path.with_suffix(".pdf"))
+            if rendered is not None:
+                row.overflow_mm, row.pdf = rendered.overflow_mm, path.with_suffix(".pdf")
+            markdown = to_handoff_markdown(job, result, parts, row.pdf)
             path.write_text(markdown, encoding="utf-8")
-            # typer.echo, not the rich console: CV text may contain [brackets] rich would eat.
-            typer.echo(markdown)
-            typer.echo(f"saved {path}")
-            if not no_pdf:
-                _write_cv_pdf(result.cv, path.with_suffix(".pdf"))
-        if failed:
+            if not summary:
+                # typer.echo, not the rich console: CV text may contain [brackets] rich would eat.
+                typer.echo(markdown)
+                typer.echo(f"saved {path}")
+                if rendered is not None:
+                    _echo_pdf(rendered, path.with_suffix(".pdf"))
+        if export and summary:
+            batch_file = out_dir / "prompts" / "batch.txt"
+            batch_file.write_text("".join(f"{line}\n" for line in batch_lines), encoding="utf-8")
+            typer.echo(f"batch: {batch_file} ({len(batch_lines)} prompts, one subagent per line)")
+        if summary:
+            _print_tailor_summary(rows, out_dir)
+        if any(row.failed for row in rows):
             raise typer.Exit(1)
     finally:
         store.close()
@@ -1196,7 +1344,8 @@ def cv_render(job_id: str | None = typer.Argument(None, help="A tailored job's i
         # Stored only after validation against this very library (the fingerprint is in the key).
         cv = resolve(parts, to_selection(TailorAnswer.model_validate_json(stored)))
         pdf_path = out or cv_dir / "tailored" / f"{datetime.now(UTC):%Y-%m-%d}-{job_id}.pdf"
-    _write_cv_pdf(cv, pdf_path, png=png, required=True)
+    png_path = pdf_path.with_suffix(".png") if png else None
+    _echo_pdf(_render_cv(cv, pdf_path, png_path, required=True), pdf_path, png_path)
 
 
 def _rank_and_refine(days: int, verbose: bool) -> None:

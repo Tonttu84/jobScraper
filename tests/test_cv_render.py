@@ -294,6 +294,30 @@ def test_render_pdf_reports_overflow_and_writes_the_png(fake_playwright, tmp_pat
     assert png.read_bytes() == b"png bytes"
 
 
+def test_measure_overflow_measures_without_printing(fake_playwright, cv):
+    fake = fake_playwright(height_px=1200)  # 317.5 mm
+    assert render_mod.measure_overflow(cv) == 20.5
+    assert not any(name == "pdf" for name, _ in fake.calls)
+    html = dict(fake.calls)["html"]
+    # The real print loads the web fonts, so the measurement does too (unless told otherwise).
+    assert "fonts.googleapis" in html and "A general summary" in html
+    assert fake.closed
+
+
+def test_measure_overflow_without_web_fonts_and_when_it_fits(fake_playwright, cv):
+    fake = fake_playwright()
+    assert render_mod.measure_overflow(cv, fonts=False) == 0.0
+    assert "fonts.googleapis" not in dict(fake.calls)["html"]
+
+
+def test_measure_overflow_without_playwright(monkeypatch, cv):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
+    with pytest.raises(RenderUnavailable, match="playwright install chromium"):
+        render_mod.measure_overflow(cv)
+
+
 def test_render_pdf_without_chromium(fake_playwright, tmp_path):
     fake = fake_playwright(launch_error="Executable doesn't exist")
     with pytest.raises(RenderUnavailable, match=r"playwright install chromium.*Executable doesn't exist\)"):
@@ -349,6 +373,20 @@ class FakeRender:
         return self.result
 
 
+class FakeMeasure:
+    """Stands in for ``measure_overflow`` (the page-fit check of ``tailor``)."""
+
+    def __init__(self, overflow: float = 0.0, error=None):
+        self.overflow, self.error = overflow, error
+        self.calls = 0
+
+    def __call__(self, cv):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.overflow
+
+
 @pytest.fixture
 def cli_env(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
@@ -368,10 +406,13 @@ def cli_env(tmp_path, monkeypatch):
     store.close()
     fake = FakeRender()
     monkeypatch.setattr(render_mod, "render_pdf", fake)
+    measure = FakeMeasure()
+    monkeypatch.setattr(render_mod, "measure_overflow", measure)
     answers = tmp_path / "data" / "cv" / "tailored" / "answers"
     answers.mkdir(parents=True)
     (answers / f"{job.id}.json").write_text(ANSWER, encoding="utf-8")
-    return SimpleNamespace(job=job, fake=fake, data=tmp_path / "data", config=config_dir, db=db)
+    return SimpleNamespace(job=job, fake=fake, measure=measure, data=tmp_path / "data",
+                           config=config_dir, db=db)
 
 
 def _today() -> str:
@@ -459,10 +500,47 @@ def test_tailor_export_renders_nothing(cli_env):
 
 def test_tailor_without_a_browser_only_warns(cli_env):
     cli_env.fake.error = RenderUnavailable("no chromium")
+    cli_env.measure.error = RenderUnavailable("no chromium")
     result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
     assert result.exit_code == 0, result.output
     assert "WARNING" in result.output and "no chromium" in result.output
+    assert "no page-fit check" in result.output
     assert "# Tailored CV" in result.output
+    assert cli_env.fake.calls == []  # no browser: the PDF is not even tried after the fit check
+
+
+def test_tailor_warns_when_only_the_print_fails(cli_env):
+    cli_env.fake.error = RenderUnavailable("printer broke")
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
+    assert result.exit_code == 0, result.output
+    assert "WARNING: no PDF: printer broke" in result.output
+    assert cli_env.measure.calls == 1
+    md = cli_env.data / "cv" / "tailored" / f"{_today()}-{cli_env.job.id}.md"
+    assert "- PDF:" not in md.read_text(encoding="utf-8")
+
+
+def test_tailor_handoff_names_the_pdf(cli_env):
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
+    assert result.exit_code == 0, result.output
+    pdf = cli_env.data / "cv" / "tailored" / f"{_today()}-{cli_env.job.id}.pdf"
+    assert f"- PDF: {pdf}" in pdf.with_suffix(".md").read_text(encoding="utf-8")
+    # The pdf line comes after the hand-off, as before.
+    assert result.output.index("# Tailored CV") < result.output.index(f"pdf {pdf}")
+
+
+def test_tailor_import_checks_the_page_fit(cli_env):
+    cli_env.measure.overflow = 12.0
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
+    assert result.exit_code == 1
+    assert "overflows by 12.0 mm" in result.output
+    assert cli_env.fake.calls == [] and cli_env.measure.calls == 1
+
+
+def test_tailor_no_pdf_skips_the_page_fit(cli_env):
+    cli_env.measure.overflow = 12.0
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import", "--no-pdf"])
+    assert result.exit_code == 0, result.output
+    assert cli_env.measure.calls == 0
 
 
 def test_tailor_overflow_warns(cli_env):

@@ -56,15 +56,18 @@ rank (Opus 5, top N) → report (markdown + JSONL).
 - Don't commit half-written files from still-running subagents; wait for their report, run the
   check, then commit.
 
-## When the owner pastes "Tailor my CV for this job: jobscraper tailor <id>"
+## When the owner pastes "Tailor my CV for this job: jobscraper tailor <id>" (or asks for a batch)
 That line comes from the web UI's "Tailor CV" button. No API key on the owner's machine, so:
-1. `PYTHONIOENCODING=utf-8 ./.venv/Scripts/jobscraper.exe tailor <id> --export` (several ids at
-   once is fine) → `data/cv/tailored/prompts/<id>.md`.
-2. One Opus subagent per job: read that file, follow its SYSTEM/USER sections, write the JSON to
-   the answer path it names, run `... tailor <id> --import` until it validates.
-3. Show the owner the hand-off (`data/cv/tailored/<date>-<id>.md`): focus, rationale, gaps, and
-   the "Into the Canva layout" list. The model only picks ids from `config/cv-parts.yaml`; never
-   write CV text yourself — new text goes into the library, by the owner, first.
+1. `PYTHONIOENCODING=utf-8 ./.venv/Scripts/jobscraper.exe tailor <id> --export`. For a batch use
+   `--interested` (jobs marked interested in the web UI) or `--top N` instead of ids; cached jobs
+   are skipped and `data/cv/tailored/prompts/batch.txt` lists `<id>	<prompt>	<answer>` per job.
+2. One Opus subagent per job, in parallel: read the prompt file, follow its SYSTEM/USER sections,
+   write the JSON to the answer path, run `... tailor <id> --import` until it validates. Import
+   also rejects an answer whose page overflows ("overflows by N mm"); the subagent drops bullets.
+3. Run the same `tailor ... --import` once more for the batch summary table, then show the owner
+   each hand-off (`data/cv/tailored/<date>-<id>.md`: focus, rationale, gaps, changes from the
+   standard CV) and its PDF next to it. The model only picks ids from `config/cv-parts.yaml`;
+   never write CV text yourself — new text goes into the library, by the owner, first.
 
 ## When the owner hands over a new CV (or asks to improve matching)
 Before touching `config/profile.yaml`, ask one question with these options and wait:
