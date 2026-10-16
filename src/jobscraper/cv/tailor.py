@@ -49,6 +49,11 @@ log = logging.getLogger(__name__)
 TAILOR_PROMPT_VERSION = "2026-10-16.1"
 
 
+def tailoring_key_prefix(parts: CvParts) -> str:
+    """The cache key of a tailoring under ``parts`` and this prompt, up to the model."""
+    return f"{parts_fingerprint(parts)}|{TAILOR_PROMPT_VERSION}|"
+
+
 class TailorError(RuntimeError):
     """The model gave no usable selection (refused, or twice an answer that does not fit)."""
 
@@ -216,7 +221,7 @@ class Tailor:
         self.effort = ai.rank_effort
         self.max_chars = ai.max_description_chars
         self.system = tailor_system_prompt(profile, parts)
-        self.cache_key = f"{parts_fingerprint(parts)}|{TAILOR_PROMPT_VERSION}|{self.model}"
+        self.cache_key = tailoring_key_prefix(parts) + self.model
         self._client = None
 
     @property

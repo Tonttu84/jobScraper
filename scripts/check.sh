@@ -22,7 +22,7 @@ if [ -z "$PY" ]; then
 fi
 PY="${PY:-python}"
 "$PY" -m ruff check src tests
-BROWSER=(tests/test_web_browser.py tests/test_browser.py)
+BROWSER=(tests/test_web_browser.py tests/test_browser.py tests/test_cv_render_browser.py)
 IGNORE=(); for f in "${BROWSER[@]}"; do IGNORE+=("--ignore=$f"); done
 rm -f .coverage
 if [ "$FAST" = 1 ]; then

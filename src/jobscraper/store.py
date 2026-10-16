@@ -445,6 +445,14 @@ class Store:
                                 (job_id, cache_key)).fetchone()
         return row["data"] if row else None
 
+    def latest_tailoring(self, job_id: str, key_prefix: str) -> str | None:
+        """The newest stored answer for this job whose cache key starts with ``key_prefix``
+        (library fingerprint and prompt version, any model), if any."""
+        row = self.conn.execute(
+            "SELECT data FROM cv_tailorings WHERE job_id=? AND substr(cache_key, 1, ?)=?"
+            " ORDER BY created_at DESC LIMIT 1", (job_id, len(key_prefix), key_prefix)).fetchone()
+        return row["data"] if row else None
+
     def job_ids_with_prefix(self, prefix: str) -> list[str]:
         """Job ids starting with ``prefix`` (a hand-typed short id); at most a few, sorted."""
         escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 from jobscraper import cli as cli_mod
 from jobscraper.config import ROOT
+from jobscraper.cv import render as render_mod
 from jobscraper.cv import tailor as tailor_mod
 from jobscraper.cv.parts import load_cv_parts, parts_fingerprint
 from jobscraper.cv.tailor import (
@@ -341,6 +342,9 @@ def cli_env(tmp_path, monkeypatch):
     store.close()
     fake = FakeMessages(_response(_answer()))
     monkeypatch.setattr(tailor_mod, "_client", lambda: SimpleNamespace(messages=fake))
+    # The PDF step is covered by test_cv_render*.py; here it must not start a browser.
+    monkeypatch.setattr(render_mod, "render_pdf",
+                        lambda html, pdf, png=None: render_mod.RenderResult(pages=1, overflow_mm=0.0))
     return SimpleNamespace(job=job, fake=fake, data=tmp_path / "data", config=config_dir)
 
 
