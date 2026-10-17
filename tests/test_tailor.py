@@ -503,7 +503,7 @@ def test_cli_tailor_prints_and_saves_the_handoff(cli_env):
     assert result.exit_code == 0, result.output
     assert "# Tailored CV: C++ Developer — Acme" in result.output
     saved = list((cli_env.data / "cv" / "tailored").glob("*.md"))
-    assert len(saved) == 1 and cli_env.job.id in saved[0].name
+    assert [p.name for p in saved] == ["CV - Acme.md"]
     assert "Profile: **systems**" in saved[0].read_text(encoding="utf-8")
     assert len(cli_env.fake.calls) == 1
 
@@ -641,7 +641,7 @@ def test_cli_tailor_top_n_follows_the_latest_report(batch_env):
     assert len(list((batch_env.data / "cv" / "tailored").glob("*.md"))) == 2
     row = _row(result.output, jobs[2])
     assert "Data [Platform] Engineer" in row and "Gamma" in row and "tailored" in row
-    assert "0.0" in row and f"-{jobs[2].id}.pdf" in row
+    assert "0.0" in row and "CV - Gamma.pdf" in row
     assert result.output.index(jobs[2].id[:8]) < result.output.index(jobs[0].id[:8])
     assert jobs[1].id[:8] not in result.output
 
@@ -659,8 +659,8 @@ def test_cli_tailor_batch_skips_cached_jobs_unless_forced(batch_env):
     assert result.exit_code == 0, result.output
     assert "cached" in _row(result.output, jobs[0]) and "tailored" in _row(result.output, jobs[2])
     assert len(batch_env.fake.calls) == 2
-    # The cached one still points at its PDF.
-    assert f"-{jobs[0].id}.pdf" in _row(result.output, jobs[0])
+    # The cached one still points at its PDF (found through index.json).
+    assert "CV - Acme.pdf" in _row(result.output, jobs[0])
 
     batch_env.fake.responses += [_response(_answer()), _response(_answer())]
     forced = runner.invoke(cli_mod.app, ["tailor", "--top", "2", "--force"])

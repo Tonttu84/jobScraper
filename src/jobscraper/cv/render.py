@@ -278,12 +278,13 @@ def _main(cv: TailoredCV) -> str:
             + "".join(_job(w) for w in cv.work) + "</section></main>")
 
 
-def to_html(cv: TailoredCV, *, fonts: bool = True) -> str:
+def to_html(cv: TailoredCV, *, fonts: bool = True, title: str | None = None) -> str:
     """The CV as one self-contained A4 page; ``fonts=False`` leaves out the Google Fonts links
-    (tests: nothing touches the network, the fallback fonts are used)."""
+    (tests: nothing touches the network, the fallback fonts are used). ``title`` (default: the
+    name) becomes the printed PDF's title: a tailored CV carries its job id there."""
     css = _CSS % {"navy": NAVY, "grey": GREY, "display": _stack(FONT_DISPLAY),
                   "text": _stack(FONT_TEXT), "body": _stack(FONT_BODY)}
-    title = _e(cv.header.get("name", "CV"))
+    title = _e(title or cv.header.get("name", "CV"))
     return ("<!doctype html>\n"
             f'<html lang="en"><head><meta charset="utf-8"><title>{title}</title>'
             + (_font_links() if fonts else "")

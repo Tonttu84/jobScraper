@@ -702,6 +702,9 @@ PDF/PNG exports (`cv-canva-2026-10.*`).
   cached jobs skipped, a summary table; the hand-off lists the changes from the standard CV.
   Library review done with the owner the same day: Hive core curriculum entry (Philosophers
   folded into it), so_long, a second Inception bullet.
+- Done 2026-10-17: files named by company for the owner's applications: `tailored/CV - <Company>.pdf/.md`
+  (`- <Title>` on a second job of the company; `index.json` maps stem → job id, the PDF title
+  carries the id), a replaced CV moves to `older/` with its time, dated legacy files are adopted.
 - Next: exact fonts (Aileron is free; "Now" to check) if the owner wants them; tailoring as a
   stage of `run` once an API key exists.
 

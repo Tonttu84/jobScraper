@@ -8,8 +8,10 @@ monkeypatched in the CLI tests, so no Chromium is started here — the real prin
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -415,8 +417,8 @@ def cli_env(tmp_path, monkeypatch):
                            config=config_dir, db=db)
 
 
-def _today() -> str:
-    return f"{datetime.now(UTC):%Y-%m-%d}"
+def _set_mtime(path: Path, when: datetime) -> None:
+    os.utime(path, (when.timestamp(), when.timestamp()))
 
 
 def test_cv_render_default(cli_env):
@@ -476,9 +478,10 @@ def test_cv_render_a_job_needs_a_cached_tailoring(cli_env):
 
     result = runner.invoke(cli_mod.app, ["cv-render", job_id[:8]])
     assert result.exit_code == 0, result.output
-    pdf = cli_env.data / "cv" / "tailored" / f"{_today()}-{job_id}.pdf"
+    pdf = cli_env.data / "cv" / "tailored" / "CV - Acme.pdf"  # where `tailor` prints it too
     assert cli_env.fake.calls[0]["pdf"] == pdf
     html = cli_env.fake.calls[0]["html"]
+    assert f"<title>CV - Acme ({job_id})</title>" in html
     assert "A systems-flavoured summary." in html and ">Shell<" in html and "Webserver" not in html
     assert "Used probability daily." in html
 
@@ -486,8 +489,9 @@ def test_cv_render_a_job_needs_a_cached_tailoring(cli_env):
 def test_tailor_import_renders_the_pdf(cli_env):
     result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
     assert result.exit_code == 0, result.output
-    pdf = cli_env.data / "cv" / "tailored" / f"{_today()}-{cli_env.job.id}.pdf"
+    pdf = cli_env.data / "cv" / "tailored" / "CV - Acme.pdf"
     assert cli_env.fake.calls[0]["pdf"] == pdf and cli_env.fake.calls[0]["png"] is None
+    assert f"<title>CV - Acme ({cli_env.job.id})</title>" in cli_env.fake.calls[0]["html"]
     assert str(pdf) in result.output
     assert (pdf.with_suffix(".md")).is_file()
 
@@ -515,14 +519,14 @@ def test_tailor_warns_when_only_the_print_fails(cli_env):
     assert result.exit_code == 0, result.output
     assert "WARNING: no PDF: printer broke" in result.output
     assert cli_env.measure.calls == 1
-    md = cli_env.data / "cv" / "tailored" / f"{_today()}-{cli_env.job.id}.md"
+    md = cli_env.data / "cv" / "tailored" / "CV - Acme.md"
     assert "- PDF:" not in md.read_text(encoding="utf-8")
 
 
 def test_tailor_handoff_names_the_pdf(cli_env):
     result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
     assert result.exit_code == 0, result.output
-    pdf = cli_env.data / "cv" / "tailored" / f"{_today()}-{cli_env.job.id}.pdf"
+    pdf = cli_env.data / "cv" / "tailored" / "CV - Acme.pdf"
     assert f"- PDF: {pdf}" in pdf.with_suffix(".md").read_text(encoding="utf-8")
     # The pdf line comes after the hand-off, as before.
     assert result.output.index("# Tailored CV") < result.output.index(f"pdf {pdf}")
@@ -548,3 +552,89 @@ def test_tailor_overflow_warns(cli_env):
     result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
     assert result.exit_code == 0, result.output
     assert "WARNING: the CV overflows one page by 3.0 mm; choose fewer bullets" in result.output
+
+
+# ------------------------------------------------------------ file names (cv.files)
+
+
+def _tailored(env) -> Path:
+    return env.data / "cv" / "tailored"
+
+
+def test_tailor_retailoring_moves_the_sent_cv_to_older(cli_env):
+    out = _tailored(cli_env)
+    assert runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"]).exit_code == 0
+    pdf, md = out / "CV - Acme.pdf", out / "CV - Acme.md"
+    assert json.loads((out / "index.json").read_text(encoding="utf-8")) == {"CV - Acme": cli_env.job.id}
+    for path in (pdf, md):
+        _set_mtime(path, datetime(2026, 10, 16, 9, 5))
+    # The same answer again: the hand-off is the same, nothing piles up in older/.
+    assert runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"]).exit_code == 0
+    assert not (out / "older").exists()
+    first = md.read_text(encoding="utf-8")
+    for path in (pdf, md):
+        _set_mtime(path, datetime(2026, 10, 16, 9, 5))
+
+    (out / "answers" / f"{cli_env.job.id}.json").write_text(ANSWER.replace('"r"', '"r2"'),
+                                                             encoding="utf-8")
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
+    assert result.exit_code == 0, result.output
+    older = out / "older"
+    assert (older / "CV - Acme (2026-10-16 0905).md").read_text(encoding="utf-8") == first
+    assert (older / "CV - Acme (2026-10-16 0905).pdf").is_file()
+    assert "r2" in md.read_text(encoding="utf-8") and pdf.is_file()
+
+
+def test_tailor_a_second_job_of_the_company_gets_its_title(cli_env):
+    store = Store(cli_env.db)
+    other = Job(source="test", source_id="2", url="https://example.test/2", title="Go: Developer",
+                company="Acme", country="FI", description="Go.")
+    store.upsert_jobs([other])
+    store.close()
+    (_tailored(cli_env) / "answers" / f"{other.id}.json").write_text(ANSWER, encoding="utf-8")
+    assert runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"]).exit_code == 0
+    result = runner.invoke(cli_mod.app, ["tailor", other.id, "--import"])
+    assert result.exit_code == 0, result.output
+    assert cli_env.fake.calls[-1]["pdf"] == _tailored(cli_env) / "CV - Acme - Go Developer.pdf"
+    assert (_tailored(cli_env) / "CV - Acme.md").is_file()
+
+
+def test_tailor_adopts_the_dated_files_first(cli_env):
+    out = _tailored(cli_env)
+    legacy = out / f"2026-10-15-{cli_env.job.id}.md"
+    legacy.write_text("the CV that was sent", encoding="utf-8")
+    _set_mtime(legacy, datetime(2026, 10, 15, 8, 30))
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
+    assert result.exit_code == 0, result.output
+    assert not legacy.exists()
+    assert (out / "older" / "CV - Acme (2026-10-15 0830).md").read_text(encoding="utf-8") ==         "the CV that was sent"
+    assert "# Tailored CV" in (out / "CV - Acme.md").read_text(encoding="utf-8")
+
+
+def test_cv_render_job_keeps_an_unchanged_cv_and_moves_a_changed_one(cli_env):
+    out = _tailored(cli_env)
+    assert runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"]).exit_code == 0
+    md = out / "CV - Acme.md"
+    assert runner.invoke(cli_mod.app, ["cv-render", cli_env.job.id]).exit_code == 0
+    assert not (out / "older").exists()  # the same CV printed again
+    md.write_text(md.read_text(encoding="utf-8") + "an edit\n", encoding="utf-8")
+    _set_mtime(md, datetime(2026, 10, 16, 9, 5))
+    result = runner.invoke(cli_mod.app, ["cv-render", cli_env.job.id])
+    assert result.exit_code == 0, result.output
+    assert (out / "older" / "CV - Acme (2026-10-16 0905).md").is_file()
+    assert (out / "older" / "CV - Acme (2026-10-16 0905).pdf").is_file()
+    assert (out / "CV - Acme.pdf").is_file() and not md.exists()
+
+
+def test_cv_render_job_with_out_and_legacy_files(cli_env, tmp_path):
+    out = _tailored(cli_env)
+    assert runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import", "--no-pdf"]).exit_code == 0
+    (out / "CV - Acme.md").rename(out / f"2026-10-15-{cli_env.job.id}.md")
+    (out / "index.json").unlink()
+    elsewhere = tmp_path / "elsewhere.pdf"
+    result = runner.invoke(cli_mod.app, ["cv-render", cli_env.job.id, "--out", str(elsewhere)])
+    assert result.exit_code == 0, result.output
+    assert cli_env.fake.calls[0]["pdf"] == elsewhere
+    assert f"<title>CV - Acme ({cli_env.job.id})</title>" in cli_env.fake.calls[0]["html"]
+    assert (out / "CV - Acme.md").is_file()  # adopted all the same
+    assert not (out / "CV - Acme.pdf").exists()

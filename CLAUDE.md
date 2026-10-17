@@ -65,9 +65,12 @@ That line comes from the web UI's "Tailor CV" button. No API key on the owner's 
    write the JSON to the answer path, run `... tailor <id> --import` until it validates. Import
    also rejects an answer whose page overflows ("overflows by N mm"); the subagent drops bullets.
 3. Run the same `tailor ... --import` once more for the batch summary table, then show the owner
-   each hand-off (`data/cv/tailored/<date>-<id>.md`: focus, rationale, gaps, changes from the
+   each hand-off (`data/cv/tailored/CV - <Company>.md`: focus, rationale, gaps, changes from the
    standard CV) and its PDF next to it. The model only picks ids from `config/cv-parts.yaml`;
    never write CV text yourself — new text goes into the library, by the owner, first.
+Naming (`jobscraper.cv.files`): `CV - <Company>.pdf/.md`, `CV - <Company> - <Title>` when another
+job owns the company name (`tailored/index.json`: stem → job id); a changed re-tailoring moves the
+old pair to `tailored/older/CV - X (<mtime>)`; prompts/ and answers/ stay keyed by job id.
 
 ## When the owner hands over a new CV (or asks to improve matching)
 Before touching `config/profile.yaml`, ask one question with these options and wait:

@@ -1160,13 +1160,15 @@ def cv_parts() -> None:
     typer.echo(markdown, nl=False)
 
 
-def _render_cv(cv, pdf_path: Path, png_path: Path | None = None, *, required: bool = False):
+def _render_cv(cv, pdf_path: Path, png_path: Path | None = None, *, required: bool = False,
+               title: str | None = None):
     """Print ``cv`` to ``pdf_path``; the :class:`~jobscraper.cv.render.RenderResult`, or None
-    without a browser — an error when the PDF is the point (``required``), else a warning."""
+    without a browser — an error when the PDF is the point (``required``), else a warning.
+    ``title``: the PDF's title (a tailored CV's names its job)."""
     from jobscraper.cv import render
 
     try:
-        return render.render_pdf(render.to_html(cv), pdf_path, png_path)
+        return render.render_pdf(render.to_html(cv, title=title), pdf_path, png_path)
     except render.RenderUnavailable as exc:
         if required:
             typer.echo(f"cv-render: {exc}", err=True)
@@ -1311,13 +1313,15 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
     job. Without one: `--export` writes data/cv/tailored/prompts/<id>.md, a subagent writes
     data/cv/tailored/answers/<id>.json, and `--import` validates it. An answer must fit one page
     (measured in Chromium unless --no-pdf). Each hand-off is saved to
-    data/cv/tailored/<date>-<id>.md and the CV printed next to it as <date>-<id>.pdf. Cached per
-    job and parts library; --interested and --top skip the cached jobs unless --force. Several
+    data/cv/tailored/"CV - <Company>.md" and the CV printed next to it as "CV - <Company>.pdf"
+    ("CV - <Company> - <Title>" when another job of the company has that name; index.json says
+    which job owns which); a replaced pair moves to older/ first. Cached per job and parts library; --interested and --top skip the cached jobs unless --force. Several
     jobs print a summary table instead of the hand-offs, and --export then also writes
     prompts/batch.txt (job id, prompt, answer path per line) for fanning out subagents.
     """
     import yaml
 
+    from jobscraper.cv import files
     from jobscraper.cv.parts import load_cv_parts
     from jobscraper.cv.tailor import (
         Tailor,
@@ -1342,7 +1346,9 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
     # The web UI keeps its decisions in a sidecar next to the served copies (as `eval` reads them).
     sidecar = config.paths().data / "serve" / DECISIONS_DB
     store = Store(decisions_path=sidecar if interested and sidecar.is_file() else None)
+    out_dir = config.paths().data / "cv" / "tailored"
     try:
+        files.adopt_legacy(out_dir, store)
         jobs = _tailor_jobs(store, job_ids, interested, top, user)
         if not jobs:
             typer.echo("tailor: no jobs to tailor")
@@ -1355,7 +1361,6 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
         filters, ranked = store.filter_results(), store.verdicts("rank")
         # A vacancy whose own page says closed or gone (`check-live`) is not worth a CV.
         live = store.liveness([j.id for j in jobs])
-        out_dir = config.paths().data / "cv" / "tailored"
         for sub in ("prompts", "answers"):
             (out_dir / sub).mkdir(parents=True, exist_ok=True)
         rows: list[_TailorRow] = []
@@ -1371,7 +1376,7 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
                 continue
             if skip_cached and store.latest_tailoring(job.id, tailoring_key_prefix(parts)) is not None:
                 row.outcome = "cached"
-                row.pdf = max(out_dir.glob(f"*-{job.id}.pdf"), default=None)
+                row.pdf = files.owned_pdf(out_dir, job.id)
                 continue
             answer_path = out_dir / "answers" / f"{job.id}.json"
             if export:
@@ -1399,12 +1404,15 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
                     typer.echo(f"tailor: {job.id} ({job.title}): {exc}", err=True)
                 continue
             row.outcome = "imported" if import_ else "cached" if result.cached else "tailored"
-            path = out_dir / f"{datetime.now(UTC):%Y-%m-%d}-{job.id}.md"
-            rendered = None
-            if not no_pdf and not (fit is not None and fit.missing):
-                rendered = _render_cv(result.cv, path.with_suffix(".pdf"))
+            stem = files.claim_stem(out_dir, job)
+            path, pdf = out_dir / f"{stem}.md", out_dir / f"{stem}.pdf"
+            printing = not no_pdf and not (fit is not None and fit.missing)
+            # A CV that was sent is never overwritten: a different one moves the old pair aside.
+            expected = to_handoff_markdown(job, result, parts, pdf if printing else None)
+            files.make_room(out_dir, stem, lambda old, new=expected: files.same_handoff(old, new))
+            rendered = _render_cv(result.cv, pdf, title=files.pdf_title(job)) if printing else None
             if rendered is not None:
-                row.overflow_mm, row.pdf = rendered.overflow_mm, path.with_suffix(".pdf")
+                row.overflow_mm, row.pdf = rendered.overflow_mm, pdf
             markdown = to_handoff_markdown(job, result, parts, row.pdf)
             path.write_text(markdown, encoding="utf-8")
             if not summary:
@@ -1412,7 +1420,7 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
                 typer.echo(markdown)
                 typer.echo(f"saved {path}")
                 if rendered is not None:
-                    _echo_pdf(rendered, path.with_suffix(".pdf"))
+                    _echo_pdf(rendered, pdf)
         if export and summary:
             batch_file = out_dir / "prompts" / "batch.txt"
             batch_file.write_text("".join(f"{line}\n" for line in batch_lines), encoding="utf-8")
@@ -1427,16 +1435,18 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
 
 @app.command("cv-render")
 def cv_render(job_id: str | None = typer.Argument(None, help="A tailored job's id (or unique prefix); default: the untailored CV"),
-              out: Path | None = typer.Option(None, "--out", help="PDF path (default: data/cv/cv-default.pdf, or data/cv/tailored/<date>-<id>.pdf)"),
+              out: Path | None = typer.Option(None, "--out", help="PDF path (default: data/cv/cv-default.pdf, or the job's data/cv/tailored/CV - <Company>.pdf)"),
               png: bool = typer.Option(False, "--png", help="Also write a PNG of the page next to the PDF")) -> None:
     """Print the CV to a one-page PDF in the Canva layout.
 
     Without JOB_ID the default selection from config/cv-parts.yaml; with one, that job's cached
-    tailoring under the current library (run `jobscraper tailor JOB_ID` first).
+    tailoring under the current library (run `jobscraper tailor JOB_ID` first), printed to the
+    job's company-named PDF as `tailor` names it (a different CV moves the old pair to older/).
     """
     import yaml
 
-    from jobscraper.cv.parts import default_selection, load_cv_parts, resolve
+    from jobscraper.cv import files
+    from jobscraper.cv.parts import default_selection, load_cv_parts, resolve, to_markdown
     from jobscraper.cv.tailor import TailorAnswer, tailoring_key_prefix, to_selection
 
     try:
@@ -1445,18 +1455,21 @@ def cv_render(job_id: str | None = typer.Argument(None, help="A tailored job's i
         typer.echo(f"cv-render: {exc}", err=True)
         raise typer.Exit(1) from exc
     cv_dir = config.paths().data / "cv"
+    tailored, title = cv_dir / "tailored", None
     if job_id is None:
         cv = resolve(parts, default_selection(parts))
         pdf_path = out or cv_dir / "cv-default.pdf"
     else:
         store = Store()
         try:
+            files.adopt_legacy(tailored, store)
             try:
                 job_id = _resolve_job_id(store, job_id)
             except typer.BadParameter as exc:
                 typer.echo(f"cv-render: {exc}", err=True)
                 raise typer.Exit(1) from exc
             stored = store.latest_tailoring(job_id, tailoring_key_prefix(parts))
+            job = store.jobs(ids=[job_id])[0]
         finally:
             store.close()
         if stored is None:
@@ -1465,9 +1478,17 @@ def cv_render(job_id: str | None = typer.Argument(None, help="A tailored job's i
             raise typer.Exit(1)
         # Stored only after validation against this very library (the fingerprint is in the key).
         cv = resolve(parts, to_selection(TailorAnswer.model_validate_json(stored)))
-        pdf_path = out or cv_dir / "tailored" / f"{datetime.now(UTC):%Y-%m-%d}-{job_id}.pdf"
+        title = files.pdf_title(job)
+        if out is None:
+            stem = files.claim_stem(tailored, job)
+            # The hand-off ends with the CV text: the same text is the same CV, printed again.
+            text = to_markdown(cv)
+            files.make_room(tailored, stem, lambda old: old.endswith(text))
+            pdf_path = tailored / f"{stem}.pdf"
+        else:
+            pdf_path = out
     png_path = pdf_path.with_suffix(".png") if png else None
-    _echo_pdf(_render_cv(cv, pdf_path, png_path, required=True), pdf_path, png_path)
+    _echo_pdf(_render_cv(cv, pdf_path, png_path, required=True, title=title), pdf_path, png_path)
 
 
 def _rank_and_refine(days: int, verbose: bool) -> None:
