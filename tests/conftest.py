@@ -150,4 +150,24 @@ def make_ctx(settings) -> Callable[..., SourceContext]:
     return _make
 
 
-__all__ = ["FakeBrowser", "FakeHttp", "_raise_for_status", "fixture_json", "fixture_text"]
+@pytest.fixture
+def flat_heights():
+    """A :class:`~jobscraper.cv.measure.HeightModel` without a browser: every part of ``parts``
+    is ``mm`` high (a work entry without bullets too), plus ``overhead_mm`` of fixed layout."""
+    from jobscraper.cv.measure import EntryHeights, HeightModel, layout_signature
+    from jobscraper.cv.parts import parts_fingerprint
+
+    def _make(parts, *, mm: float = 1.0, overhead_mm: float = 100.0, fonts: bool = True):
+        return HeightModel(
+            fingerprint=parts_fingerprint(parts), layout=layout_signature(fonts),
+            overhead_mm=overhead_mm,
+            summaries={s.id: mm for s in parts.summaries},
+            projects={p.id: EntryHeights(header=mm, bullets={b.id: mm for b in p.bullets})
+                      for p in parts.projects},
+            work={w.id: EntryHeights(header=mm, bare=mm, bullets={b.id: mm for b in w.bullets})
+                  for w in parts.work})
+
+    return _make
+
+
+__all__ =["FakeBrowser", "FakeHttp", "_raise_for_status", "fixture_json", "fixture_text"]

@@ -172,8 +172,17 @@ def _e(value: Any) -> str:
     return escape(str(value), quote=True)
 
 
-def _ul(items: list[str]) -> str:
-    return "<ul>" + "".join(f"<li>{_e(item)}</li>" for item in items) + "</ul>" if items else ""
+def _mark(mark: str | None) -> str:
+    """A ``data-m`` attribute: how :mod:`jobscraper.cv.measure` finds a part on its page."""
+    return f' data-m="{_e(mark)}"' if mark else ""
+
+
+def _ul(items: list[str], marks: list[str] | None = None) -> str:
+    if not items:
+        return ""
+    marks = marks or [""] * len(items)
+    return ("<ul>" + "".join(f"<li{_mark(m)}>{_e(item)}</li>"
+                             for item, m in zip(items, marks, strict=True)) + "</ul>")
 
 
 def _cap(key: str) -> str:
@@ -255,41 +264,62 @@ def _sidebar(cv: TailoredCV) -> str:
 # ------------------------------------------------------------------------------ main
 
 
-def _project(entry: ResolvedEntry) -> str:
-    return (f'<div class="project"><div class="ptitle">{_e(entry.title)}</div>'
+# ``mark`` / ``marks``: data-m attributes for the measuring page (cv.measure); none on the CV.
+
+
+def _summary(text: str, mark: str | None = None) -> str:
+    return f'<p class="summary"{_mark(mark)}>{_e(text)}</p>'
+
+
+def _project(entry: ResolvedEntry, mark: str | None = None, marks: list[str] | None = None) -> str:
+    return (f'<div class="project"{_mark(mark)}><div class="ptitle">{_e(entry.title)}</div>'
             + (f'<div class="plead">{_e(entry.lead)}</div>' if entry.lead else "")
-            + _ul(entry.bullets) + "</div>")
+            + _ul(entry.bullets, marks) + "</div>")
 
 
-def _job(entry: ResolvedEntry) -> str:
-    return ('<div class="job"><div class="jhead"><span class="dot"></span>'
+def _job(entry: ResolvedEntry, mark: str | None = None, marks: list[str] | None = None) -> str:
+    return (f'<div class="job"{_mark(mark)}><div class="jhead"><span class="dot"></span>'
             f'<span class="jtitle">{_e(entry.title)}</span>'
             f'<span class="period">{_e(entry.period or "")}</span></div>'
             + (f'<div class="jlead">{_e(entry.lead)}</div>' if entry.lead else "")
-            + _ul(entry.bullets) + "</div>")
+            + _ul(entry.bullets, marks) + "</div>")
+
+
+def _main_column(summaries: str, projects: str, jobs: str) -> str:
+    """The main column around already rendered summary, project and job blocks."""
+    return ('<main class="main">'
+            f'<section class="profile"><h2 class="heading">PROFILE</h2>{summaries}</section>'
+            '<section class="projects"><h2 class="heading">SAMPLE PROJECTS <span class="light">ON GITHUB</span></h2>'
+            + projects + "</section>"
+            '<section class="work"><h2 class="heading">WORK EXPERIENCE</h2>'
+            + jobs + "</section></main>")
 
 
 def _main(cv: TailoredCV) -> str:
-    return ('<main class="main">'
-            f'<section class="profile"><h2 class="heading">PROFILE</h2><p class="summary">{_e(cv.summary)}</p></section>'
-            '<section class="projects"><h2 class="heading">SAMPLE PROJECTS <span class="light">ON GITHUB</span></h2>'
-            + "".join(_project(p) for p in cv.projects) + "</section>"
-            '<section class="work"><h2 class="heading">WORK EXPERIENCE</h2>'
-            + "".join(_job(w) for w in cv.work) + "</section></main>")
+    return _main_column(_summary(cv.summary), "".join(_project(p) for p in cv.projects),
+                        "".join(_job(w) for w in cv.work))
+
+
+def layout_css() -> str:
+    """The page's stylesheet, as :func:`to_html` inlines it."""
+    return _CSS % {"navy": NAVY, "grey": GREY, "display": _stack(FONT_DISPLAY),
+                   "text": _stack(FONT_TEXT), "body": _stack(FONT_BODY)}
+
+
+def _document(body: str, *, fonts: bool, title: str) -> str:
+    """One self-contained HTML document around ``body`` (already escaped)."""
+    return ("<!doctype html>\n"
+            f'<html lang="en"><head><meta charset="utf-8"><title>{_e(title)}</title>'
+            + (_font_links() if fonts else "")
+            + f"<style>{layout_css()}</style></head><body>{body}</body></html>\n")
 
 
 def to_html(cv: TailoredCV, *, fonts: bool = True, title: str | None = None) -> str:
     """The CV as one self-contained A4 page; ``fonts=False`` leaves out the Google Fonts links
     (tests: nothing touches the network, the fallback fonts are used). ``title`` (default: the
     name) becomes the printed PDF's title: a tailored CV carries its job id there."""
-    css = _CSS % {"navy": NAVY, "grey": GREY, "display": _stack(FONT_DISPLAY),
-                  "text": _stack(FONT_TEXT), "body": _stack(FONT_BODY)}
-    title = _e(title or cv.header.get("name", "CV"))
-    return ("<!doctype html>\n"
-            f'<html lang="en"><head><meta charset="utf-8"><title>{title}</title>'
-            + (_font_links() if fonts else "")
-            + f"<style>{css}</style></head><body>"
-            f'<div class="page">{_sidebar(cv)}{_main(cv)}</div></body></html>\n')
+    return _document(f'<div class="page">{_sidebar(cv)}{_main(cv)}</div>', fonts=fonts,
+                     title=title or cv.header.get("name", "CV"))
 
 
 # ------------------------------------------------------------------------------- PDF
@@ -304,6 +334,12 @@ _OVERFLOW_JS = """() => {
   const page = document.querySelector('.page');
   return page ? page.getBoundingClientRect().height : 0;
 }"""
+
+
+def load(page: Any, html: str) -> None:
+    """Show ``html`` in ``page`` and wait for its fonts (another document, same browser)."""
+    page.set_content(html, wait_until="load")
+    page.evaluate("document.fonts.ready.then(() => true)")
 
 
 @contextmanager
@@ -325,8 +361,7 @@ def _chromium_page(html: str) -> Iterator[Any]:
         try:
             page = browser.new_page(viewport={"width": 800, "height": 1200},
                                     device_scale_factor=PNG_WIDTH / (210 / _MM_PER_PX))
-            page.set_content(html, wait_until="load")
-            page.evaluate("document.fonts.ready.then(() => true)")
+            load(page, html)
             yield page
         finally:
             browser.close()

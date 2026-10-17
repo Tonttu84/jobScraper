@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from jobscraper import cli as cli_mod
 from jobscraper.config import ROOT
+from jobscraper.cv import measure as measure_mod
 from jobscraper.cv import render as render_mod
 from jobscraper.cv.parts import (
     EntryPick,
@@ -376,9 +377,10 @@ class FakeRender:
 
 
 class FakeMeasure:
-    """Stands in for ``measure_overflow`` (the page-fit check of ``tailor``)."""
+    """Stands in for ``measure_overflow`` (the page-fit check of ``tailor``); ``overflow`` is
+    one value for every call or a list handed out in order."""
 
-    def __init__(self, overflow: float = 0.0, error=None):
+    def __init__(self, overflow: float | list[float] = 0.0, error=None):
         self.overflow, self.error = overflow, error
         self.calls = 0
 
@@ -386,11 +388,14 @@ class FakeMeasure:
         self.calls += 1
         if self.error is not None:
             raise self.error
-        return self.overflow
+        return self.overflow.pop(0) if isinstance(self.overflow, list) else self.overflow
 
 
 @pytest.fixture
-def cli_env(tmp_path, monkeypatch):
+def cli_env(tmp_path, monkeypatch, flat_heights):
+    # The part heights are measured once per library with a browser; here every part is 1 mm.
+    monkeypatch.setattr(measure_mod, "measure_heights",
+                        lambda parts, fonts=True: flat_heights(parts, fonts=fonts))
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     shutil.copyfile(ROOT / "config" / "profile.example.yaml", config_dir / "profile.yaml")
@@ -513,6 +518,19 @@ def test_tailor_without_a_browser_only_warns(cli_env):
     assert cli_env.fake.calls == []  # no browser: the PDF is not even tried after the fit check
 
 
+def test_tailor_without_a_browser_for_the_heights_skips_the_fit_and_the_pdf(cli_env, monkeypatch):
+    def missing(parts, fonts=True):
+        raise RenderUnavailable("no chromium for heights")
+
+    monkeypatch.setattr(measure_mod, "measure_heights", missing)
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
+    assert result.exit_code == 0, result.output
+    assert result.output.count("no chromium for heights") == 1
+    assert "WARNING: no part heights, no page-fit check and no PDF" in result.output
+    assert cli_env.measure.calls == 0 and cli_env.fake.calls == []
+    assert "# Tailored CV" in result.output
+
+
 def test_tailor_warns_when_only_the_print_fails(cli_env):
     cli_env.fake.error = RenderUnavailable("printer broke")
     result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
@@ -532,12 +550,19 @@ def test_tailor_handoff_names_the_pdf(cli_env):
     assert result.output.index("# Tailored CV") < result.output.index(f"pdf {pdf}")
 
 
-def test_tailor_import_checks_the_page_fit(cli_env):
-    cli_env.measure.overflow = 12.0
+def test_tailor_import_trims_an_overflowing_page_instead_of_rejecting_it(cli_env):
+    answer = json.loads(ANSWER)
+    answer["projects"][0]["bullets"] = ["pipes", "signals", "builtins"]
+    answer["drop_order"] = ["shell/signals"]
+    (_tailored(cli_env) / "answers" / f"{cli_env.job.id}.json").write_text(json.dumps(answer),
+                                                                           encoding="utf-8")
+    cli_env.measure.overflow = [0.8, 0.0]  # the model said it fits; the render disagrees once
     result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--import"])
-    assert result.exit_code == 1
-    assert "overflows by 12.0 mm" in result.output
-    assert cli_env.fake.calls == [] and cli_env.measure.calls == 1
+    assert result.exit_code == 0, result.output
+    assert cli_env.measure.calls == 2 and len(cli_env.fake.calls) == 1
+    assert '- Trimmed automatically to fit the page: "Handled signals."' in result.output
+    html = cli_env.fake.calls[0]["html"]
+    assert "Wrote builtins." in html and "Handled signals." not in html
 
 
 def test_tailor_no_pdf_skips_the_page_fit(cli_env):

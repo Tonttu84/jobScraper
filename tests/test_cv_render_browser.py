@@ -1,5 +1,8 @@
 """The CV renderer printed by a real headless Chromium (``jobscraper.cv.render.render_pdf``).
 
+Also the part heights (``jobscraper.cv.measure``): the additive height model against the real
+main column, and the fitter against a real overflowing page.
+
 Runs with ``fonts=False`` so nothing leaves the machine (``set_content``, no server, no web
 fonts); the fallback fonts are close enough in size for the fit checks. Skips when Playwright's
 browser is not installed (``python -m playwright install chromium``). Listed in scripts/check.sh's
@@ -13,7 +16,10 @@ from pathlib import Path
 
 import pytest
 
-from jobscraper.cv.parts import default_selection, load_cv_parts, resolve
+from jobscraper.cv import measure as measure_mod
+from jobscraper.cv.fit import fit_selection, parse_drop_order
+from jobscraper.cv.measure import cached_heights, heights_path, main_height_mm, measure_heights
+from jobscraper.cv.parts import EntryPick, Selection, default_selection, load_cv_parts, resolve
 from jobscraper.cv.render import RenderUnavailable, measure_overflow, render_pdf, to_html
 
 playwright_api = pytest.importorskip("playwright.sync_api")
@@ -85,3 +91,81 @@ def test_a_missing_chromium_is_render_unavailable(parts, tmp_path, monkeypatch):
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "no-browsers"))
     with pytest.raises(RenderUnavailable, match="playwright install chromium"):
         render_pdf("<html></html>", tmp_path / "x.pdf")
+
+
+# ------------------------------------------------------------------- part heights
+
+
+def _varied(parts):
+    """The fixture library with bullets and leads of one to four lines, so wrapping counts."""
+    raw = parts.model_dump()
+    filler = "Built and measured a thing with care, then wrote it up for the team. "
+    n = 0
+    for entry in [*raw["projects"], *raw["work"]]:
+        if entry.get("lead"):
+            entry["lead"] = entry["lead"] + " " + filler * (n % 2)
+        for bullet in entry["bullets"]:
+            bullet["text"] = f"{bullet['text']} " + filler * (n % 5)
+            n += 1
+    return type(parts).model_validate(raw)
+
+
+def _selections():
+    return [
+        Selection(summary="systems",
+                  projects=[EntryPick(id="shell", bullets=["signals", "pipes", "heredoc"]),
+                            EntryPick(id="webserver", bullets=["cgi"])],
+                  work={"poker": ["risk", "math"], "shop": []}),
+        Selection(summary="default", projects=[EntryPick(id="game", bullets=["dda"])],
+                  work={"shop": ["service"]}),
+    ]
+
+
+@pytest.mark.parametrize("library", [lambda p: p, _varied], ids=["fixture", "varied"])
+def test_the_height_model_predicts_the_real_main_column(parts, library):
+    parts = library(parts)
+    heights = measure_heights(parts, fonts=False)
+    for selection in [default_selection(parts), *_selections()]:
+        real = main_height_mm(resolve(parts, selection), fonts=False)
+        predicted = heights.predict_mm(parts, selection)
+        assert abs(predicted - real) <= 1.0, (selection, predicted, real)
+
+
+def test_the_predicted_overflow_matches_the_print(parts):
+    long = _varied(_stuffed(parts))
+    heights = measure_heights(long, fonts=False)
+    selection = default_selection(long)
+    overflow = measure_overflow(resolve(long, selection), fonts=False)
+    assert overflow > 0
+    assert abs(heights.predict_mm(long, selection) - heights.page_mm - overflow) <= 1.0
+
+
+def test_the_fitter_fits_a_real_overflowing_page(parts):
+    long = _varied(parts)
+    raw = long.model_dump()
+    raw["summaries"][1]["text"] = " ".join(["A much longer summary sentence for the test."] * 30)
+    long = type(parts).model_validate(raw)
+    heights = measure_heights(long, fonts=False)
+    selection = _selections()[0]
+    assert heights.predict_mm(long, selection) > heights.page_mm
+    trims, _ = parse_drop_order(long, selection, ["poker/math", "shell/heredoc"])
+    fitted = fit_selection(long, selection, trims, heights,
+                           lambda cv: measure_overflow(cv, fonts=False))
+    assert fitted.dropped[:2] == trims and fitted.overflow_mm <= 0.5
+    assert fitted.renders == 1  # the model was right the first time
+
+
+def test_the_heights_cache_is_written_once_and_reused(parts, tmp_path, monkeypatch):
+    calls = []
+    real = measure_mod.measure_heights
+
+    def counting(p, *, fonts=True):
+        calls.append(fonts)
+        return real(p, fonts=fonts)
+
+    monkeypatch.setattr(measure_mod, "measure_heights", counting)
+    cache = tmp_path / "cv"
+    first = cached_heights(parts, cache, fonts=False)
+    assert heights_path(cache, parts).is_file()
+    assert cached_heights(parts, cache, fonts=False) == first
+    assert calls == [False]

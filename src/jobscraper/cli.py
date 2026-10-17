@@ -22,6 +22,7 @@
     jobscraper cv-parts             # check config/cv-parts.yaml, print the default CV as markdown
     jobscraper tailor JOB_ID ...    # pick CV parts for a job; saves data/cv/tailored/*.md and *.pdf
     jobscraper cv-render [JOB_ID]   # print the default (or a job's tailored) CV to a one-page PDF
+    jobscraper cv-heights           # measure every CV part's height (mm): the tailor's page budget
 
 Every command takes a global --profile NAME (or $JOBSCRAPER_PROFILE), which moves config, data
 and results into config/profiles/NAME/, data/profiles/NAME/ and results/NAME/.
@@ -1271,6 +1272,23 @@ class _PageFit:
             return 0.0
 
 
+def _tailor_heights(parts, page_fit: _PageFit | None, *, build: bool):
+    """The part heights for the prompt's page budget and the fitter: data/cv/heights-*.json,
+    measured once per library when missing (``build``; --no-pdf only reads the cache). None
+    without a browser, with one warning; then there is no page-fit check and no PDF either."""
+    from jobscraper.cv import measure, render
+
+    try:
+        return measure.cached_heights(parts, config.paths().data / "cv", build=build)
+    except render.RenderUnavailable as exc:
+        if page_fit is None:
+            typer.echo(f"WARNING: no part heights in the prompt: {exc}")
+        else:
+            page_fit.missing = True
+            typer.echo(f"WARNING: no part heights, no page-fit check and no PDF: {exc}")
+        return None
+
+
 @dataclass
 class _TailorRow:
     """One line of ``tailor``'s batch summary."""
@@ -1311,8 +1329,10 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
     Jobs: the given ids, every job marked "interested" in the web UI (--interested), or the
     latest report's top N (--top N) — exactly one of them. With an API key this is one call per
     job. Without one: `--export` writes data/cv/tailored/prompts/<id>.md, a subagent writes
-    data/cv/tailored/answers/<id>.json, and `--import` validates it. An answer must fit one page
-    (measured in Chromium unless --no-pdf). Each hand-off is saved to
+    data/cv/tailored/answers/<id>.json, and `--import` validates it. The prompt shows every
+    part's height and the page budget (`cv-heights`, measured once per library); an answer that
+    still overflows is trimmed by its own drop_order, checked in Chromium unless --no-pdf (which
+    reads the heights cache but starts no browser). Each hand-off is saved to
     data/cv/tailored/"CV - <Company>.md" and the CV printed next to it as "CV - <Company>.pdf"
     ("CV - <Company> - <Title>" when another job of the company has that name; index.json says
     which job owns which); a replaced pair moves to older/ first. Cached per job and parts library; --interested and --top skip the cached jobs unless --force. Several
@@ -1356,8 +1376,10 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
         skip_cached = (interested or top is not None) and not force and not import_
         summary = len(jobs) > 1 or not job_ids
         fit = None if no_pdf or export else _PageFit()
+        heights = _tailor_heights(parts, fit, build=not no_pdf)  # once per run, for every job
         tailor_stage = Tailor(load_settings().profile, store, parts,
-                              model=model or ("subagent" if import_ else None), fit=fit)
+                              model=model or ("subagent" if import_ else None), fit=fit,
+                              heights=heights)
         filters, ranked = store.filter_results(), store.verdicts("rank")
         # A vacancy whose own page says closed or gone (`check-live`) is not worth a CV.
         live = store.liveness([j.id for j in jobs])
@@ -1489,6 +1511,53 @@ def cv_render(job_id: str | None = typer.Argument(None, help="A tailored job's i
             pdf_path = out
     png_path = pdf_path.with_suffix(".png") if png else None
     _echo_pdf(_render_cv(cv, pdf_path, png_path, required=True, title=title), pdf_path, png_path)
+
+
+@app.command("cv-heights")
+def cv_heights(force: bool = typer.Option(False, "--force", help="Measure again even when the cache is current")) -> None:
+    """Measure every CV part's height on the printed page and print it (mm).
+
+    Headless Chromium with the web fonts, one session for the whole library; cached in
+    data/cv/heights-<library>.json and measured again only when the library or the layout
+    changes. These are the heights the tailor prompt shows and the page fitter adds up.
+    """
+    import yaml
+
+    from jobscraper.cv import measure, render
+    from jobscraper.cv.parts import load_cv_parts
+
+    try:
+        parts = load_cv_parts()
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
+        typer.echo(f"cv-heights: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    cache_dir = config.paths().data / "cv"
+    known = None if force else measure.cached_heights(parts, cache_dir, build=False)
+    try:
+        heights = known or measure.cached_heights(parts, cache_dir, force=True)
+    except render.RenderUnavailable as exc:
+        typer.echo(f"cv-heights: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    # typer.echo, not the rich console: CV titles may contain [brackets] rich would eat.
+    typer.echo(f"cv heights for library {heights.fingerprint} ({'cached' if known else 'measured'}): "
+               f"{measure.heights_path(cache_dir, parts)}")
+    typer.echo(f"page {heights.page_mm:.1f} mm, overhead {heights.overhead_mm:.1f} mm; "
+               f"budget for summary + projects + work: {heights.budget_mm:.1f} mm; "
+               f"the untailored CV uses {heights.untailored_mm(parts):.1f} mm")
+    typer.echo("summaries")
+    for s in parts.summaries:
+        typer.echo(f"  [{s.id}]  {heights.summaries[s.id]:.1f}")
+    typer.echo("projects (title and lead, then each bullet)")
+    for p in parts.projects:
+        typer.echo(f"  [{p.id}] {p.title}  {heights.projects[p.id].header:.1f}")
+        for b in p.bullets:
+            typer.echo(f"    - [{b.id}]  {heights.projects[p.id].bullets[b.id]:.1f}")
+    typer.echo("work (title and lead, then each bullet)")
+    for w in parts.work:
+        own = heights.work[w.id]
+        typer.echo(f"  [{w.id}] {w.title}  {own.header:.1f} (no bullets: {own.bare or 0.0:.1f})")
+        for b in w.bullets:
+            typer.echo(f"    - [{b.id}]  {own.bullets[b.id]:.1f}")
 
 
 def _rank_and_refine(days: int, verbose: bool) -> None:

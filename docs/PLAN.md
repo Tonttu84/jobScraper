@@ -705,6 +705,17 @@ PDF/PNG exports (`cv-canva-2026-10.*`).
 - Done 2026-10-17: files named by company for the owner's applications: `tailored/CV - <Company>.pdf/.md`
   (`- <Title>` on a second job of the company; `index.json` maps stem → job id, the PDF title
   carries the id), a replaced CV moves to `older/` with its time, dated legacy files are adopted.
+- Done 2026-10-17: measured page budget instead of the overflow-retry loop (the last CVs took
+  4–7 imports). `jobscraper.cv.measure` lays every part out once in headless Chromium, in the real
+  column (one session per library; `data/cv/heights-<fingerprint>.json`, re-measured when the
+  library or the stylesheet changes; `jobscraper cv-heights` prints it), as an additive model:
+  overhead + summary + project headers and bullets + work headers and bullets, exact for the
+  untailored CV and within 0.01 mm for other selections in the browser suite. The prompt
+  (2026-10-17.1) shows each part's mm and the budget and asks for a `drop_order`;
+  `jobscraper.cv.fit` drops in that order (then a fixed fallback) until the model fits, checked
+  by one real render (at most 3). One AI answer is enough: no overflow error on import or via
+  the API; the hand-off says "Trimmed automatically to fit the page: …" and the stored answer
+  keeps the model's own picks.
 - Next: exact fonts (Aileron is free; "Now" to check) if the owner wants them; tailoring as a
   stage of `run` once an API key exists.
 

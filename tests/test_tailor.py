@@ -17,12 +17,15 @@ from typer.testing import CliRunner
 
 from jobscraper import cli as cli_mod
 from jobscraper.config import ROOT
+from jobscraper.cv import measure as measure_mod
 from jobscraper.cv import render as render_mod
 from jobscraper.cv import tailor as tailor_mod
+from jobscraper.cv.fit import Trim
 from jobscraper.cv.parts import load_cv_parts, parts_fingerprint
 from jobscraper.cv.tailor import (
     TAILOR_PROMPT_VERSION,
     PickedEntry,
+    StoredAnswer,
     Tailor,
     TailorAnswer,
     TailorError,
@@ -94,8 +97,9 @@ def make_tailor(settings, parts, tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     store = Store(tmp_path / "tailor.db")
 
-    def _make(*responses, model: str | None = None, fit=None) -> tuple[Tailor, FakeMessages]:
-        t = Tailor(settings.profile, store, parts, model=model, fit=fit)
+    def _make(*responses, model: str | None = None, fit=None,
+              heights=None) -> tuple[Tailor, FakeMessages]:
+        t = Tailor(settings.profile, store, parts, model=model, fit=fit, heights=heights)
         fake = FakeMessages(*responses)
         t.client = SimpleNamespace(messages=fake)
         return t, fake
@@ -118,6 +122,44 @@ def test_library_block_lists_every_id_with_its_limits(parts):
     assert "2 projects" in block
     # The untailored CV is marked so the model knows what "no change" looks like.
     assert "on the untailored CV" in block
+
+
+def test_library_block_without_heights_has_no_budget(parts):
+    block = library_block(parts)
+    assert "Page budget" not in block and " mm" not in block
+    assert library_block(parts, None) == block
+
+
+def test_library_block_shows_every_height_and_the_budget(parts, flat_heights):
+    heights = flat_heights(parts, mm=2.0, overhead_mm=100.0)
+    webserver = heights.projects["webserver"].model_copy(update={"header": 6.14})
+    heights = heights.model_copy(update={"projects": {**heights.projects, "webserver": webserver}})
+    block = library_block(parts, heights)
+    budget = ("Page budget for summary + projects + work: 197.0 mm; the untailored CV uses "
+              "24.1 mm.")
+    assert budget in block and block.index(budget) < block.index("SUMMARIES")
+    assert "[default] tags: general — 2.0 mm" in block
+    assert "[webserver] Webserver (on the untailored CV) — 6.1 mm — tags: systems, cpp;" in block
+    assert "  - [parse] Wrote an incremental request parser. (on the untailored CV) (2.0 mm)" in block
+    assert "  - [cgi] Ran CGI scripts. (2.0 mm)" in block
+    assert "[poker] Poker professional (2010-2024) — 2.0 mm; up to 2 bullets" in block
+    assert "  - [service] Served customers. (2.0 mm)" in block
+    # Everything else reads as without heights.
+    assert library_block(parts).splitlines()[0] == block.splitlines()[0]
+
+
+def test_system_prompt_asks_for_the_budget_and_a_drop_order(settings, parts, flat_heights):
+    prompt = tailor_system_prompt(settings.profile, parts, flat_heights(parts))
+    assert "PAGE BUDGET" in prompt and "`drop_order`" in prompt
+    assert "it never asks you again" in prompt
+    assert "The page is full." not in prompt and "Page budget for summary" in prompt
+    assert TAILOR_PROMPT_VERSION == "2026-10-17.1"
+
+
+def test_answer_schema_ranks_the_expendables_after_choosing():
+    assert list(TailorAnswer.model_fields) == ["focus", "summary", "projects", "work", "drop_order",
+                                               "rationale", "gaps"]
+    assert _answer().drop_order == []
 
 
 def test_system_prompt_carries_the_library_and_the_dossier(settings, parts):
@@ -269,29 +311,74 @@ class FakeFit:
         return self.overflows.pop(0)
 
 
+def _overflowing(parts, flat_heights, overflow: float):
+    """Heights (10 mm per part) under which ``_answer()`` overflows the page by ``overflow``."""
+    heights = flat_heights(parts, mm=10.0)
+    content = heights.content_mm(parts, to_selection(_answer()))
+    return heights.model_copy(update={"overhead_mm": 297.0 - content + overflow})
+
+
 def test_without_a_fit_check_nothing_is_measured(make_tailor):
     t, _ = make_tailor(_response(_answer()))
     assert t.tailor(_job(), None).overflow_mm is None
 
 
-def test_an_overflowing_answer_is_sent_back_with_the_overflow(make_tailor):
-    fit = FakeFit(12.3, 0.0)
-    t, fake = make_tailor(_response(_answer()), _response(_answer(summary="default")), fit=fit)
-    result = t.tailor(_job(), None)
-    assert result.selection.summary == "default" and result.overflow_mm == 0.0
-    assert len(fake.calls) == 2 and len(fit.calls) == 2
-    assert fit.calls[0].summary == "A systems-flavoured summary."  # the answer's own CV
-    retry = fake.calls[1]["messages"][2]["content"]
-    assert ("the page overflows by 12.3 mm (about 3 lines of 5 mm); drop or swap bullets for "
-            "shorter ones") in retry
-    assert t.store.tailoring(_job().id, t.cache_key) is not None
-
-
-def test_a_tiny_overflow_is_tolerated(make_tailor):
-    fit = FakeFit(0.5)
+def test_without_heights_the_fit_check_only_measures(make_tailor):
+    fit = FakeFit(12.3)
     t, fake = make_tailor(_response(_answer()), fit=fit)
-    assert t.tailor(_job(), None).overflow_mm == 0.5
-    assert len(fake.calls) == 1
+    result = t.tailor(_job(), None)
+    assert result.overflow_mm == 12.3 and result.trimmed == []
+    assert len(fake.calls) == 1 and len(fit.calls) == 1
+    assert fit.calls[0].summary == "A systems-flavoured summary."  # the answer's own CV
+
+
+def test_an_overflowing_answer_is_trimmed_without_asking_again(make_tailor, parts, flat_heights):
+    fit = FakeFit(0.0)
+    answer = _answer(drop_order=["poker/math", "webserver/parse"])
+    t, fake = make_tailor(_response(answer), fit=fit,
+                          heights=_overflowing(parts, flat_heights, 8.0))
+    result = t.tailor(_job(), None)
+    assert len(fake.calls) == 1  # one AI answer is enough
+    assert result.selection.projects[0].bullets == ["poll"]  # poker keeps its only bullet
+    assert result.trimmed == [Trim(kind="project", entry="webserver", bullet="parse")]
+    assert result.overflow_mm == 0.0 and len(fit.calls) == 1
+    assert result.cv.projects[0].bullets == ["Served many clients with poll()."]
+    stored = t.store.tailoring(_job().id, t.cache_key)
+    # cv-render reads the fitted selection; the AI's own picks stay in the stored answer.
+    assert TailorAnswer.model_validate_json(stored).projects[0].bullets == ["poll"]
+    kept = StoredAnswer.model_validate_json(stored)
+    assert kept.original_projects[0].bullets == ["poll", "parse"]
+    assert kept.trimmed == result.trimmed and kept.drop_order == ["poker/math", "webserver/parse"]
+
+
+def test_a_cached_tailoring_keeps_what_was_trimmed(make_tailor, parts, flat_heights):
+    heights = _overflowing(parts, flat_heights, 8.0)
+    t, _ = make_tailor(_response(_answer()), heights=heights)
+    first = t.tailor(_job(), None)
+    fit = FakeFit()
+    again, _ = make_tailor(fit=fit, heights=heights)
+    cached = again.tailor(_job(), None)
+    assert cached.cached and fit.calls == []  # not measured again
+    assert cached.trimmed == first.trimmed != []
+    assert cached.selection == first.selection
+
+
+def test_an_answer_that_fits_is_stored_as_it_came(make_tailor, parts, flat_heights):
+    t, _ = make_tailor(_response(_answer()), fit=FakeFit(0.0),
+                       heights=_overflowing(parts, flat_heights, 0.0))
+    result = t.tailor(_job(), None)
+    assert result.trimmed == [] and result.selection == to_selection(_answer())
+    kept = StoredAnswer.model_validate_json(t.store.tailoring(_job().id, t.cache_key))
+    assert kept.original_projects is None and kept.trimmed == []
+
+
+def test_a_page_that_cannot_be_fitted_is_stored_with_its_overflow(make_tailor, parts, flat_heights):
+    fit = FakeFit(5.0, 5.0, 5.0)
+    t, fake = make_tailor(_response(_answer()), fit=fit,
+                          heights=_overflowing(parts, flat_heights, 0.0))
+    result = t.tailor(_job(), None)
+    assert result.overflow_mm == 5.0 and len(fake.calls) == 1
+    assert t.store.tailoring(_job().id, t.cache_key) is not None  # no TailorError any more
 
 
 def test_an_answer_with_bad_ids_is_not_measured(make_tailor):
@@ -303,15 +390,6 @@ def test_an_answer_with_bad_ids_is_not_measured(make_tailor):
     assert "overflows" not in fake.calls[1]["messages"][2]["content"]
 
 
-def test_still_overflowing_after_the_retry_raises(make_tailor):
-    fit = FakeFit(10.0, 4.2)
-    t, _ = make_tailor(_response(_answer()), _response(_answer()), fit=fit)
-    with pytest.raises(TailorError, match=r"overflows by 4\.2 mm \(about 1 lines") as exc:
-        t.tailor(_job(), None)
-    assert exc.value.problems[0].startswith("the page overflows by 4.2 mm")
-    assert t.store.tailoring(_job().id, t.cache_key) is None
-
-
 def test_a_cached_tailoring_is_not_measured_again(make_tailor):
     t, _ = make_tailor(_response(_answer()), fit=FakeFit(0.0))
     t.tailor(_job(), None)
@@ -320,14 +398,14 @@ def test_a_cached_tailoring_is_not_measured_again(make_tailor):
     assert again.tailor(_job(), None).cached and fit.calls == []
 
 
-def test_import_rejects_an_overflowing_answer_and_caches_nothing(make_tailor):
-    t, _ = make_tailor(fit=FakeFit(37.0))
-    with pytest.raises(TailorError) as exc:
-        t.import_answer(_job(), _answer().model_dump_json())
-    assert ("the page overflows by 37.0 mm (about 8 lines of 5 mm); drop or swap bullets for "
-            "shorter ones") in str(exc.value)
-    assert exc.value.problems == [str(exc.value).splitlines()[1]]
-    assert t.store.tailoring(_job().id, t.cache_key) is None
+def test_import_trims_an_overflowing_answer_instead_of_rejecting_it(make_tailor, parts,
+                                                                   flat_heights):
+    fit = FakeFit(0.0)
+    t, _ = make_tailor(fit=fit, heights=_overflowing(parts, flat_heights, 8.0))
+    result = t.import_answer(_job(), _answer(drop_order=["webserver/poll"]).model_dump_json())
+    assert result.trimmed == [Trim(kind="project", entry="webserver", bullet="poll")]
+    assert result.selection.projects[0].bullets == ["parse"]
+    assert t.store.tailoring(_job().id, t.cache_key) is not None
 
 
 def test_import_accepts_an_answer_that_fits(make_tailor):
@@ -335,6 +413,43 @@ def test_import_accepts_an_answer_that_fits(make_tailor):
     result = t.import_answer(_job(), _answer().model_dump_json())
     assert result.overflow_mm == 0.0
     assert t.store.tailoring(_job().id, t.cache_key) is not None
+
+
+def test_drop_order_entries_that_name_no_selected_bullet_are_noted(make_tailor, parts,
+                                                                  flat_heights):
+    t, _ = make_tailor(heights=_overflowing(parts, flat_heights, 0.0))
+    answer = _answer(drop_order=["webserver/cgi", "ghost/x", "poker/math"])
+    result = t.import_answer(_job(), answer.model_dump_json())
+    assert result.notes == ['drop_order "webserver/cgi" is not a selected bullet; ignored',
+                            'drop_order "ghost/x" is not a selected bullet; ignored']
+    changes = _changes(to_handoff_markdown(_job(), result, parts))
+    assert '- Note: drop_order "ghost/x" is not a selected bullet; ignored' in changes
+
+
+def test_handoff_says_what_was_trimmed(make_tailor, parts, flat_heights):
+    t, _ = make_tailor(heights=_overflowing(parts, flat_heights, 25.0))
+    result = t.import_answer(_job(), _answer(drop_order=["webserver/parse"]).model_dump_json())
+    # parse, then the fallback: no project has two bullets left, no work entry two, so a project.
+    assert [x.label for x in result.trimmed] == ["webserver/parse", "shell"]
+    changes = _changes(to_handoff_markdown(_job(), result, parts))
+    assert ('- Trimmed automatically to fit the page: "Wrote an incremental request parser."; '
+            "project **Shell**") in changes
+    plain = make_tailor()[0].import_answer(_job(source_id="2"), _answer().model_dump_json())
+    assert "Trimmed automatically" not in to_handoff_markdown(_job(source_id="2"), plain, parts)
+
+
+def test_handoff_shortens_long_trimmed_bullets(parts, settings, tmp_path, flat_heights):
+    raw = parts.model_dump()
+    raw["projects"][0]["bullets"][1]["text"] = "Served many clients with poll() " + "and more " * 9
+    long_parts = type(parts).model_validate(raw)
+    heights = flat_heights(long_parts, mm=10.0)
+    content = heights.content_mm(long_parts, to_selection(_answer()))
+    heights = heights.model_copy(update={"overhead_mm": 297.0 - content + 5.0})
+    t = Tailor(settings.profile, Store(tmp_path / "trim.db"), long_parts, heights=heights)
+    result = t.import_answer(_job(), _answer(drop_order=["webserver/poll"]).model_dump_json())
+    line = next(x for x in to_handoff_markdown(_job(), result, long_parts).splitlines()
+                if x.startswith("- Trimmed automatically"))
+    assert line.endswith('…"') and len(line) < 110
 
 
 def test_tailor_error_problems():
@@ -498,6 +613,19 @@ def cli_env(tmp_path, monkeypatch):
                            db=db, measured=measured)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_heights(monkeypatch, flat_heights):
+    """The CLI builds the part-height cache with a browser; here every part is 1 mm."""
+    calls: list = []
+
+    def measure(parts, *, fonts=True):
+        calls.append(parts)
+        return flat_heights(parts, fonts=fonts)
+
+    monkeypatch.setattr(measure_mod, "measure_heights", measure)
+    return calls
+
+
 def test_cli_tailor_prints_and_saves_the_handoff(cli_env):
     result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id])
     assert result.exit_code == 0, result.output
@@ -574,6 +702,43 @@ def test_cli_tailor_export_and_import_together_is_an_error(cli_env):
     assert result.exit_code == 1 and "either" in result.output
 
 
+def test_cli_tailor_export_puts_the_heights_in_the_prompt(cli_env, _no_real_heights):
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--export"])
+    assert result.exit_code == 0, result.output
+    prompt = (cli_env.data / "cv" / "tailored" / "prompts" / f"{cli_env.job.id}.md").read_text(
+        encoding="utf-8")
+    assert "Page budget for summary + projects + work: 197.0 mm" in prompt
+    assert "[webserver] Webserver (on the untailored CV) — 1.0 mm" in prompt
+    assert len(list((cli_env.data / "cv").glob("heights-*.json"))) == 1
+    assert len(_no_real_heights) == 1
+
+
+def test_cli_tailor_export_without_a_browser_has_no_budget(cli_env, monkeypatch):
+    def missing(parts, *, fonts=True):
+        raise render_mod.RenderUnavailable("no chromium here")
+
+    monkeypatch.setattr(measure_mod, "measure_heights", missing)
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--export"])
+    assert result.exit_code == 0, result.output
+    assert "WARNING: no part heights in the prompt: no chromium here" in result.output
+    prompt = (cli_env.data / "cv" / "tailored" / "prompts" / f"{cli_env.job.id}.md").read_text(
+        encoding="utf-8")
+    assert "Page budget for" not in prompt
+
+
+def test_cli_tailor_no_pdf_reads_the_heights_but_never_measures(cli_env, _no_real_heights):
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--export", "--no-pdf"])
+    assert result.exit_code == 0, result.output
+    assert _no_real_heights == []
+    prompt = cli_env.data / "cv" / "tailored" / "prompts" / f"{cli_env.job.id}.md"
+    assert "Page budget for" not in prompt.read_text(encoding="utf-8")
+    assert runner.invoke(cli_mod.app, ["cv-heights"]).exit_code == 0  # builds the cache
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--export", "--no-pdf"])
+    assert result.exit_code == 0, result.output
+    assert "Page budget for" in prompt.read_text(encoding="utf-8")
+    assert len(_no_real_heights) == 1
+
+
 def test_cli_tailor_checks_the_page_fit(cli_env):
     result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id])
     assert result.exit_code == 0, result.output
@@ -626,6 +791,14 @@ def test_cli_tailor_needs_exactly_one_job_source(batch_env):
         result = runner.invoke(cli_mod.app, ["tailor", *args])
         assert result.exit_code == 1, args
         assert "exactly one of" in result.output
+
+
+def test_cli_tailor_batch_measures_the_heights_once(batch_env, _no_real_heights):
+    batch_env.fake.responses.append(_response(_answer()))
+    result = runner.invoke(cli_mod.app, ["tailor", "--top", "2"])
+    assert result.exit_code == 0, result.output
+    assert len(batch_env.fake.calls) == 2 and len(_no_real_heights) == 1
+    assert "Page budget for" in batch_env.fake.calls[0]["system"][0]["text"]
 
 
 def test_cli_tailor_top_n_follows_the_latest_report(batch_env):
