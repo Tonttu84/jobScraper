@@ -122,9 +122,45 @@ def test_an_empty_page_is_open() -> None:
     assert liveness.classify(_board_job(), _page(200, "", url=SF_URL)).status == "open"
 
 
+INDEED_URL = "https://fi.indeed.com/viewjob?jk=0123456789abcdef"
+
+
+def _indeed_job(**kw) -> Job:
+    return _board_job(source="indeed", source_id="0123456789abcdef", url=INDEED_URL, **kw)
+
+
+def test_an_expired_indeed_page_is_closed() -> None:
+    """Indeed serves an expired posting as 200; its page data says ``"isJobExpired": true``."""
+    check = liveness.classify(_indeed_job(), _page(200, fixture_text("liveness_indeed_expired.html"),
+                                                   url=INDEED_URL))
+    assert check.status == "closed"
+    assert check.reason == "Indeed: job expired"
+
+
+def test_an_open_indeed_page_is_open_despite_the_expired_wording() -> None:
+    """Every Indeed page carries "This job has expired on Indeed" in its translation dictionary:
+    the wording says nothing, the flag decides."""
+    text = fixture_text("liveness_indeed_open.html")
+    assert "This job has expired on Indeed" in text
+    check = liveness.classify(_indeed_job(), _page(200, text, url=INDEED_URL))
+    assert check.status == "open"
+
+
+def test_the_expired_wording_alone_does_not_close_an_indeed_page() -> None:
+    page = '<html><script>window._i18n={"m":"This job has expired on Indeed"};</script></html>'
+    assert liveness.classify(_indeed_job(), _page(200, page, url=INDEED_URL)).status == "open"
+
+
+def test_the_indeed_flag_counts_only_on_indeed() -> None:
+    check = liveness.classify(_board_job(), _page(200, fixture_text("liveness_indeed_expired.html"),
+                                                  url=SF_URL))
+    assert check.status == "open"
+
+
 def test_detectors_are_a_per_source_table() -> None:
     assert "linkedin" in liveness.DETECTORS
     assert callable(liveness.DETECTORS["linkedin"])
+    assert callable(liveness.DETECTORS["indeed"])
 
 
 def test_check_stamps_the_time() -> None:

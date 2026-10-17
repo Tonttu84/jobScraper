@@ -33,6 +33,7 @@ from jobscraper.models import (
     FilterResult,
     Job,
     JobFacets,
+    LivenessCheck,
     RemoteKind,
     ReportSection,
     ReportSnapshot,
@@ -186,10 +187,31 @@ class JobView(BaseModel):
         None, description="Start of the latest scrape of the job's source when that scrape came "
                           "after last_seen, i.e. did not return the posting (it may be closed)",
     )
+    checked_open_at: datetime | None = Field(
+        None, description="When the posting's own page was last fetched, if that latest "
+                          "conclusive check (Store.liveness) found it open",
+    )
+    stale: bool = Field(
+        False, description="Show the 'not in the <date> scrape' warning: missing_since_run is set "
+                           "and no open page check is dated at or after that scrape. A search "
+                           "source often misses a posting for a day; its own page outweighs that",
+    )
+
+
+class CheckView(BaseModel):
+    """One page check (:class:`~jobscraper.models.LivenessCheck`) as the detail shows it."""
+
+    status: str
+    reason: str
+    checked_at: datetime
 
 
 class JobDetail(JobView):
     description: str | None = None
+    last_check: CheckView | None = Field(
+        None, description="The job's latest page check of any status when it is not the open "
+                          "check behind checked_open_at (closed, gone, unknown — and newer)",
+    )
 
 
 class JobList(BaseModel):
@@ -292,6 +314,8 @@ class View:
     refine_offset: float
     #: Source -> start of its newest scrape that brought postings back (Store.last_scrape_starts).
     last_scrapes: dict[str, datetime]
+    #: Job id -> its latest conclusive page check (Store.liveness), for the report's jobs.
+    liveness: dict[str, LivenessCheck]
 
 
 def _stage_verdicts(store: Store, stage: str, ids: list[str] | None = None) -> dict[str, AIVerdict]:
@@ -353,6 +377,7 @@ def load_view(store: Store, report_id: int | None = None, user: str | None = Non
         decisions=decisions,
         refine_offset=refine_offset(rank, refine),
         last_scrapes=store.last_scrape_starts(),
+        liveness=store.liveness(ids),
     )
 
 
@@ -380,8 +405,31 @@ def _facets_view(view: View, job: Job) -> FacetsView:
                       stacks=list(f.stacks), web_dev=f.web_dev, evergreen=f.evergreen)
 
 
+def _page_checks(missing: datetime | None, live: LivenessCheck | None) -> tuple[datetime | None, bool]:
+    """``(checked_open_at, stale)`` from the missed scrape and the latest conclusive page check.
+
+    A search source (LinkedIn, Indeed) often leaves a still-open posting out of one day's
+    search, so the scrape's silence only warns until the posting's own page, fetched at or after
+    that scrape, says it is open.
+    """
+    opened = live.checked_at if live is not None and live.status == "open" else None
+    stale = missing is not None and (opened is None or opened < missing)
+    return opened, stale
+
+
+def _last_check(history: list[LivenessCheck], opened: datetime | None) -> CheckView | None:
+    """The newest check of any status, unless it is the open check the view already shows."""
+    if not history:
+        return None
+    last = history[-1]
+    if last.status == "open" or (opened is not None and last.checked_at <= opened):
+        return None
+    return CheckView(status=last.status, reason=last.reason, checked_at=last.checked_at)
+
+
 def _job_view(view: View, job: Job, section: str | None, position: int | None,
-              *, detail: bool = False) -> JobView:
+              *, history: list[LivenessCheck] | None = None) -> JobView:
+    """One card; with ``history`` (the job's every page check, oldest first) the detail view."""
     fr = view.filters.get(job.id)
     pre, rank = view.prefilter.get(job.id), view.rank.get(job.id)
     refine = view.refine.get(job.id)
@@ -392,6 +440,11 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
     # The source was scraped again after the posting was last seen: that scrape did not return it.
     last_scrape = view.last_scrapes.get(job.source)
     missing = last_scrape if last_scrape and job.last_seen and last_scrape > job.last_seen else None
+    if history is None:
+        live = view.liveness.get(job.id)
+    else:  # the detail may show a job outside the report, which view.liveness does not cover
+        live = next((c for c in reversed(history) if c.status != "unknown"), None)
+    opened, stale = _page_checks(missing, live)
     fields: dict[str, Any] = {
         "id": job.id,
         "title": job.title,
@@ -426,9 +479,12 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
         "last_seen": job.last_seen,
         "scored_at": max((v.created_at for v in (pre, rank, refine) if v), default=None),
         "missing_since_run": missing,
+        "checked_open_at": opened,
+        "stale": stale,
     }
-    if detail:
-        return JobDetail(description=job.description, **fields)
+    if history is not None:
+        return JobDetail(description=job.description, last_check=_last_check(history, opened),
+                         **fields)
     return JobView(**fields)
 
 
@@ -633,7 +689,8 @@ def create_app(db_path: Path | None = None, serve_dir: Path | None = None,
             job = found[0]
         section = item.section if item else None
         position = item.position if item else None
-        return _job_view(view, job, section, position, detail=True)  # type: ignore[return-value]
+        return _job_view(view, job, section, position,  # type: ignore[return-value]
+                         history=store.liveness_history(job.id))
 
     @app.put("/api/jobs/{job_id}/decision", response_model=Decision)
     def put_decision(store: StoreDep, job_id: str, body: DecisionIn) -> Decision:

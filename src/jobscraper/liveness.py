@@ -25,6 +25,7 @@ and the web UI like any rule drop (``posting closed (checked …)``).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -58,10 +59,26 @@ def _linkedin(page: Fetched, soup: Any) -> tuple[str, str] | None:
     return None
 
 
+#: Indeed's page data flag. The visible "This job has expired on Indeed" sentence is no marker:
+#: it sits in the translation dictionary of every Indeed page, open or not.
+_INDEED_EXPIRED = re.compile(r'"isJobExpired"\s*:\s*(true|false)')
+
+
+def _indeed(page: Fetched, soup: Any) -> tuple[str, str] | None:
+    """Indeed serves an expired posting as 200; its embedded page data says ``isJobExpired``."""
+    found = _INDEED_EXPIRED.search(page.text or "")
+    if found is None:
+        return None
+    return ("closed", "Indeed: job expired") if found.group(1) == "true" else ("open", f"HTTP {page.status}")
+
+
 #: Source name → its own detector. A detector reads a 2xx page (the fetch and its parsed soup)
 #: and returns ``(status, reason)``, or None for no opinion. Add a source here when its pages
 #: show a closed state the generic :data:`CLOSED_MARKERS` miss.
-DETECTORS: dict[str, Callable[[Fetched, Any], tuple[str, str] | None]] = {"linkedin": _linkedin}
+DETECTORS: dict[str, Callable[[Fetched, Any], tuple[str, str] | None]] = {
+    "linkedin": _linkedin,
+    "indeed": _indeed,
+}
 
 
 def classify(job: Job, page: Fetched) -> LivenessCheck:

@@ -1074,3 +1074,20 @@ def test_liveness_can_be_read_for_a_few_jobs(store):
     store.save_liveness([_check("a", "closed", 15), _check("b", "gone", 15, "HTTP 404")])
     assert set(store.liveness(["b", "zzz"])) == {"b"}
     assert store.liveness([]) == {}
+
+
+def test_a_readonly_copy_from_before_liveness_checks_reads_as_never_checked(tmp_path):
+    """A served copy published before the liveness table existed must not break the web UI."""
+    path = tmp_path / "old.db"
+    Store(path).close()
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE liveness_checks")
+    conn.commit()
+    conn.close()
+    store = Store(path, readonly=True)
+    try:
+        assert store.liveness() == {}
+        assert store.liveness(["a"]) == {}
+        assert store.liveness_history("a") == []
+    finally:
+        store.close()

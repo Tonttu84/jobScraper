@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from jobscraper.ai.prompts import PROMPT_VERSION
 from jobscraper.facets import FACETS_VERSION, compute_all
-from jobscraper.models import AIVerdict, Decision, FilterResult, Job
+from jobscraper.models import AIVerdict, Decision, FilterResult, Job, LivenessCheck
 from jobscraper.report import build_snapshot
 from jobscraper.store import Store
 from jobscraper.web.app import create_app
@@ -950,6 +950,170 @@ def test_scored_at_is_the_newest_verdict_of_the_ai_stages(tmp_path):
     assert items[jobs["rev"].id]["scored_at"] is None  # the rule-review leftover was never scored
 
 
+# ------------------------------------------------- a page check outweighs a missed scrape
+
+#: Start of the 2026-10-17 teamtailor scrape in ``_seed_stale`` (the clock's first tick).
+MISSING_RUN = datetime(2026, 10, 17, 6, 0, 1, tzinfo=UTC)
+
+
+def _check(job: Job, status: str, when: datetime, reason: str = "HTTP 200",
+           http_status: int | None = 200) -> LivenessCheck:
+    return LivenessCheck(job_id=job.id, status=status, reason=reason, checked_at=when,
+                         http_status=http_status)
+
+
+def _with_checks(db_path, checks: list[LivenessCheck]) -> None:
+    store = Store(db_path)
+    store.save_liveness(checks)
+    store.close()
+
+
+def _items(db_path) -> dict[str, dict]:
+    with TestClient(create_app(db_path)) as client:
+        return {i["id"]: i for i in client.get("/api/jobs").json()["items"]}
+
+
+def _detail(db_path, job: Job) -> dict:
+    with TestClient(create_app(db_path)) as client:
+        return client.get(f"/api/jobs/{job.id}").json()
+
+
+def _seed_checked(db_path) -> dict[str, Job]:
+    """The seeded jobs stored on 2026-10-12; the 2026-10-17 teamtailor scrape returned ``web``
+    and ``cpp`` only. ``py``'s page was found open after that scrape (then a 403), ``rev``'s only
+    the day before it; ``web``, which the scrape did return, was found open too."""
+    with _clock("2026-10-12T08:00:00+00:00"):
+        jobs = _seed(db_path)
+    with _clock("2026-10-17T06:00:00+00:00"):
+        store = Store(db_path)
+        run_id = store.start_run("teamtailor")
+        store.upsert_jobs([jobs["web"], jobs["cpp"]], run_id)
+        store.finish_run(run_id, fetched=2, new=0)
+        store.close()
+    _with_checks(db_path, [
+        _check(jobs["py"], "open", datetime(2026, 10, 17, 9, tzinfo=UTC)),
+        _check(jobs["py"], "unknown", datetime(2026, 10, 17, 12, tzinfo=UTC), reason="HTTP 403",
+               http_status=403),
+        _check(jobs["rev"], "open", datetime(2026, 10, 16, 9, tzinfo=UTC)),
+        _check(jobs["web"], "open", datetime(2026, 10, 17, 9, tzinfo=UTC)),
+    ])
+    return jobs
+
+
+def test_the_checked_seed_has_one_confirmed_and_one_unconfirmed_missing_job(tmp_path):
+    jobs = _seed_checked(tmp_path / "t.db")
+    items = _items(tmp_path / "t.db")
+    assert [items[jobs[h].id]["stale"] for h in ("py", "rev", "web", "cpp")] == [False, True, False, False]
+    assert items[jobs["py"].id]["missing_since_run"] and items[jobs["rev"].id]["missing_since_run"]
+
+
+def test_a_missing_job_without_a_page_check_is_stale(tmp_path):
+    jobs = _seed_stale(tmp_path / "t.db")
+    items = _items(tmp_path / "t.db")
+    py = items[jobs["py"].id]
+    assert py["stale"] is True
+    assert py["checked_open_at"] is None
+    for handle in ("web", "cpp", "rev"):  # the scrape brought these back
+        assert items[jobs[handle].id]["stale"] is False
+
+
+def test_an_open_check_after_the_missed_scrape_clears_stale(tmp_path):
+    """LinkedIn and Indeed are searches: a day's search missing a posting is common, and the
+    posting's own page saying it is open is the stronger signal."""
+    db = tmp_path / "t.db"
+    jobs = _seed_stale(db)
+    later = datetime(2026, 10, 17, 9, 30, tzinfo=UTC)
+    _with_checks(db, [_check(jobs["py"], "open", later)])
+    py = _items(db)[jobs["py"].id]
+    assert py["stale"] is False
+    assert _when(py["checked_open_at"]) == later
+    assert _when(py["missing_since_run"]) == MISSING_RUN  # still reported as it is
+
+
+def test_an_open_check_at_the_scrapes_start_counts_as_after_it(tmp_path):
+    db = tmp_path / "t.db"
+    jobs = _seed_stale(db)
+    _with_checks(db, [_check(jobs["py"], "open", MISSING_RUN)])
+    assert _items(db)[jobs["py"].id]["stale"] is False
+
+
+def test_an_open_check_older_than_the_missed_scrape_leaves_it_stale(tmp_path):
+    db = tmp_path / "t.db"
+    jobs = _seed_stale(db)
+    earlier = datetime(2026, 10, 16, 12, tzinfo=UTC)
+    _with_checks(db, [_check(jobs["py"], "open", earlier)])
+    py = _items(db)[jobs["py"].id]
+    assert py["stale"] is True
+    assert _when(py["checked_open_at"]) == earlier
+
+
+def test_an_unknown_check_does_not_clear_stale(tmp_path):
+    db = tmp_path / "t.db"
+    jobs = _seed_stale(db)
+    _with_checks(db, [_check(jobs["py"], "unknown", datetime(2026, 10, 17, 9, tzinfo=UTC),
+                             reason="HTTP 403", http_status=403)])
+    py = _items(db)[jobs["py"].id]
+    assert py["stale"] is True
+    assert py["checked_open_at"] is None
+
+
+def test_a_closed_check_after_an_open_one_is_not_checked_open(tmp_path):
+    db = tmp_path / "t.db"
+    jobs = _seed_stale(db)
+    _with_checks(db, [_check(jobs["py"], "open", datetime(2026, 10, 17, 8, tzinfo=UTC)),
+                      _check(jobs["py"], "closed", datetime(2026, 10, 17, 9, tzinfo=UTC),
+                             reason="LinkedIn: no longer accepting applications")])
+    py = _items(db)[jobs["py"].id]
+    assert py["checked_open_at"] is None
+    assert py["stale"] is True
+
+
+def test_a_job_the_scrape_returned_is_never_stale_open_check_or_not(tmp_path):
+    db = tmp_path / "t.db"
+    jobs = _seed_stale(db)
+    when = datetime(2026, 10, 17, 9, tzinfo=UTC)
+    _with_checks(db, [_check(jobs["web"], "open", when)])
+    web = _items(db)[jobs["web"].id]
+    assert web["stale"] is False
+    assert _when(web["checked_open_at"]) == when
+
+
+def test_the_detail_carries_a_newer_inconclusive_check(tmp_path):
+    db = tmp_path / "t.db"
+    jobs = _seed_stale(db)
+    opened, refused = datetime(2026, 10, 17, 8, tzinfo=UTC), datetime(2026, 10, 17, 9, tzinfo=UTC)
+    _with_checks(db, [_check(jobs["py"], "open", opened),
+                      _check(jobs["py"], "unknown", refused, reason="HTTP 403", http_status=403)])
+    detail = _detail(db, jobs["py"])
+    assert _when(detail["checked_open_at"]) == opened
+    assert detail["stale"] is False
+    last = detail["last_check"]
+    assert last["status"] == "unknown" and last["reason"] == "HTTP 403"
+    assert _when(last["checked_at"]) == refused
+
+
+def test_the_detail_carries_a_closed_check_when_there_is_no_open_one(tmp_path):
+    db = tmp_path / "t.db"
+    jobs = _seed_stale(db)
+    _with_checks(db, [_check(jobs["py"], "gone", datetime(2026, 10, 17, 9, tzinfo=UTC),
+                             reason="HTTP 404", http_status=404)])
+    detail = _detail(db, jobs["py"])
+    assert detail["checked_open_at"] is None
+    assert detail["last_check"]["status"] == "gone"
+
+
+def test_the_detail_has_no_last_check_when_the_open_check_is_the_latest(tmp_path):
+    db = tmp_path / "t.db"
+    jobs = _seed_stale(db)
+    _with_checks(db, [_check(jobs["py"], "unknown", datetime(2026, 10, 17, 8, tzinfo=UTC),
+                             reason="HTTP 429", http_status=429),
+                      _check(jobs["py"], "open", datetime(2026, 10, 17, 9, tzinfo=UTC))])
+    detail = _detail(db, jobs["py"])
+    assert detail["checked_open_at"] is not None
+    assert detail["last_check"] is None
+    assert _detail(db, jobs["web"])["last_check"] is None  # never checked at all
+
+
 def test_a_job_outside_the_report_still_carries_its_dates(seeded, tmp_path):
     client, _jobs = seeded
     store = Store(tmp_path / "t.db")
@@ -959,3 +1123,4 @@ def test_a_job_outside_the_report_still_carries_its_dates(seeded, tmp_path):
     detail = client.get(f"/api/jobs/{extra.id}").json()
     assert detail["first_seen"] and detail["last_seen"]
     assert detail["scored_at"] is None and detail["missing_since_run"] is None
+    assert detail["stale"] is False and detail["checked_open_at"] is None

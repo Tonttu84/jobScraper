@@ -645,6 +645,10 @@ rubric_mismatch notes in the health appendix are mostly this, not noise.
   `closed`, not sampled as a sentinel), `check-live` re-filters at once so the report, queue,
   shortlist and web UI lose the job, and `tailor` refuses it. `run` checks right before
   `report`; both `ai_batches.py` hydrations record a closed page they fetch.
+  Follow-up: the web UI's amber "not in the <date> scrape" tag (72 of the top 200; Arm #3 carried
+  it though its page checked open) now defers to an open page check dated at or after that scrape
+  (`JobView.stale`; a grey "checked open <date>" tag instead), and Indeed pages are read by their
+  embedded `"isJobExpired":true|false` flag, never the "This job has expired" i18n string.
 
 ## Tailored CV (started 2026-10-14)
 Goal: a CV customised per job, built by *selecting* pre-written parts, never by writing text, so

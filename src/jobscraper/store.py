@@ -307,6 +307,8 @@ class Store:
         # A read-only copy without a sidecar is never migrated: its decisions may lack reasons.
         schema = "dec" if decisions_path is not None else "main"
         self._decision_reasons = "reasons" in self._columns(schema, "decisions")
+        # Same for a copy published before liveness checks existed: it reads as never checked.
+        self._liveness_table = bool(self._columns("main", "liveness_checks"))
 
     def _migrate(self) -> None:
         """Add the columns ``CREATE TABLE IF NOT EXISTS`` cannot add to a table that exists.
@@ -741,6 +743,8 @@ class Store:
         is absent here.
         """
         sql, args = "SELECT * FROM liveness_checks WHERE status != 'unknown'", []
+        if not self._liveness_table:
+            return {}
         if job_ids is not None:
             if not job_ids:
                 return {}
@@ -751,7 +755,9 @@ class Store:
 
     def liveness_history(self, job_id: str) -> list[LivenessCheck]:
         """Every check of one job, unknown ones included, oldest first."""
-        rows = self.conn.execute("SELECT * FROM liveness_checks WHERE job_id=? ORDER BY checked_at, id",
+        if not self._liveness_table:
+            return []
+        rows =self.conn.execute("SELECT * FROM liveness_checks WHERE job_id=? ORDER BY checked_at, id",
                                  (job_id,))
         return [self._liveness(r) for r in rows]
 

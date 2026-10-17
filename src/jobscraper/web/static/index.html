@@ -438,11 +438,17 @@ function cardHtml(job) {
     tags += '<span class="tag urgent">' + esc(closes) + "</span>";
   }
   if (job.evergreen) { tags += '<span class="tag evergreen">evergreen advert</span>'; }
-  if (job.missing_since_run) {
+  // A search source often leaves an open posting out of a day's search: the server marks the
+  // job stale only when no page check at or after that scrape found it open.
+  if (job.stale) {
     var scrape = dateText(job.missing_since_run);
     tags += '<span class="tag stale" title="' + esc("the " + job.source + " scrape of " + scrape +
       " did not return this posting; it may be closed — check before applying") + '">' +
       esc("not in the " + scrape + " scrape") + "</span>";
+  } else if (job.missing_since_run && job.checked_open_at) {
+    var checked = dateText(job.checked_open_at);
+    tags += '<span class="tag checked" title="' + esc("the posting page was fetched on " + checked +
+      " and is still open") + '">' + esc("checked open " + checked) + "</span>";
   }
   var line = [job.company, job.location_raw, job.remote, job.source,
               "posted " + dateText(job.posted_at),
@@ -568,12 +574,18 @@ function toggleReason(card, chip) {
   }
 }
 
-// When the pipeline first and last saw the posting and when the AI last scored it.
+// When the pipeline first and last saw the posting, when the AI last scored it, and what the
+// posting's own page said when it was last fetched.
 function datesHtml(job) {
   var facts = ["first seen " + dateText(job.first_seen), "last seen " + dateText(job.last_seen)];
   if (job.scored_at) { facts.push("scored " + dateText(job.scored_at)); }
   if (job.missing_since_run) {
     facts.push("not in the " + job.source + " scrape of " + dateText(job.missing_since_run));
+  }
+  if (job.checked_open_at) { facts.push("checked open " + dateText(job.checked_open_at)); }
+  if (job.last_check) {
+    facts.push("check " + dateText(job.last_check.checked_at) + ": " + job.last_check.status +
+      " (" + job.last_check.reason + ")");
   }
   return '<h4>Dates</h4><div class="dates">' + esc(facts.join(" · ")) + "</div>";
 }

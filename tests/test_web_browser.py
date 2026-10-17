@@ -18,6 +18,7 @@ import uvicorn
 from test_web import (  # tests/ is on sys.path (no package)
     _seed,
     _seed_calibrated,
+    _seed_checked,
     _seed_stale,
     make_verdict,
 )
@@ -1172,3 +1173,61 @@ def test_the_detail_lists_first_seen_last_seen_and_scored(stale_page, stale_site
     expect(dates).to_contain_text("last seen 2026-10-12")
     expect(dates).to_contain_text("scored ")
     expect(dates).to_contain_text("not in the teamtailor scrape of 2026-10-17")
+
+
+# ------------------------------------------------- a page check outweighs a missed scrape
+
+
+@pytest.fixture
+def checked_site(tmp_path):
+    """``py`` and ``rev`` missed the 2026-10-17 scrape; only ``py``'s page was found open after it."""
+    db = tmp_path / "jobs.db"
+    jobs = _seed_checked(db)
+    with _serving(create_app(db, languages=["en", "pt"])) as base_url:
+        yield base_url, jobs
+
+
+@pytest.fixture
+def checked_page(browser, checked_site):
+    with _visiting(browser, checked_site[0]) as page:
+        yield page
+
+
+def test_a_missing_job_confirmed_open_shows_a_grey_checked_tag_not_the_amber_one(checked_page,
+                                                                                 checked_site):
+    _, jobs = checked_site
+    py = card(checked_page, jobs["py"])
+    expect(py.locator(".tag.stale")).to_have_count(0)
+    tag = py.locator(".tag.checked")
+    expect(tag).to_have_text("checked open 2026-10-17")
+    expect(tag).to_have_attribute(
+        "title", "the posting page was fetched on 2026-10-17 and is still open")
+    plain = py.locator("[class='tag']").first.evaluate(
+        "el => getComputedStyle(el).color")
+    assert tag.evaluate("el => getComputedStyle(el).color") == plain  # neutral, like a plain tag
+
+
+def test_a_missing_job_checked_only_before_the_scrape_keeps_the_amber_tag(checked_page, checked_site):
+    _, jobs = checked_site
+    rev = card(checked_page, jobs["rev"])
+    expect(rev.locator(".tag.stale")).to_have_text("not in the 2026-10-17 scrape")
+    expect(rev.locator(".tag.checked")).to_have_count(0)
+
+
+def test_a_job_checked_open_but_never_missing_keeps_a_quiet_card(checked_page, checked_site):
+    _, jobs = checked_site
+    web = card(checked_page, jobs["web"])
+    expect(web.locator(".tag.checked")).to_have_count(0)
+    expect(web.locator(".tag.stale")).to_have_count(0)
+    web.locator(".meta").click()
+    expect(web.locator(".detail .dates")).to_contain_text("checked open 2026-10-17")
+
+
+def test_the_detail_lists_the_open_check_and_a_newer_inconclusive_one(checked_page, checked_site):
+    _, jobs = checked_site
+    py = card(checked_page, jobs["py"])
+    py.locator(".meta").click()
+    dates = py.locator(".detail .dates")
+    expect(dates).to_contain_text("not in the teamtailor scrape of 2026-10-17")
+    expect(dates).to_contain_text("checked open 2026-10-17")
+    expect(dates).to_contain_text("check 2026-10-17: unknown (HTTP 403)")
