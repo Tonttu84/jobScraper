@@ -15,7 +15,12 @@ from contextlib import contextmanager
 
 import pytest
 import uvicorn
-from test_web import _seed, _seed_calibrated, make_verdict  # tests/ is on sys.path (no package)
+from test_web import (  # tests/ is on sys.path (no package)
+    _seed,
+    _seed_calibrated,
+    _seed_stale,
+    make_verdict,
+)
 
 from jobscraper.store import Store
 from jobscraper.web.app import create_app
@@ -1103,3 +1108,67 @@ def test_without_a_cv_parts_library_there_is_no_tailor_cv_button(page, site):
     _, jobs = site
     expect(card(page, jobs["web"]).locator("button.act")).not_to_have_count(0)
     expect(page.locator("button.tailor")).to_have_count(0)
+
+
+# ------------------------------------------------------- seen, scored, missing from a scrape
+
+
+@pytest.fixture
+def stale_site(tmp_path):
+    """The seeded jobs stored on 2026-10-12; the 2026-10-17 scrape returned all but ``py``."""
+    db = tmp_path / "jobs.db"
+    jobs = _seed_stale(db)
+    with _serving(create_app(db, languages=["en", "pt"])) as base_url:
+        yield base_url, jobs
+
+
+@pytest.fixture
+def stale_page(browser, stale_site):
+    with _visiting(browser, stale_site[0]) as page:
+        yield page
+
+
+def test_a_card_says_when_it_was_last_seen_and_scored(stale_page, stale_site):
+    _, jobs = stale_site
+    web = card(stale_page, jobs["web"]).locator(".meta")
+    expect(web).to_contain_text("posted 2026-09-01")
+    expect(web).to_contain_text("seen 2026-10-17")
+    expect(web).to_contain_text("scored ")
+    expect(card(stale_page, jobs["py"]).locator(".meta")).to_contain_text("seen 2026-10-12")
+    # the rule-review leftover was never scored, so it does not say so
+    expect(card(stale_page, jobs["rev"]).locator(".meta")).not_to_contain_text("scored")
+
+
+def test_a_job_the_latest_scrape_did_not_return_wears_an_amber_tag(stale_page, stale_site):
+    _, jobs = stale_site
+    tag = card(stale_page, jobs["py"]).locator(".tag.stale")
+    expect(tag).to_have_text("not in the 2026-10-17 scrape")
+    expect(tag).to_have_attribute(
+        "title", "the teamtailor scrape of 2026-10-17 did not return this posting; "
+                 "it may be closed — check before applying")
+    color = tag.evaluate("el => getComputedStyle(el).color")
+    urgent = card(stale_page, jobs["rev"]).locator(".tag.urgent").evaluate(
+        "el => getComputedStyle(el).color")
+    assert color != urgent  # amber, told apart from the orange closing-date tag
+    for handle in ("web", "rev"):
+        expect(card(stale_page, jobs[handle]).locator(".tag.stale")).to_have_count(0)
+
+
+def test_a_stale_card_keeps_its_action_row_on_one_line(stale_page, stale_site):
+    _, jobs = stale_site
+    row = card(stale_page, jobs["py"]).locator(".actions")
+    box = row.bounding_box()
+    note = row.locator("input.note").bounding_box()
+    assert box is not None and note is not None
+    assert box["height"] < note["height"] + 12, f"action row wrapped: {box['height']}px"
+
+
+def test_the_detail_lists_first_seen_last_seen_and_scored(stale_page, stale_site):
+    _, jobs = stale_site
+    py = card(stale_page, jobs["py"])
+    py.locator(".meta").click()
+    dates = py.locator(".detail .dates")
+    expect(dates).to_contain_text("first seen 2026-10-12")
+    expect(dates).to_contain_text("last seen 2026-10-12")
+    expect(dates).to_contain_text("scored ")
+    expect(dates).to_contain_text("not in the teamtailor scrape of 2026-10-17")

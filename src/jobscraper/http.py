@@ -16,7 +16,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
 import httpx
@@ -42,6 +42,19 @@ class SourceHTTPError(RuntimeError):
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
         self.status = status
+
+
+class Fetched(NamedTuple):
+    """One page fetch that cannot raise: where it landed, its status and text, or the error.
+
+    ``url`` is the final URL after redirects (the asked one when the fetch failed); ``status`` is
+    None exactly when ``error`` says why there was no response at all.
+    """
+
+    url: str
+    status: int | None
+    text: str = ""
+    error: str | None = None
 
 
 class Http:
@@ -183,6 +196,19 @@ def _raise_for_status(resp: httpx.Response) -> None:
         if resp.status_code == 403 and "cloudflare" in resp.text.lower():
             hint = BROWSER_HINT
         raise SourceHTTPError(f"{resp.request.method} {resp.request.url} -> HTTP {resp.status_code}{hint}", resp.status_code)
+
+
+def try_get(http: Http, url: str) -> Fetched:
+    """GET ``url`` through ``http`` (delay, retries, redirects followed) and never raise.
+
+    For callers to whom a failed fetch is an answer rather than an error: a description top-up,
+    a liveness check. An HTTP error status is returned as it is, not raised.
+    """
+    try:
+        resp = http.get(url)
+    except Exception as exc:  # the contract is "never raises"
+        return Fetched(url=url, status=None, error=f"{type(exc).__name__}: {exc}")
+    return Fetched(url=str(resp.url), status=resp.status_code, text=resp.text)
 
 
 def strip_html(html: str | None) -> str | None:

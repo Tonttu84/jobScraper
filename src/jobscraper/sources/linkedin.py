@@ -34,7 +34,7 @@ from typing import Any
 import pandas as pd
 from jobspy import scrape_jobs
 
-from jobscraper.http import Http, strip_html
+from jobscraper.http import Fetched, Http, strip_html, try_get
 from jobscraper.models import Job
 from jobscraper.sources._common import guess_country, guess_remote, parse_date
 from jobscraper.sources.base import SourceContext, register, safe_records
@@ -233,24 +233,42 @@ def parse_description(html: str | None) -> str | None:
     return None
 
 
-def fetch_description(http: Http, url: str) -> str | None:
-    """Read one posting's description from the public guest page. Never raises."""
+def is_walled(landed: str) -> bool:
+    """True when a request for a job page landed on a login wall instead (see WALLED_PATHS)."""
+    return any(path in landed.lower() for path in WALLED_PATHS)
+
+
+def fetch_page(http: Http, url: str | None) -> Fetched | None:
+    """The guest page for one LinkedIn job URL, or None when ``url`` is not one. Never raises.
+
+    The single LinkedIn page fetch: description hydration and the liveness check
+    (:mod:`jobscraper.liveness`) both read what this returns, so one request serves both.
+    """
     target = guest_url(url)
     if not target:
         return None
-    try:
-        resp = http.get(target)
-    except Exception as exc:  # a missing description is never worth failing a run over
-        log.warning("%s: description fetch for %s failed: %s", NAME, target, exc)
+    page = try_get(http, target)
+    if page.error is not None:  # a missing description is never worth failing a run over
+        log.warning("%s: page fetch for %s failed: %s", NAME, target, page.error)
+    return page
+
+
+def page_description(page: Fetched | None) -> str | None:
+    """The posting body on a fetched guest page, or None (no page, an error, a wall, no block)."""
+    if page is None or page.status is None:
         return None
-    if resp.status_code >= 400:
-        log.warning("%s: description fetch for %s -> HTTP %s", NAME, target, resp.status_code)
+    if page.status >= 400:
+        log.warning("%s: description fetch for %s -> HTTP %s", NAME, page.url, page.status)
         return None
-    landed = str(resp.url).lower()
-    if any(path in landed for path in WALLED_PATHS):
-        log.warning("%s: description fetch for %s hit a login wall (%s)", NAME, target, resp.url)
+    if is_walled(page.url):
+        log.warning("%s: description fetch hit a login wall (%s)", NAME, page.url)
         return None
-    text = parse_description(resp.text)
+    text = parse_description(page.text)
     if text is None:
-        log.info("%s: no description block on %s", NAME, target)
+        log.info("%s: no description block on %s", NAME, page.url)
     return text
+
+
+def fetch_description(http: Http, url: str) -> str | None:
+    """Read one posting's description from the public guest page. Never raises."""
+    return page_description(fetch_page(http, url))

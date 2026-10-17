@@ -60,6 +60,9 @@
   .tag.req { border-color: #fca5a5; color: #b91c1c; background: #fef2f2; }
   /* A closing date within the week: a deadline the reader has to act on, not a property of the job. */
   .tag.urgent { border-color: #fdba74; color: #c2410c; background: #fff7ed; }
+  /* The latest scrape of the source did not return the posting: it may be closed. Amber, not the
+     closing-date orange: a reason to check the posting, not a deadline. */
+  .tag.stale { border-color: #fcd34d; color: #92400e; background: #fffbeb; }
   /* Not a live vacancy. Deliberately grey: a caveat to read, not an alarm to act on. */
   .tag.evergreen { border-color: #d4d4d8; color: #52525b; background: #f4f4f5; }
   .card {
@@ -435,8 +438,16 @@ function cardHtml(job) {
     tags += '<span class="tag urgent">' + esc(closes) + "</span>";
   }
   if (job.evergreen) { tags += '<span class="tag evergreen">evergreen advert</span>'; }
+  if (job.missing_since_run) {
+    var scrape = dateText(job.missing_since_run);
+    tags += '<span class="tag stale" title="' + esc("the " + job.source + " scrape of " + scrape +
+      " did not return this posting; it may be closed — check before applying") + '">' +
+      esc("not in the " + scrape + " scrape") + "</span>";
+  }
   var line = [job.company, job.location_raw, job.remote, job.source,
-              "posted " + dateText(job.posted_at), closes]
+              "posted " + dateText(job.posted_at),
+              job.last_seen ? "seen " + dateText(job.last_seen) : "",
+              job.scored_at ? "scored " + dateText(job.scored_at) : "", closes]
     .filter(function (part) { return part; }).map(esc).join(" · ");
   var decision = job.decision
     ? '<span class="badge">' + esc(job.decision.status) + "</span>" : "";
@@ -557,8 +568,18 @@ function toggleReason(card, chip) {
   }
 }
 
+// When the pipeline first and last saw the posting and when the AI last scored it.
+function datesHtml(job) {
+  var facts = ["first seen " + dateText(job.first_seen), "last seen " + dateText(job.last_seen)];
+  if (job.scored_at) { facts.push("scored " + dateText(job.scored_at)); }
+  if (job.missing_since_run) {
+    facts.push("not in the " + job.source + " scrape of " + dateText(job.missing_since_run));
+  }
+  return '<h4>Dates</h4><div class="dates">' + esc(facts.join(" · ")) + "</div>";
+}
+
 function detailHtml(job) {
-  var parts = [];
+  var parts = [datesHtml(job)];
   // The refine pass saw the whole shortlist at once, so its verdict is the more specific one.
   if (job.refine) {
     var place = job.refine.position

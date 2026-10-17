@@ -51,6 +51,8 @@ EXAMPLES = [
     ("posting is 45 days old (max 30)", "too_old"),
     ("application deadline passed on 2026-09-01", "deadline_passed"),
     ("duplicate of 16af2ba071e7fe11", "duplicate"),
+    ("posting closed (checked 2026-10-17)", "closed"),
+    ("posting gone (HTTP 404, checked 2026-10-17)", "closed"),
 ]
 
 
@@ -74,6 +76,19 @@ def test_every_drop_reason_in_rules_py_has_a_category() -> None:
         example = re.sub(r"\{[^{}]*!r\}", "'X'", template)
         example = re.sub(r"\{[^{}]*\}", "7", example)
         assert reason_category(example) != "other", f"no category for {template!r} ({example!r})"
+
+
+def test_the_liveness_reasons_have_a_category() -> None:
+    """Built by ``rules.liveness_reason`` rather than inline, so the template scan cannot see them."""
+    from datetime import UTC, datetime
+
+    from jobscraper.filters.rules import liveness_reason
+    from jobscraper.models import LivenessCheck
+
+    when = datetime(2026, 10, 17, tzinfo=UTC)
+    for status, reason in (("closed", "LinkedIn: no longer accepting applications"), ("gone", "HTTP 404")):
+        built = liveness_reason(LivenessCheck(job_id="x", status=status, reason=reason, checked_at=when))
+        assert built is not None and reason_category(built) == "closed", built
 
 
 def test_the_duplicate_reason_built_by_the_cli_has_a_category() -> None:

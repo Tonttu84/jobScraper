@@ -19,6 +19,7 @@ from jobscraper.models import (
     FilterResult,
     Job,
     JobFacets,
+    LivenessCheck,
     ReportItem,
     ReportSnapshot,
     RunNote,
@@ -154,6 +155,18 @@ CREATE TABLE IF NOT EXISTS cv_tailorings (
     data TEXT NOT NULL,
     PRIMARY KEY (job_id, cache_key)
 );
+
+-- What each posting's own page said when it was fetched (see jobscraper.liveness). Append-only:
+-- Store.liveness reads the latest conclusive check per job.
+CREATE TABLE IF NOT EXISTS liveness_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    checked_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    http_status INTEGER
+);
+CREATE INDEX IF NOT EXISTS liveness_checks_job ON liveness_checks(job_id, checked_at);
 """
 
 
@@ -184,10 +197,11 @@ def _now() -> str:
 
 
 def _read_job(row: sqlite3.Row) -> Job:
-    """A stored job, with ``first_seen`` taken from its column: the column is the truth, and
-    whatever the ``data`` JSON may carry (an older write) is overwritten."""
+    """A stored job, with ``first_seen`` and ``last_seen`` taken from their columns: the columns
+    are the truth, and whatever the ``data`` JSON may carry (an older write) is overwritten."""
     job = Job.model_validate_json(row["data"])
     job.first_seen = datetime.fromisoformat(row["first_seen"]) if row["first_seen"] else None
+    job.last_seen = datetime.fromisoformat(row["last_seen"]) if row["last_seen"] else None
     return job
 
 
@@ -359,7 +373,7 @@ class Store:
         return new
 
     def jobs(self, *, source: str | None = None, seen_within_days: int | None = None, ids: list[str] | None = None) -> list[Job]:
-        sql, args = "SELECT data, first_seen FROM jobs", []
+        sql, args = "SELECT data, first_seen, last_seen FROM jobs", []
         clauses = []
         if source:
             clauses.append("source=?")
@@ -689,6 +703,57 @@ class Store:
             " ORDER BY r.source"
         )
         return [dict(r) for r in rows]
+
+    def last_scrape_starts(self) -> dict[str, datetime]:
+        """When the newest scrape of each source that brought postings back started.
+
+        A run that failed, came back empty or is still going (``fetched`` reads 0 until it
+        finishes) says nothing about what the board lists, so it is not the one a posting's
+        ``last_seen`` is held against (the web UI's "not in the <date> scrape" tag).
+        """
+        rows = self.conn.execute(
+            "SELECT source, MAX(started_at) AS started_at FROM runs"
+            " WHERE error IS NULL AND fetched > 0 GROUP BY source"
+        )
+        return {r["source"]: datetime.fromisoformat(r["started_at"]) for r in rows}
+
+    # -------------------------------------------------------- liveness checks
+    def save_liveness(self, checks: Sequence[LivenessCheck]) -> None:
+        """Append each check; nothing is overwritten, so a posting's history stays readable."""
+        with self.tx() as c:
+            c.executemany(
+                "INSERT INTO liveness_checks (job_id, checked_at, status, reason, http_status)"
+                " VALUES (?,?,?,?,?)",
+                [(ch.job_id, ch.checked_at.astimezone(UTC).isoformat(), ch.status, ch.reason,
+                  ch.http_status) for ch in checks])
+
+    @staticmethod
+    def _liveness(row: sqlite3.Row) -> LivenessCheck:
+        return LivenessCheck(job_id=row["job_id"], status=row["status"], reason=row["reason"],
+                             checked_at=datetime.fromisoformat(row["checked_at"]),
+                             http_status=row["http_status"])
+
+    def liveness(self, job_ids: Sequence[str] | None = None) -> dict[str, LivenessCheck]:
+        """The latest *conclusive* check per job (``job_ids``: just those).
+
+        An ``unknown`` check — a throttled or failed fetch — says nothing about the posting, so
+        it never replaces an earlier open/closed/gone answer, and a job with only unknown checks
+        is absent here.
+        """
+        sql, args = "SELECT * FROM liveness_checks WHERE status != 'unknown'", []
+        if job_ids is not None:
+            if not job_ids:
+                return {}
+            sql += f" AND job_id IN ({','.join('?' * len(job_ids))})"
+            args.extend(job_ids)
+        return {row["job_id"]: self._liveness(row)  # ordered, so the latest wins
+                for row in self.conn.execute(sql + " ORDER BY checked_at, id", args)}
+
+    def liveness_history(self, job_id: str) -> list[LivenessCheck]:
+        """Every check of one job, unknown ones included, oldest first."""
+        rows = self.conn.execute("SELECT * FROM liveness_checks WHERE job_id=? ORDER BY checked_at, id",
+                                 (job_id,))
+        return [self._liveness(r) for r in rows]
 
     # -------------------------------------------------------------- run notes
     def add_note(self, stage: str, kind: str, message: str, *, source: str | None = None,

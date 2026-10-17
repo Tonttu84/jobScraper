@@ -58,6 +58,8 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("too_old", re.compile(r"^posting is .*days old")),
     ("deadline_passed", re.compile(r"^application deadline passed on ")),
     ("duplicate", re.compile(r"^duplicate of ")),
+    # Both page-check wordings (``rules.liveness_reason``): closed or gone, the vacancy is shut.
+    ("closed", re.compile(r"^posting (?:closed|gone) \(")),
 )
 
 #: What the owner may write in a row's ``label`` field.

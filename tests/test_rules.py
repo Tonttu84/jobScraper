@@ -979,3 +979,63 @@ def test_an_evergreen_title_signals_on_a_posting_the_rules_send_to_review(settin
 def test_an_ordinary_posting_carries_no_evergreen_signal(settings):
     job = make_job(location_raw="Helsinki, Finland", country="FI")
     assert "evergreen" not in evaluate(job, settings.profile, today=TODAY).signals
+
+
+# ------------------------------------------------------------------ liveness (check-live)
+
+
+def _live(job, status: str, reason: str = "HTTP 200"):
+    from datetime import UTC, datetime
+
+    from jobscraper.models import LivenessCheck
+
+    return LivenessCheck(job_id=job.id, status=status, reason=reason,
+                         checked_at=datetime(2026, 9, 9, 8, 30, tzinfo=UTC))
+
+
+def test_a_closed_posting_is_dropped_with_the_check_date(settings):
+    job = make_job(location_raw="Helsinki, Finland", country="FI")
+    res = evaluate(job, settings.profile, today=TODAY,
+                   liveness=_live(job, "closed", "LinkedIn: no longer accepting applications"))
+    assert res.status == "drop"
+    assert res.reasons[0] == "posting closed (checked 2026-09-09)"
+    assert res.signals["liveness"] == "closed"
+    assert res.signals["liveness_checked"] == "2026-09-09"
+
+
+def test_a_gone_posting_is_dropped_with_the_status(settings):
+    job = make_job(location_raw="Helsinki, Finland", country="FI")
+    res = evaluate(job, settings.profile, today=TODAY, liveness=_live(job, "gone", "HTTP 404"))
+    assert res.status == "drop"
+    assert res.reasons[0] == "posting gone (HTTP 404, checked 2026-09-09)"
+    assert res.signals["liveness"] == "gone"
+
+
+@pytest.mark.parametrize("status", ["open", "unknown"])
+def test_an_open_or_unknown_check_changes_nothing(settings, status):
+    job = make_job(location_raw="Helsinki, Finland", country="FI")
+    plain = evaluate(job, settings.profile, today=TODAY)
+    checked = evaluate(job, settings.profile, today=TODAY, liveness=_live(job, status))
+    assert checked == plain
+    assert plain.status == "keep"
+
+
+def test_apply_rules_takes_the_checks_by_job_id(settings, monkeypatch):
+    from jobscraper.filters import rules
+
+    monkeypatch.setattr(rules, "today_utc", lambda: TODAY)
+    closed = make_job(location_raw="Helsinki, Finland", country="FI")
+    fine = make_job(location_raw="Helsinki, Finland", country="FI")
+    results = rules.apply_rules([closed, fine], settings.profile,
+                                liveness={closed.id: _live(closed, "closed")})
+    assert [r.status for r in results] == ["drop", "keep"]
+    assert [r.status for r in rules.apply_rules([closed], settings.profile)] == ["keep"]
+
+
+def test_liveness_reason_is_none_for_open_and_unknown():
+    from jobscraper.filters.rules import liveness_reason
+
+    job = make_job()
+    assert liveness_reason(None) is None
+    assert liveness_reason(_live(job, "open")) is None
+    assert liveness_reason(_live(job, "unknown")) is None

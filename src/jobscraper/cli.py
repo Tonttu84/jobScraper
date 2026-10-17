@@ -11,9 +11,10 @@
     jobscraper rank                 # Opus pass in windows, until the top stops gaining entrants
     jobscraper refine               # one request that ranks the shortlist against itself
     jobscraper sentinel             # screen a few rule drops, rank a few screen rejects: gate checks
+    jobscraper check-live [IDS]     # fetch the report's top N pages: closed/gone postings drop out
     jobscraper report               # markdown report + JSONL export, stored in the DB
     jobscraper diff                 # what changed since the previous report (see docs/SCHEDULING.md)
-    jobscraper run                  # scrape → filter → prefilter → rank → refine → sentinel → report
+    jobscraper run                  # scrape → filter → prefilter → rank → refine → sentinel → check-live → report
     jobscraper facets               # recompute the deterministic facets (backfill an old DB)
     jobscraper serve                # web UI over data/jobs.db
     jobscraper profiles             # candidate profiles under config/profiles
@@ -56,6 +57,7 @@ from jobscraper.browser import BrowserFactory
 from jobscraper.config import load_settings
 from jobscraper.facets import compute_all
 from jobscraper.filters import RULES_VERSION, apply_rules, dedupe
+from jobscraper.filters.rules import liveness_reason
 from jobscraper.http import Http
 from jobscraper.models import Job
 from jobscraper.sources.base import (
@@ -300,7 +302,8 @@ def filter_cmd(days: int = 30, verbose: bool = typer.Option(False, "--verbose", 
     jobs = store.jobs(seen_within_days=days)
     unique, dups = dedupe(jobs, settings.profile.location, aliases=settings.company_aliases)
     borderline: list = []
-    results = apply_rules(unique, settings.profile, borderline=borderline)
+    # A posting whose own page said closed or gone (`check-live`) stays dropped on every re-filter.
+    results = apply_rules(unique, settings.profile, borderline=borderline, liveness=store.liveness())
     # A drop decided by a detection barely over the threshold is the rule filter's least certain
     # call; the report lists them so a misread language is visible (the decision stands).
     minimum = settings.profile.languages.min_confidence
@@ -821,6 +824,92 @@ def sentinel(n: int | None = None, seed: int | None = None, days: int = 30,
                   f"ranked (seed {seed}); cost ≈ {estimate_cost(spent)}", soft_wrap=True)
 
 
+def _check_live(store: Store, settings, ids: list[str]) -> None:
+    """Fetch each job's own page, store what it said, re-filter, and print the table."""
+    from rich.markup import escape
+
+    from jobscraper import liveness
+
+    by_id = {j.id: j for j in store.jobs(ids=ids)} if ids else {}
+    jobs = [by_id[i] for i in dict.fromkeys(ids) if i in by_id]
+    http = _http(settings)
+    checks = [liveness.check(http, job) for job in jobs]
+    refiltered = liveness.record(store, settings.profile, checks)
+    table = Table("job", "title", "company", "status", "reason")
+    for job, check in zip(jobs, checks):
+        # Job text and server messages may contain [brackets] rich would read as markup.
+        table.add_row(job.id[:8], escape(job.title), escape(job.company or ""), check.status,
+                      escape(check.reason))
+    console.print(table)
+    counts = {s: sum(c.status == s for c in checks) for s in ("open", "closed", "gone", "unknown")}
+    console.print(f"check-live: {len(checks)} checked: {counts['open']} open, {counts['closed']} "
+                  f"closed, {counts['gone']} gone, {counts['unknown']} unknown; "
+                  f"{len(refiltered)} re-filtered", soft_wrap=True)
+
+
+def _state_top_ids(days: int, n: int) -> list[str]:
+    """The effective top ``n`` as the database stands now: what the next report heads with."""
+    from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
+    from jobscraper.report import effective_top
+
+    store = Store()
+    try:
+        jobs, filters = _load_state(store, days)
+        ids, _edge = effective_top(jobs, filters, store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
+                                   store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS), top=n)
+        return ids
+    finally:
+        store.close()
+
+
+def _check_live_state(days: int) -> None:
+    """``run``'s check-live. The stored report there is the previous run's, so the top N is read
+    from the current state instead (:func:`_state_top_ids`)."""
+    from jobscraper.liveness import CHECK_LIVE_TOP
+
+    ids = _state_top_ids(days, CHECK_LIVE_TOP)
+    if not ids:
+        console.print("check-live: nothing ranked to check")
+        return
+    store = Store()
+    try:
+        _check_live(store, load_settings(), ids)
+    finally:
+        store.close()
+
+
+@app.command("check-live")
+def check_live(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or unique prefixes); default: the report's top N"),
+               top: int | None = typer.Option(None, "--top", min=1, help="The N best jobs of the latest stored report (default 40)"),
+               verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
+    """Fetch each job's own page and record whether the posting is still open.
+
+    Without ids: the first --top N (default 40) of the latest stored report's ranked section,
+    in report order. HTTP 404/410 is "gone"; a page showing a closed marker (LinkedIn's "No
+    longer accepting applications", SuccessFactors' "job not available") is "closed"; a failed,
+    throttled or walled-off fetch is "unknown" and never drops anything. Closed and gone
+    postings are re-filtered at once ("posting closed (checked ...)"), so the next `report`, the
+    rank queue, the refine shortlist and the web UI leave them out like any rule drop.
+    """
+    from jobscraper.liveness import CHECK_LIVE_TOP
+
+    _setup_logging(verbose)
+    settings = load_settings()
+    store = Store()
+    try:
+        if job_ids:
+            try:
+                ids = [_resolve_job_id(store, given) for given in job_ids]
+            except typer.BadParameter as exc:
+                typer.echo(f"check-live: {exc}", err=True)
+                raise typer.Exit(1) from exc
+        else:
+            ids = _top_report_ids(store, top or CHECK_LIVE_TOP, command="check-live")
+        _check_live(store, settings, ids)
+    finally:
+        store.close()
+
+
 @app.command()
 def report(days: int = 30, out: Path | None = None) -> None:
     """Write the markdown report and a JSONL export, and store the report in the database."""
@@ -1126,11 +1215,11 @@ def _interested_ids(store: Store, user: str | None) -> list[str]:
     return [d.job_id for d in store.decisions(user) if d.status == "interested"]
 
 
-def _top_report_ids(store: Store, n: int) -> list[str]:
+def _top_report_ids(store: Store, n: int, command: str = "tailor") -> list[str]:
     """The first ``n`` of the latest stored report's ranked section, in the report's order."""
     snap = store.report()
     if snap is None:
-        typer.echo(f"tailor: no report stored in {store.path.name}; run `jobscraper report` first",
+        typer.echo(f"{command}: no report stored in {store.path.name}; run `jobscraper report` first",
                    err=True)
         raise typer.Exit(1)
     ranked = sorted((i for i in snap.items if i.section == "ranked"), key=lambda i: i.position)
@@ -1264,6 +1353,8 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
         tailor_stage = Tailor(load_settings().profile, store, parts,
                               model=model or ("subagent" if import_ else None), fit=fit)
         filters, ranked = store.filter_results(), store.verdicts("rank")
+        # A vacancy whose own page says closed or gone (`check-live`) is not worth a CV.
+        live = store.liveness([j.id for j in jobs])
         out_dir = config.paths().data / "cv" / "tailored"
         for sub in ("prompts", "answers"):
             (out_dir / sub).mkdir(parents=True, exist_ok=True)
@@ -1272,6 +1363,12 @@ def tailor(job_ids: list[str] | None = typer.Argument(None, help="Job ids (or un
         for job in jobs:
             row = _TailorRow(job)
             rows.append(row)
+            dead = liveness_reason(live.get(job.id))
+            if dead is not None:
+                row.outcome, row.failed = "closed", not summary
+                if not summary:
+                    typer.echo(f"tailor: {job.id}: {dead}", err=True)
+                continue
             if skip_cached and store.latest_tailoring(job.id, tailoring_key_prefix(parts)) is not None:
                 row.outcome = "cached"
                 row.pdf = max(out_dir.glob(f"*-{job.id}.pdf"), default=None)
@@ -1418,7 +1515,7 @@ def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (
                                           help="Run the prefilter through the Message Batches API (half price, "
                                                "asynchronous; default: profile ai.prefilter_batch)")) -> None:
     """Full pipeline in a new per-run database: scrape → filter → prefilter → rank → refine →
-    sentinel (when ``ai.sentinel_sample`` > 0) → report."""
+    sentinel (when ``ai.sentinel_sample`` > 0) → check-live → report."""
     path = new_run_db(fresh=fresh)
     store_mod.DB_OVERRIDE = path
     console.print(f"run database: {path}" + ("" if fresh else " (copied forward from the previous run)"))
@@ -1429,6 +1526,9 @@ def run(names: list[str] | None = typer.Argument(None, help="Sources to scrape (
         _rank_and_refine(days=days, verbose=verbose)
         if load_settings().profile.ai.sentinel_sample > 0:
             sentinel(days=days, verbose=verbose)
+    # Verdicts are carried forward from earlier runs, and a search source never reports a
+    # takedown: the head of the report is checked against its own pages before it is written.
+    _check_live_state(days)
     report(days=days)
 
 

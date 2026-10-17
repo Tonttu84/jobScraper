@@ -33,9 +33,10 @@ from jobscraper.models import AIVerdict, FilterResult, Job
 SENTINEL_FIND_SCORE = 70
 
 #: Rule-drop reason categories (:func:`jobscraper.audit.reason_category`) that are right by
-#: construction: a posting past its age limit or its own closing date. A drop with only these
-#: reasons is left out of the rule-drop pool, since sampling it would only dilute the estimate.
-STALE_REASON_CATEGORIES = frozenset({"too_old", "deadline_passed"})
+#: construction: a posting past its age limit or its own closing date, or one whose page says it
+#: is closed or gone (``check-live``). A drop with only these reasons is left out of the
+#: rule-drop pool, since sampling it would only dilute the estimate.
+STALE_REASON_CATEGORIES = frozenset({"too_old", "deadline_passed", "closed"})
 
 
 def default_seed(today: date | None = None) -> int:
@@ -70,7 +71,7 @@ def sample_rule_drops(jobs: Iterable[Job], filters: Mapping[str, FilterResult], 
 
 
 def _stale_only(fr: FilterResult) -> bool:
-    """True when ``fr`` has reasons and all of them are age / deadline ones."""
+    """True when ``fr`` has reasons and all of them are age / deadline / closed-page ones."""
     return bool(fr.reasons) and all(reason_category(r) in STALE_REASON_CATEGORIES
                                     for r in fr.reasons)
 

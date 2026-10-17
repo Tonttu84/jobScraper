@@ -75,7 +75,7 @@ between runs and the challenge is normally solved once. Delete that directory to
 ## Daily use
 
 ```bash
-uv run jobscraper run                   # new data/runs/<timestamp>.db, then scrape → filter → prefilter → rank → report
+uv run jobscraper run                   # new data/runs/<timestamp>.db, then scrape → filter → prefilter → rank → check-live → report
 uv run jobscraper run --skip-ai         # no API calls: scrape + rules + report only
 uv run jobscraper run --fresh           # start the run from an empty database instead of copying the last one forward
 uv run jobscraper run --batch           # same pipeline with the prefilter sent through the Message Batches API
@@ -88,6 +88,7 @@ uv run jobscraper prefilter --batch           # same verdicts at half price via 
 uv run jobscraper rank                  # Opus, in windows of 15 until the top 20 stops gaining entrants (or the round budget is spent)
 uv run jobscraper rank --top 30         # or exactly the next 30 of the queue
 uv run jobscraper refine                # Fable over the effective top 20 (25 on the first pass), repeated until it is fully refined
+uv run jobscraper check-live            # fetch the report's top 40 pages; closed (LinkedIn, SuccessFactors) or 404/410 postings drop out
 uv run jobscraper report
 uv run jobscraper diff                  # what changed since the previous report — see docs/SCHEDULING.md
 uv run jobscraper stats
@@ -167,6 +168,7 @@ uv run python scripts/ai_batches.py export rank --top 60    # one window of the 
 # ask one Opus subagent per chunk: read system.txt, then anchors.txt if it is there, then the
 # chunk, and write data/exports/ai/rank/verdicts/chunk-NN.jsonl
 uv run python scripts/ai_batches.py import rank
+uv run jobscraper check-live                                # top 40 pages: closed or gone postings drop out before the report
 uv run jobscraper report
 ```
 

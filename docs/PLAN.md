@@ -635,6 +635,16 @@ Top: RUBINLAKE 89, Playback CPH 89, King 88, Eaton 87, Arm 87, ANNEA / NANCE / E
 Observed: rank agents report the rubric's weighted criteria pulling above 50 where a hard minimum
 (enrolment, years) is unmet, and they score under the weighted sum on purpose — the
 rubric_mismatch notes in the health appendix are mostly this, not noise.
+- Done 2026-10-17: closed postings. Report #14's #2 (LinkedIn 4477802497) said "No longer
+  accepting applications" but stayed in on carried-forward verdicts: a search source's absence
+  is (rightly) never a takedown, and nothing looked at the page itself. `jobscraper check-live`
+  (`jobscraper.liveness`) now fetches the report's top 40 pages: 404/410 → gone, LinkedIn's
+  `closed-job__flavor--closed` or SuccessFactors' `jobErrMsg` (any source; Atlas Copco) →
+  closed, 429/errors/login wall → unknown (never drops). Checks live in `liveness_checks`; the
+  rule filter drops on the latest conclusive one (`posting closed (checked …)`, audit category
+  `closed`, not sampled as a sentinel), `check-live` re-filters at once so the report, queue,
+  shortlist and web UI lose the job, and `tailor` refuses it. `run` checks right before
+  `report`; both `ai_batches.py` hydrations record a closed page they fetch.
 
 ## Tailored CV (started 2026-10-14)
 Goal: a CV customised per job, built by *selecting* pre-written parts, never by writing text, so

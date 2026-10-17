@@ -53,6 +53,11 @@ class Job(BaseModel):
         description="When this pipeline first stored the posting. Set by the store when it reads a "
                     "job back (from the jobs.first_seen column); never set by adapters, never serialized.",
     )
+    last_seen: datetime | None = Field(
+        None, exclude=True,
+        description="When a scrape last brought the posting back (the jobs.last_seen column); set "
+                    "by the store like first_seen, never serialized.",
+    )
 
     @property
     def id(self) -> str:
@@ -230,6 +235,25 @@ class ReportSnapshot(BaseModel):
         description="Pipeline-health notes shown in this report, per kind (see RunNote); empty "
                     "for a report written before notes existed",
     )
+
+
+LivenessStatus = Literal["open", "closed", "gone", "unknown"]
+
+
+class LivenessCheck(BaseModel):
+    """What a posting's own page said when ``jobscraper check-live`` (or a hydration) fetched it.
+
+    ``closed``: the page is up and says it takes no more applications; ``gone``: HTTP 404/410;
+    ``open``: the page is up and says nothing of the kind; ``unknown``: the fetch failed, was
+    throttled or hit a login wall — which says nothing about the posting, so it never drops one
+    (see :mod:`jobscraper.liveness`). Append-only in the store; the latest conclusive check wins.
+    """
+
+    job_id: str
+    status: LivenessStatus
+    reason: str = Field(description="Short why: 'LinkedIn: no longer accepting applications', 'HTTP 404'")
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    http_status: int | None = None
 
 
 class RunNote(BaseModel):

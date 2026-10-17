@@ -443,6 +443,49 @@ def test_export_rank_without_a_single_ranked_job_removes_a_stale_anchor_file(ran
 # are title-only. Ranking looks at ~60 jobs, so those few are topped up from the guest page.
 
 
+def _serve_descriptions(monkeypatch, fake) -> None:
+    """Route the script's LinkedIn page fetch through ``fake(http, url) -> description | None``.
+
+    A description comes back as an open guest page carrying it, None as a page without one.
+    """
+    import html
+
+    from jobscraper.http import Fetched
+
+    def fetch_page(http, url):
+        text = fake(http, url)
+        body = "" if text is None else f'<div class="show-more-less-html__markup">{html.escape(text)}</div>'
+        return Fetched(url=url, status=200, text=f"<html><body>{body}</body></html>")
+
+    monkeypatch.setattr(ai_batches, "fetch_page", fetch_page)
+
+
+def _serve_pages(monkeypatch, pages: dict[str, tuple[int, str]]) -> list[str]:
+    """Route the LinkedIn page fetch to ``{url: (status, html or fixture name)}``; returns the
+    list of URLs asked for."""
+    from jobscraper.http import Fetched
+    from tests.conftest import FIXTURES, fixture_text
+
+    asked: list[str] = []
+
+    def fetch_page(http, url):
+        asked.append(url)
+        status, body = pages[url]
+        text = fixture_text(body) if (FIXTURES / body).is_file() else body
+        return Fetched(url=url, status=status, text=text)
+
+    monkeypatch.setattr(ai_batches, "fetch_page", fetch_page)
+    return asked
+
+
+def _liveness_and_filters() -> tuple[dict, dict]:
+    store = store_mod.Store()
+    try:
+        return store.liveness(), store.filter_results()
+    finally:
+        store.close()
+
+
 def _bare(source: str, n: int, url: str) -> Job:
     """A job with no description at all — what the linkedin adapter normally yields."""
     return Job(source=source, source_id=str(n), url=url, title=f"Junior Developer {n}",
@@ -481,7 +524,7 @@ def test_export_rank_hydrates_title_only_linkedin_jobs(data_dir, monkeypatch, ca
         fetched.append(url)
         return "Go and Kubernetes, English-speaking team.\n\nApply before May."
 
-    monkeypatch.setattr(ai_batches, "fetch_description", fake_fetch)
+    _serve_descriptions(monkeypatch, fake_fetch)
 
     _run(monkeypatch, "export", "rank", "--top", "5")
 
@@ -506,7 +549,7 @@ def test_export_rank_leaves_linkedin_jobs_that_already_have_a_description(data_d
     def explode(http, url):  # pragma: no cover - must never be called
         raise AssertionError(f"refetched {url}")
 
-    monkeypatch.setattr(ai_batches, "fetch_description", explode)
+    _serve_descriptions(monkeypatch, explode)
 
     _run(monkeypatch, "export", "rank", "--top", "5")
 
@@ -524,7 +567,7 @@ def test_export_rank_caps_the_number_of_description_fetches(data_dir, monkeypatc
         fetched.append(url)
         return "Fetched description text."
 
-    monkeypatch.setattr(ai_batches, "fetch_description", fake_fetch)
+    _serve_descriptions(monkeypatch, fake_fetch)
 
     _run(monkeypatch, "export", "rank", "--top", "5", "--max-fetch", "2")
 
@@ -537,7 +580,7 @@ def test_export_rank_survives_a_description_fetch_that_comes_back_empty(data_dir
     li = _bare("linkedin", 31, "https://www.linkedin.com/jobs/view/31")
     _seed([li], ["keep"])
     _prefilter_scores([li], [90])
-    monkeypatch.setattr(ai_batches, "fetch_description", lambda http, url: None)
+    _serve_descriptions(monkeypatch, lambda http, url: None)
 
     _run(monkeypatch, "export", "rank", "--top", "5")
 
@@ -557,7 +600,7 @@ def test_export_prefilter_never_fetches_descriptions(data_dir, monkeypatch, caps
     def explode(http, url):  # pragma: no cover - must never be called
         raise AssertionError(f"fetched {url} in the prefilter stage")
 
-    monkeypatch.setattr(ai_batches, "fetch_description", explode)
+    _serve_descriptions(monkeypatch, explode)
 
     _run(monkeypatch, "export", "prefilter")
 
@@ -612,7 +655,7 @@ def test_hydrate_linkedin_logs_the_before_picture_and_clears_the_verdicts(data_d
         fetched.append(url)
         return "Go and Kubernetes, English-speaking team."
 
-    monkeypatch.setattr(ai_batches, "fetch_description", fake_fetch)
+    _serve_descriptions(monkeypatch, fake_fetch)
 
     _run(monkeypatch, "hydrate", "linkedin", "--top", "2")
 
@@ -640,7 +683,7 @@ def test_hydrate_linkedin_keeps_the_verdicts_when_the_fetch_comes_back_empty(dat
     li = _bare("linkedin", 61, "https://www.linkedin.com/jobs/view/61")
     _seed([li], ["keep"])
     _prefilter_scores([li], [90])
-    monkeypatch.setattr(ai_batches, "fetch_description", lambda http, url: None)
+    _serve_descriptions(monkeypatch, lambda http, url: None)
 
     _run(monkeypatch, "hydrate", "linkedin")
 
@@ -663,7 +706,7 @@ def test_hydrate_linkedin_honours_max_fetch_and_the_rule_filter(data_dir, monkey
         fetched.append(url)
         return "Fetched description text."
 
-    monkeypatch.setattr(ai_batches, "fetch_description", fake_fetch)
+    _serve_descriptions(monkeypatch, fake_fetch)
 
     _run(monkeypatch, "hydrate", "linkedin", "--top", "10", "--max-fetch", "2")
 
@@ -718,7 +761,7 @@ def _hydrate_two(data_dir, monkeypatch) -> list[Job]:
     jobs = [_bare("linkedin", n, f"https://www.linkedin.com/jobs/view/{n}") for n in (81, 82)]
     _seed(jobs, ["keep", "keep"])
     _prefilter_scores(jobs, [90, 80])
-    monkeypatch.setattr(ai_batches, "fetch_description", lambda http, url: "Go, Kubernetes, English.")
+    _serve_descriptions(monkeypatch, lambda http, url: "Go, Kubernetes, English.")
     _run(monkeypatch, "hydrate", "linkedin")
     return jobs
 
@@ -868,7 +911,7 @@ def test_hydrate_follows_the_profile(profile_dirs, monkeypatch, capsys):
         _prefilter_scores([li], [90])
     finally:
         config.use_profile(None)
-    monkeypatch.setattr(ai_batches, "fetch_description", lambda http, url: "Go, Kubernetes, English.")
+    _serve_descriptions(monkeypatch, lambda http, url: "Go, Kubernetes, English.")
 
     _run(monkeypatch, "hydrate", "linkedin", "--profile", "x")
 
@@ -930,7 +973,7 @@ def test_export_rank_sample_bounds_the_description_fetches(data_dir, monkeypatch
         fetched.append(url)
         return "Fetched description text."
 
-    monkeypatch.setattr(ai_batches, "fetch_description", fake_fetch)
+    _serve_descriptions(monkeypatch, fake_fetch)
 
     _run(monkeypatch, "export", "rank", "--top", "4", "--sample", "2")
 
@@ -1452,7 +1495,7 @@ def test_stability_export_never_fetches_linkedin_descriptions(data_dir, monkeypa
     def explode(http, url):  # pragma: no cover - must never be called
         raise AssertionError(f"fetched {url} in the stability stage")
 
-    monkeypatch.setattr(ai_batches, "fetch_description", explode)
+    _serve_descriptions(monkeypatch, explode)
 
     _run(monkeypatch, "stability", "export")
 
@@ -1818,3 +1861,77 @@ def test_stability_export_still_defaults_to_seed_one(data_dir, monkeypatch):
                         lambda top, chunk, max_chars, seed: seen.update(seed=seed))
     _run(monkeypatch, "stability", "export")
     assert seen == {"seed": 1}
+
+
+# ------------------------------------------------------- closed pages found while hydrating
+# Hydration fetches the very guest pages `check-live` reads, so a page that says the posting is
+# closed is recorded on the spot: the job drops out instead of being hydrated and re-judged.
+
+
+def test_export_rank_records_a_closed_linkedin_page_and_leaves_the_job_out(data_dir, monkeypatch, capsys):
+    closed = _bare("linkedin", 81, "https://www.linkedin.com/jobs/view/81")
+    fine = _bare("linkedin", 82, "https://www.linkedin.com/jobs/view/82")
+    _seed([closed, fine], ["keep", "keep"])
+    _prefilter_scores([closed, fine], [90, 80])
+    _serve_pages(monkeypatch, {closed.url: (200, "liveness_linkedin_closed.html"),
+                               fine.url: (200, "liveness_linkedin_open.html")})
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    live, filters = _liveness_and_filters()
+    assert live[closed.id].status == "closed" and fine.id not in live  # only dead pages recorded
+    assert filters[closed.id].status == "drop"
+    assert filters[closed.id].reasons[0].startswith("posting closed (checked ")
+    exported = {e["job_id"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")}
+    assert exported == {fine.id}
+    assert _stored_jobs()[closed.id].description is None  # a closed posting is not hydrated
+    out = capsys.readouterr().out
+    assert "hydrated 1/2 linkedin descriptions; 1 closed or gone (dropped)" in out
+
+
+def test_export_rank_records_a_gone_linkedin_page(data_dir, monkeypatch, capsys):
+    gone = _bare("linkedin", 83, "https://www.linkedin.com/jobs/view/83")
+    _seed([gone], ["keep"])
+    _prefilter_scores([gone], [90])
+    _serve_pages(monkeypatch, {gone.url: (404, "Not found")})
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    live, filters = _liveness_and_filters()
+    assert live[gone.id].status == "gone" and live[gone.id].reason == "HTTP 404"
+    assert filters[gone.id].status == "drop"
+
+
+def test_export_rank_never_records_a_throttled_page(data_dir, monkeypatch, capsys):
+    li = _bare("linkedin", 84, "https://www.linkedin.com/jobs/view/84")
+    _seed([li], ["keep"])
+    _prefilter_scores([li], [90])
+    _serve_pages(monkeypatch, {li.url: (429, "Too Many Requests")})
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    live, filters = _liveness_and_filters()
+    assert live == {} and filters[li.id].status == "keep"
+    assert "hydrated 0/1 linkedin descriptions" in capsys.readouterr().out
+
+
+def test_hydrate_linkedin_records_a_closed_page_instead_of_hydrating(data_dir, monkeypatch, capsys):
+    closed = _bare("linkedin", 91, "https://www.linkedin.com/jobs/view/91")
+    fine = _bare("linkedin", 92, "https://www.linkedin.com/jobs/view/92")
+    _seed([closed, fine], ["keep", "keep"])
+    _prefilter_scores([closed, fine], [90, 80])
+    _rank_scores([closed], [70])
+    asked = _serve_pages(monkeypatch, {closed.url: (200, "liveness_linkedin_closed.html"),
+                                       fine.url: (200, "liveness_linkedin_open.html")})
+
+    _run(monkeypatch, "hydrate", "linkedin")
+
+    assert asked == [closed.url, fine.url]
+    live, filters = _liveness_and_filters()
+    assert live[closed.id].status == "closed"
+    assert filters[closed.id].status == "drop" and filters[fine.id].status == "keep"
+    assert [line["job_id"] for line in _hydration_log(data_dir)] == [fine.id]
+    # the closed job's verdicts are left alone: it is out of every queue already
+    assert set(_stored_verdicts("rank")) == {closed.id}
+    out = capsys.readouterr().out
+    assert "hydrated 1/2 linkedin descriptions; 1 verdicts cleared; 1 closed or gone (dropped)" in out

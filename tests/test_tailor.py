@@ -752,3 +752,49 @@ def test_cli_tailor_interested_with_nothing_marked(batch_env):
     result = runner.invoke(cli_mod.app, ["tailor", "--interested"])
     assert result.exit_code == 0, result.output
     assert "no jobs to tailor" in result.output
+
+
+# ------------------------------------------------------------------ closed postings
+
+
+def _mark(db, job: Job, status: str, reason: str) -> None:
+    from datetime import UTC, datetime
+
+    from jobscraper.models import LivenessCheck
+
+    store = Store(db)
+    store.save_liveness([LivenessCheck(job_id=job.id, status=status, reason=reason,
+                                       checked_at=datetime(2026, 10, 17, 9, 0, tzinfo=UTC))])
+    store.close()
+
+
+def test_cli_tailor_refuses_a_closed_posting(cli_env):
+    _mark(cli_env.db, cli_env.job, "closed", "LinkedIn: no longer accepting applications")
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id])
+    assert result.exit_code == 1
+    assert f"tailor: {cli_env.job.id}: posting closed (checked 2026-10-17)" in result.output
+    assert cli_env.fake.calls == []  # no request spent on a vacancy nobody can apply to
+    assert not list((cli_env.data / "cv" / "tailored").glob("*.md"))
+
+
+def test_cli_tailor_refuses_a_gone_posting(cli_env):
+    _mark(cli_env.db, cli_env.job, "gone", "HTTP 404")
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id, "--export"])
+    assert result.exit_code == 1
+    assert "posting gone (HTTP 404, checked 2026-10-17)" in result.output
+
+
+def test_cli_tailor_tailors_a_posting_whose_check_was_inconclusive(cli_env):
+    _mark(cli_env.db, cli_env.job, "unknown", "HTTP 429")
+    result = runner.invoke(cli_mod.app, ["tailor", cli_env.job.id])
+    assert result.exit_code == 0, result.output
+
+
+def test_cli_tailor_batch_marks_a_closed_posting_and_goes_on(batch_env):
+    jobs = batch_env.jobs
+    _mark(batch_env.db, jobs[2], "closed", "LinkedIn: no longer accepting applications")
+    result = runner.invoke(cli_mod.app, ["tailor", "--top", "2"])
+    assert result.exit_code == 0, result.output  # a closed posting is an outcome, not a failure
+    assert "closed" in _row(result.output, jobs[2])
+    assert "tailored" in _row(result.output, jobs[0])
+    assert len(batch_env.fake.calls) == 1

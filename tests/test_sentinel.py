@@ -78,6 +78,11 @@ def test_rule_drops_sample_only_drops(pool):
       "title level excluded by profile: 'Senior Developer'"], True),    # age + a real rule
     (["application deadline passed on 2026-09-01",
       "requires fi: 'Finnish required'"], True),                        # deadline + a real rule
+    (["posting closed (checked 2026-10-17)"], False),                   # page says closed
+    (["posting gone (HTTP 404, checked 2026-10-17)",
+      "posting is 45 days old (max 30)"], False),                       # gone and old
+    (["posting closed (checked 2026-10-17)",
+      "requires fi: 'Finnish required'"], True),                        # closed + a real rule
     (["asks for 5 years of experience"], True),                         # an ordinary drop
     ([], True),                                                         # no reason recorded
 ])

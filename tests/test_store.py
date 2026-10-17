@@ -998,3 +998,79 @@ def test_a_stored_reason_outside_the_vocabulary_is_dropped_on_read(store):
                           '2026-10-01T08:00:00+00:00', 'not json')""")
     store.conn.commit()
     assert {d.job_id: d.reasons for d in store.decisions()} == {"a": ["pay"], "b": []}
+
+
+# ------------------------------------------------ when each source was last scraped
+
+
+def test_last_scrape_starts_is_the_newest_run_per_source_that_brought_postings_back(store):
+    first = store.log_run("arbeitnow", 10, 4)
+    second = store.log_run("arbeitnow", 12, 0)
+    store.log_run("arbeitnow", 0, 0, "HTTPError: 503")  # failed: says nothing about the board
+    store.start_run("arbeitnow")                         # still running (fetched 0)
+    good_jobly = store.log_run("jobly", 3, 3)
+    store.log_run("jobly", 0, 0)                         # finished empty
+
+    started = {r["id"]: r["started_at"] for r in store.conn.execute("SELECT id, started_at FROM runs")}
+    starts = store.last_scrape_starts()
+    assert set(starts) == {"arbeitnow", "jobly"}
+    assert starts["arbeitnow"] == datetime.fromisoformat(started[second])
+    assert starts["arbeitnow"] >= datetime.fromisoformat(started[first])
+    assert starts["jobly"] == datetime.fromisoformat(started[good_jobly])
+
+
+def test_last_scrape_starts_is_empty_without_any_scrape(store):
+    assert store.last_scrape_starts() == {}
+
+
+def test_jobs_carry_last_seen_from_their_column(store):
+    job = make_job(source_id="1")
+    store.upsert_jobs([job])
+    meta = store.job_meta(job.id)
+    read = store.jobs()[0]
+    assert read.last_seen == datetime.fromisoformat(meta["last_seen"])
+    assert read.first_seen == datetime.fromisoformat(meta["first_seen"])
+    assert "last_seen" not in read.model_dump()  # never serialized into the data JSON
+
+
+# ----------------------------------------------------------------- liveness checks
+
+
+def _check(job_id: str, status: str, day: int, reason: str = "HTTP 200"):
+    from jobscraper.models import LivenessCheck
+
+    return LivenessCheck(job_id=job_id, status=status, reason=reason,
+                         checked_at=datetime(2026, 10, day, 9, 0, tzinfo=UTC),
+                         http_status=None if status == "unknown" else 200)
+
+
+def test_liveness_checks_round_trip(store):
+    check = _check("a", "closed", 17, "LinkedIn: no longer accepting applications")
+    store.save_liveness([check])
+    assert store.liveness() == {"a": check}
+    assert store.liveness_history("a") == [check]
+    assert store.liveness_history("missing") == []
+
+
+def test_the_latest_check_wins(store):
+    store.save_liveness([_check("a", "open", 15), _check("b", "closed", 15)])
+    store.save_liveness([_check("a", "closed", 17), _check("b", "open", 17)])
+    latest = store.liveness()
+    assert latest["a"].status == "closed" and latest["b"].status == "open"
+    assert [c.status for c in store.liveness_history("a")] == ["open", "closed"]
+
+
+def test_an_unknown_check_never_overrides_a_conclusive_one(store):
+    """A 429 says nothing about the posting: the last real answer stands."""
+    store.save_liveness([_check("a", "closed", 15), _check("a", "unknown", 17, "HTTP 429")])
+    store.save_liveness([_check("b", "unknown", 17, "HTTP 429")])
+    latest = store.liveness()
+    assert latest["a"].status == "closed"
+    assert "b" not in latest  # nothing conclusive yet
+    assert [c.status for c in store.liveness_history("a")] == ["closed", "unknown"]
+
+
+def test_liveness_can_be_read_for_a_few_jobs(store):
+    store.save_liveness([_check("a", "closed", 15), _check("b", "gone", 15, "HTTP 404")])
+    assert set(store.liveness(["b", "zzz"])) == {"b"}
+    assert store.liveness([]) == {}

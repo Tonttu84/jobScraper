@@ -6,7 +6,9 @@ no network, no AI calls.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -833,3 +835,127 @@ def test_reason_filter_narrows_to_decisions_carrying_any_of_them(seeded):
         [jobs["cpp"].id]
     # an empty value is no filter at all
     assert client.get("/api/jobs?reason=").json()["total"] == 4
+
+
+# ------------------------------------------------------- seen, scored, missing from a scrape
+
+
+@contextmanager
+def _clock(start: str):
+    """Run the store's writes on a fake clock that starts at ``start`` and ticks a second per
+    stamp, so "seen before / after that scrape" never depends on the platform clock's grain."""
+    now = [datetime.fromisoformat(start)]
+
+    def tick() -> str:
+        now[0] += timedelta(seconds=1)
+        return now[0].isoformat()
+
+    with patch("jobscraper.store._now", tick):
+        yield
+
+
+def _seed_stale(db_path) -> dict[str, Job]:
+    """The seeded jobs, first stored on 2026-10-12; a teamtailor scrape on 2026-10-17 brought
+    back all of them but ``py`` — the posting that may have been taken down."""
+    with _clock("2026-10-12T08:00:00+00:00"):
+        jobs = _seed(db_path)
+    with _clock("2026-10-17T06:00:00+00:00"):
+        store = Store(db_path)
+        run_id = store.start_run("teamtailor")
+        store.upsert_jobs([jobs[h] for h in ("web", "cpp", "rev")], run_id)
+        store.finish_run(run_id, fetched=3, new=0)
+        store.close()
+    return jobs
+
+
+def _when(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def test_a_card_carries_when_the_job_was_first_and_last_seen(tmp_path):
+    jobs = _seed_stale(tmp_path / "t.db")
+    with TestClient(create_app(tmp_path / "t.db")) as client:
+        items = {i["id"]: i for i in client.get("/api/jobs").json()["items"]}
+    web, py = items[jobs["web"].id], items[jobs["py"].id]
+    assert _when(web["first_seen"]).date().isoformat() == "2026-10-12"
+    assert _when(web["last_seen"]).date().isoformat() == "2026-10-17"  # the latest scrape saw it
+    assert _when(py["first_seen"]).date().isoformat() == "2026-10-12"
+    assert _when(py["last_seen"]).date().isoformat() == "2026-10-12"   # and it did not see this one
+
+
+def test_a_job_the_latest_scrape_of_its_source_did_not_return_is_flagged_with_that_run(tmp_path):
+    jobs = _seed_stale(tmp_path / "t.db")
+    with TestClient(create_app(tmp_path / "t.db")) as client:
+        items = {i["id"]: i for i in client.get("/api/jobs").json()["items"]}
+        detail = client.get(f"/api/jobs/{jobs['py'].id}").json()
+    # the run's own start (the clock's first tick on the 17th), not the time it finished
+    assert _when(items[jobs["py"].id]["missing_since_run"]) == datetime(2026, 10, 17, 6, 0, 1, tzinfo=UTC)
+    assert _when(detail["missing_since_run"]) == datetime(2026, 10, 17, 6, 0, 1, tzinfo=UTC)
+    # the jobs that run brought back are not flagged
+    for handle in ("web", "cpp", "rev"):
+        assert items[jobs[handle].id]["missing_since_run"] is None
+
+
+def test_no_job_is_flagged_when_its_source_has_no_run_row(seeded):
+    client, _jobs = seeded
+    items = client.get("/api/jobs").json()["items"]
+    assert [i["missing_since_run"] for i in items] == [None] * 4
+    assert all(i["last_seen"] for i in items)
+
+
+def test_a_failed_or_empty_later_run_does_not_clear_or_move_the_flag(tmp_path):
+    """Only a run that brought postings back says what the board lists; a 503 says nothing."""
+    db = tmp_path / "t.db"
+    jobs = _seed_stale(db)
+    with _clock("2026-10-18T06:00:00+00:00"):
+        store = Store(db)
+        store.log_run("teamtailor", 0, 0, "SourceHTTPError: 503")
+        store.log_run("teamtailor", 0, 0)
+        store.close()
+    with TestClient(create_app(db)) as client:
+        items = {i["id"]: i for i in client.get("/api/jobs").json()["items"]}
+    assert _when(items[jobs["py"].id]["missing_since_run"]).date().isoformat() == "2026-10-17"
+    assert items[jobs["web"].id]["missing_since_run"] is None
+
+
+def test_a_run_of_another_source_never_flags_a_job(tmp_path):
+    db = tmp_path / "t.db"
+    jobs = _seed(db)
+    store = Store(db)
+    store.log_run("arbeitnow", 40, 2)
+    store.close()
+    with TestClient(create_app(db)) as client:
+        items = client.get("/api/jobs").json()["items"]
+    assert {i["id"] for i in items} == {j.id for j in jobs.values()}
+    assert [i["missing_since_run"] for i in items] == [None] * 4
+
+
+def test_scored_at_is_the_newest_verdict_of_the_ai_stages(tmp_path):
+    db = tmp_path / "t.db"
+    jobs = _seed(db)
+    web_id, py_id = jobs["web"].id, jobs["py"].id
+    store = Store(db)
+    day = lambda d: datetime(2026, 10, d, 9, tzinfo=UTC)  # noqa: E731
+    store.save_verdict(make_verdict(web_id, "prefilter", 80, created_at=day(12)))
+    store.save_verdict(make_verdict(web_id, "rank", 91, created_at=day(14)))
+    store.save_verdict(make_verdict(web_id, "refine", 70, created_at=day(13), model="claude-fable-5-1"))
+    # a sentinel pass is not a verdict the card shows, so it does not date one either
+    store.save_verdict(make_verdict(web_id, "sentinel_rank", 3, created_at=day(16)))
+    store.save_verdict(make_verdict(py_id, "prefilter", 70, created_at=day(11)))
+    store.close()
+    with TestClient(create_app(db)) as client:
+        items = {i["id"]: i for i in client.get("/api/jobs").json()["items"]}
+    assert _when(items[web_id]["scored_at"]) == day(14)
+    assert _when(items[py_id]["scored_at"]) == day(11)
+    assert items[jobs["rev"].id]["scored_at"] is None  # the rule-review leftover was never scored
+
+
+def test_a_job_outside_the_report_still_carries_its_dates(seeded, tmp_path):
+    client, _jobs = seeded
+    store = Store(tmp_path / "t.db")
+    extra = make_job("extra-1", "Data Engineer")
+    store.upsert_jobs([extra])
+    store.close()
+    detail = client.get(f"/api/jobs/{extra.id}").json()
+    assert detail["first_seen"] and detail["last_seen"]
+    assert detail["scored_at"] is None and detail["missing_since_run"] is None

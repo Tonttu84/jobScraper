@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from typing import NamedTuple
 
@@ -17,10 +18,10 @@ from jobscraper.config import LocationPolicy, Profile
 from jobscraper.filters.deadline import find_deadline
 from jobscraper.filters.evergreen import is_evergreen
 from jobscraper.filters.language import detect_language, find_language_requirements
-from jobscraper.models import FilterResult, Job
+from jobscraper.models import FilterResult, Job, LivenessCheck
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-10-10a"
+RULES_VERSION = "2026-10-17a"
 
 #: A deadline this near is worth putting in front of the reader (report bullet, UI tag).
 CLOSING_SOON_DAYS = 7
@@ -119,18 +120,36 @@ def _location_tier(job: Job, profile: Profile) -> int | None:
     return _country_tier(job.country, profile)
 
 
+def liveness_reason(check: LivenessCheck | None) -> str | None:
+    """The drop reason a closed or gone page check stands for (None for open/unknown/no check).
+
+    Built here rather than inline in :func:`evaluate` because ``tailor`` refuses a closed job
+    with the same words; ``tests/test_audit.py`` covers both wordings explicitly.
+    """
+    if check is None:
+        return None
+    day = check.checked_at.date().isoformat()
+    if check.status == "closed":
+        return f"posting closed (checked {day})"
+    if check.status == "gone":
+        return f"posting gone ({check.reason}, checked {day})"
+    return None
+
+
 def today_utc() -> date:
     """The date every age and deadline rule counts from (tests freeze it here)."""
     return datetime.now(UTC).date()
 
 
 def evaluate(job: Job, profile: Profile, today: date | None = None, *,
-             borderline: list[LanguageBorderline] | None = None) -> FilterResult:
+             borderline: list[LanguageBorderline] | None = None,
+             liveness: LivenessCheck | None = None) -> FilterResult:
     """The rule filter's verdict on one job.
 
     ``borderline``, when given, collects the job if the posting language alone dropped it on a
     detection within :data:`LANGUAGE_BORDERLINE_MARGIN` of the threshold. It only listens: the
-    verdict is the same with or without it.
+    verdict is the same with or without it. ``liveness`` is the job's latest conclusive page
+    check (:meth:`Store.liveness`); a closed or gone one drops the job.
     """
     reasons: list[str] = []
     review: list[str] = []
@@ -138,6 +157,16 @@ def evaluate(job: Job, profile: Profile, today: date | None = None, *,
     title = job.title or ""
     text = job.text
     today = today or today_utc()
+
+    # -------------------------------------------------------------- liveness
+    # The posting's own page said it takes no more applications, or is not there at all
+    # (`jobscraper check-live`). The hardest evidence the filter gets, so it is the first reason;
+    # an open or an inconclusive check says nothing and leaves the verdict alone.
+    dead = liveness_reason(liveness)
+    if dead is not None:
+        reasons.append(dead)
+        signals["liveness"] = liveness.status
+        signals["liveness_checked"] = liveness.checked_at.date().isoformat()
 
     # ---------------------------------------------------------------- role
     role = profile.role
@@ -405,6 +434,9 @@ def dedupe(jobs: list[Job], location: LocationPolicy | None = None, *,
 
 
 def apply_rules(jobs: list[Job], profile: Profile, *,
-                borderline: list[LanguageBorderline] | None = None) -> list[FilterResult]:
-    """:func:`evaluate` over ``jobs``; ``borderline`` collects the near-threshold language drops."""
-    return [evaluate(j, profile, borderline=borderline) for j in jobs]
+                borderline: list[LanguageBorderline] | None = None,
+                liveness: Mapping[str, LivenessCheck] | None = None) -> list[FilterResult]:
+    """:func:`evaluate` over ``jobs``; ``borderline`` collects the near-threshold language drops,
+    ``liveness`` holds each job's latest conclusive page check by job id."""
+    live = liveness or {}
+    return [evaluate(j, profile, borderline=borderline, liveness=live.get(j.id)) for j in jobs]

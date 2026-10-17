@@ -28,7 +28,7 @@
 
 ## Pipeline
 scrape (sources → SQLite) → filter (rules, permissive) → prefilter (Sonnet 5, permissive) →
-rank (Opus 5, top N) → report (markdown + JSONL).
+rank (Opus 5, top N) → check-live (top 40 pages; closed/gone drop) → report (markdown + JSONL).
 
 ## Testing rule (from the owner): TDD, high coverage
 - Write the failing test first, then the code. For a new adapter: fixture + parser test before

@@ -177,6 +177,15 @@ class JobView(BaseModel):
     refine: RefineView | None = None
     facets: FacetsView
     decision: DecisionView | None = None
+    first_seen: datetime | None = Field(None, description="When the pipeline first stored the posting")
+    last_seen: datetime | None = Field(None, description="When a scrape last brought it back")
+    scored_at: datetime | None = Field(
+        None, description="When the newest of its prefilter/rank/refine verdicts was written"
+    )
+    missing_since_run: datetime | None = Field(
+        None, description="Start of the latest scrape of the job's source when that scrape came "
+                          "after last_seen, i.e. did not return the posting (it may be closed)",
+    )
 
 
 class JobDetail(JobView):
@@ -281,6 +290,8 @@ class View:
     decisions: dict[str, Decision]
     #: Measured once for the whole report, not per job: the two AI passes' scale difference.
     refine_offset: float
+    #: Source -> start of its newest scrape that brought postings back (Store.last_scrape_starts).
+    last_scrapes: dict[str, datetime]
 
 
 def _stage_verdicts(store: Store, stage: str, ids: list[str] | None = None) -> dict[str, AIVerdict]:
@@ -341,6 +352,7 @@ def load_view(store: Store, report_id: int | None = None, user: str | None = Non
         facets=facets,
         decisions=decisions,
         refine_offset=refine_offset(rank, refine),
+        last_scrapes=store.last_scrape_starts(),
     )
 
 
@@ -377,6 +389,9 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
     score = effective_score(rank, refine, view.refine_offset)
     decision = view.decisions.get(job.id)
     facets = _facets_view(view, job)
+    # The source was scraped again after the posting was last seen: that scrape did not return it.
+    last_scrape = view.last_scrapes.get(job.source)
+    missing = last_scrape if last_scrape and job.last_seen and last_scrape > job.last_seen else None
     fields: dict[str, Any] = {
         "id": job.id,
         "title": job.title,
@@ -407,6 +422,10 @@ def _job_view(view: View, job: Job, section: str | None, position: int | None,
         "decision": DecisionView(status=decision.status, note=decision.note,
                                  reasons=list(decision.reasons),
                                  updated_at=decision.updated_at) if decision else None,
+        "first_seen": job.first_seen,
+        "last_seen": job.last_seen,
+        "scored_at": max((v.created_at for v in (pre, rank, refine) if v), default=None),
+        "missing_since_run": missing,
     }
     if detail:
         return JobDetail(description=job.description, **fields)

@@ -2158,3 +2158,168 @@ def test_report_shows_the_sentinels_and_keeps_them_out_of_everything_else(data_d
     # the next report has nothing new to say about the gates
     assert runner.invoke(cli_mod.app, ["report", "--out", str(data_dir / "again.md")]).exit_code == 0
     assert "No sentinel samples this run." in (data_dir / "again.md").read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------------ check-live
+# A search source cannot say a posting was taken down, so `check-live` asks the posting's own
+# page. The pages are FakeHttp fixtures; nothing here touches the network.
+
+LIVE_LINKEDIN = "https://www.linkedin.com/jobs/view/4477802497"
+
+
+def _live_jobs(fake_http) -> list:
+    """Three rule-kept, ranked jobs in a stored report — ranked LinkedIn (closed page), an open
+    board page, a board page that 404s — with the pages routed in ``fake_http``."""
+    import httpx
+
+    from jobscraper.models import Job
+
+    def job(source: str, n: int, url: str, company: str) -> Job:
+        return Job(source=source, source_id=f"live-{n}", url=url, title=f"Junior Software Developer {n}",
+                   company=company, country="FI", remote="onsite",
+                   description="We build backend services in Go. English working language.")
+
+    jobs = [job("linkedin", 1, LIVE_LINKEDIN + "?refId=abc", "Closed [Labs] Oy"),
+            job("teamtailor", 2, "https://jobs.example.test/live-open", "Open Oy"),
+            job("teamtailor", 3, "https://jobs.example.test/live-dead", "Gone Oy")]
+    store = store_mod.Store()
+    try:
+        store.upsert_jobs(jobs)
+        store.save_filter_results(
+            [FilterResult(job_id=j.id, status="keep", location_tier=1) for j in jobs], "rules-test")
+        for score, j in zip((90, 80, 70), jobs):
+            _seed_verdict(store, j, "prefilter", score)
+            _seed_verdict(store, j, "rank", score)
+    finally:
+        store.close()
+    fake_http.routes.update({
+        "/jobs/view/4477802497": "liveness_linkedin_closed.html",
+        "jobs.example.test/live-open": "<html><h1>Junior Software Developer 2</h1></html>",
+        "jobs.example.test/live-dead": lambda req: httpx.Response(404, text="Not found"),
+    })
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0
+    return jobs
+
+
+def _ranked_ids() -> list[str]:
+    store = store_mod.Store()
+    try:
+        snap = store.report()
+        return [i.job_id for i in sorted(snap.items, key=lambda i: i.position) if i.section == "ranked"]
+    finally:
+        store.close()
+
+
+def test_check_live_top_checks_the_reports_head_and_drops_the_closed_job(data_dir, fake_http):
+    jobs = _live_jobs(fake_http)
+    assert _ranked_ids() == [j.id for j in jobs]
+
+    result = runner.invoke(cli_mod.app, ["check-live", "--top", "2"])
+    assert result.exit_code == 0, result.output
+    fetched = [str(c.url) for c in fake_http.calls if "job-board-api" not in str(c.url)]
+    assert fetched == [LIVE_LINKEDIN, "https://jobs.example.test/live-open"]  # report order, top 2
+    closed_row = next(line for line in result.output.splitlines() if jobs[0].id[:8] in line)
+    assert "closed" in closed_row and "no longer accepting applications" in closed_row
+    assert "Closed [Labs] Oy" in closed_row  # rich markup escaped
+    assert "open" in next(line for line in result.output.splitlines() if jobs[1].id[:8] in line)
+    assert "check-live: 2 checked: 1 open, 1 closed, 0 gone, 0 unknown; 1 re-filtered" in result.output
+
+    store = store_mod.Store()
+    try:
+        fr = store.filter_results()[jobs[0].id]
+        assert fr.status == "drop" and fr.reasons[0].startswith("posting closed (checked ")
+        assert store.filter_results()[jobs[1].id].status == "keep"
+        assert set(store.liveness()) == {jobs[0].id, jobs[1].id}
+    finally:
+        store.close()
+
+    # the next report leaves the closed job out, as it does any rule drop
+    assert runner.invoke(cli_mod.app, ["report"]).exit_code == 0
+    assert _ranked_ids() == [jobs[1].id, jobs[2].id]
+
+
+def test_check_live_takes_explicit_job_ids(data_dir, fake_http):
+    jobs = _live_jobs(fake_http)
+    result = runner.invoke(cli_mod.app, ["check-live", jobs[2].id[:10]])
+    assert result.exit_code == 0, result.output
+    row = next(line for line in result.output.splitlines() if jobs[2].id[:8] in line)
+    assert "gone" in row and "HTTP 404" in row
+    store = store_mod.Store()
+    try:
+        assert store.filter_results()[jobs[2].id].reasons[0].startswith("posting gone (HTTP 404, checked ")
+    finally:
+        store.close()
+
+
+def test_check_live_defaults_to_the_top_40(data_dir, fake_http):
+    jobs = _live_jobs(fake_http)
+    result = runner.invoke(cli_mod.app, ["check-live"])
+    assert result.exit_code == 0, result.output
+    assert "check-live: 3 checked: 1 open, 1 closed, 1 gone, 0 unknown; 2 re-filtered" in result.output
+    store = store_mod.Store()
+    try:
+        assert set(store.liveness()) == {j.id for j in jobs}
+    finally:
+        store.close()
+
+
+def test_check_live_never_drops_on_a_failed_fetch(data_dir, fake_http):
+    jobs = _live_jobs(fake_http)
+    fake_http.routes.clear()  # every page fetch now fails
+    result = runner.invoke(cli_mod.app, ["check-live", jobs[0].id])
+    assert result.exit_code == 0, result.output
+    assert "0 open, 0 closed, 0 gone, 1 unknown; 0 re-filtered" in result.output
+    store = store_mod.Store()
+    try:
+        assert store.filter_results()[jobs[0].id].status == "keep"
+        assert [c.status for c in store.liveness_history(jobs[0].id)] == ["unknown"]
+    finally:
+        store.close()
+
+
+def test_check_live_without_a_report_or_with_an_unknown_id(data_dir, fake_http):
+    result = runner.invoke(cli_mod.app, ["check-live"])
+    assert result.exit_code == 1 and "check-live: no report stored" in result.output
+    result = runner.invoke(cli_mod.app, ["check-live", "doesnotexist"])
+    assert result.exit_code == 1 and "check-live: no job 'doesnotexist'" in result.output
+
+
+def test_filter_reads_the_stored_checks(data_dir, fake_http):
+    """A later `filter` keeps a checked-closed job dropped: the check is in the database."""
+    jobs = _live_jobs(fake_http)
+    assert runner.invoke(cli_mod.app, ["check-live", jobs[0].id]).exit_code == 0
+    assert runner.invoke(cli_mod.app, ["filter"]).exit_code == 0
+    store = store_mod.Store()
+    try:
+        assert store.filter_results()[jobs[0].id].status == "drop"
+        assert store.filter_results()[jobs[1].id].status != "drop"
+    finally:
+        store.close()
+
+
+def test_run_checks_the_live_top_right_before_the_report(data_dir, fake_http, monkeypatch):
+    order: list[str] = []
+    monkeypatch.setattr(cli_mod, "scrape", lambda *a, **kw: order.append("scrape"))
+    monkeypatch.setattr(cli_mod, "filter_cmd", lambda *a, **kw: order.append("filter"))
+    monkeypatch.setattr(cli_mod, "_check_live_state", lambda days: order.append(f"check-live {days}"))
+    monkeypatch.setattr(cli_mod, "report", lambda *a, **kw: order.append("report"))
+    result = runner.invoke(cli_mod.app, ["run", "--skip-ai", "--days", "20"])
+    assert result.exit_code == 0, result.output
+    assert order == ["scrape", "filter", "check-live 20", "report"]
+
+
+def test_the_runs_check_reads_the_current_effective_top(data_dir, fake_http):
+    """Inside `run` the stored report is the previous run's: the top comes from the state."""
+    jobs = _live_jobs(fake_http)
+    assert cli_mod._state_top_ids(30, 2) == [jobs[0].id, jobs[1].id]
+    cli_mod._check_live_state(30)
+    store = store_mod.Store()
+    try:
+        assert set(store.liveness()) == {j.id for j in jobs}  # CHECK_LIVE_TOP (40) covers all three
+    finally:
+        store.close()
+
+
+def test_the_runs_check_with_nothing_ranked_says_so(data_dir, fake_http, capsys):
+    cli_mod._check_live_state(30)
+    assert "check-live: nothing ranked to check" in capsys.readouterr().out

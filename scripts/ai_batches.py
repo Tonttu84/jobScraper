@@ -18,7 +18,10 @@ it moves the config, the database and the exports into that candidate's own dire
 Intended sequence for one round:
 ``hydrate linkedin`` → ``export prefilter`` → (Sonnet subagent) → ``import prefilter`` →
 the rank loop → the refine loop → ``export sentinel`` → (Sonnet + Opus subagents) →
-``import sentinel`` → ``boost`` → ``jobscraper report``.
+``import sentinel`` → ``boost`` → ``jobscraper check-live`` → ``jobscraper report``.
+``check-live`` fetches the top 40's own pages and drops the closed or gone postings (verdicts are
+carried forward between runs, and a search source never reports a takedown); both hydrations
+record a closed page they happen to fetch the same way.
 
 **Sentinels** measure the two gates nothing downstream can see: ``export sentinel`` draws
 ``--n`` (default ``ai.sentinel_sample``) random rule drops and as many random screen rejects
@@ -142,7 +145,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from jobscraper import config
+from jobscraper import config, liveness
 from jobscraper.ai.client import refine_verdicts
 from jobscraper.ai.notes import note_invalid_verdict, store_verdict
 from jobscraper.ai.prompts import (
@@ -160,7 +163,7 @@ from jobscraper.compare import spearman as _spearman
 from jobscraper.compare import top_set as _top_set
 from jobscraper.config import load_settings, paths
 from jobscraper.http import Http
-from jobscraper.models import AIVerdict, Job, mirrored_stage
+from jobscraper.models import AIVerdict, Job, LivenessCheck, mirrored_stage
 from jobscraper.prior import queue_prior
 from jobscraper.report import (
     RANK_TOP_WATCH,
@@ -187,7 +190,31 @@ MODEL = {"prefilter": "claude-sonnet-5 (subagent)", "rank": "claude-opus-5 (suba
          "refine": "claude-fable-5-1 (subagent)"}
 
 # Module-level indirection so tests can replace the network call.
-fetch_description = linkedin.fetch_description
+fetch_page = linkedin.fetch_page
+
+
+def _read_page(job: Job, http: Http, dead: list[LivenessCheck]) -> str | None:
+    """Fetch ``job``'s guest page once: its description, or None.
+
+    The same page is what ``jobscraper check-live`` reads, so a page that says the posting is
+    closed (or a 404/410) is collected in ``dead`` instead of hydrated — :func:`_record_dead`
+    stores it and the job drops out like any rule drop. A throttled or failed fetch is neither.
+    """
+    page = fetch_page(http, job.url)
+    if page is not None:
+        check = liveness.classify(job, page)
+        if check.status in liveness.DEAD:
+            dead.append(check)
+            return None
+    return linkedin.page_description(page)
+
+
+def _record_dead(store: Store, dead: list[LivenessCheck]) -> str:
+    """Store the closed/gone checks hydration found and re-filter those jobs; the summary bit."""
+    if not dead:
+        return ""
+    liveness.record(store, load_settings().profile, dead)
+    return f"; {len(dead)} closed or gone (dropped)"
 
 
 def _listed(store: Store, settings) -> list[Job]:
@@ -240,6 +267,7 @@ def hydrate_top_linkedin(top: int, max_fetch: int) -> None:
     log = _hydration_log()
     http = Http()
     hydrated: list[str] = []
+    dead: list[LivenessCheck] = []
     tried = 0
     try:
         for position, v in enumerate(survivors[:top], start=1):
@@ -249,8 +277,8 @@ def hydrate_top_linkedin(top: int, max_fetch: int) -> None:
             if job is None or job.source != linkedin.NAME or job.description:
                 continue
             tried += 1
-            text = fetch_description(http, job.url)
-            if not text:  # rate-limited, walled off, gone: leave the verdicts alone
+            text = _read_page(job, http, dead)
+            if not text:  # rate-limited, walled off, closed: leave the verdicts alone
                 continue
             job.description = text
             store.upsert_jobs([job])
@@ -265,7 +293,8 @@ def hydrate_top_linkedin(top: int, max_fetch: int) -> None:
     finally:
         http.close()
     cleared = store.delete_verdicts(hydrated)
-    print(f"hydrated {len(hydrated)}/{tried} linkedin descriptions; {cleared} verdicts cleared")
+    print(f"hydrated {len(hydrated)}/{tried} linkedin descriptions; {cleared} verdicts cleared"
+          f"{_record_dead(store, dead)}")
 
 
 def boost() -> None:
@@ -309,21 +338,24 @@ def boost() -> None:
     print(f"deepest position_before that made the final ranked list: {deepest}")
 
 
-def hydrate_linkedin(store: Store, todo: list[Job], max_fetch: int) -> None:
+def hydrate_linkedin(store: Store, todo: list[Job], max_fetch: int) -> set[str]:
     """Fill in missing LinkedIn descriptions for the jobs about to be ranked, in place.
 
     Best effort: each fetch either returns text or None (rate-limited, walled off, gone), and
     only the successes are written back. ``max_fetch`` bounds how long the stage can take.
+    Returns the ids whose page said the posting is closed or gone: those are recorded and
+    re-filtered (dropped), and the caller leaves them out of the export.
     """
     missing = [j for j in todo if j.source == linkedin.NAME and not j.description]
     if not missing or max_fetch <= 0:
-        return
+        return set()
     batch = missing[:max_fetch]
     http = Http()
     hydrated = 0
+    dead: list[LivenessCheck] = []
     try:
         for job in batch:
-            text = fetch_description(http, job.url)
+            text = _read_page(job, http, dead)
             if not text:
                 continue
             job.description = text
@@ -331,7 +363,8 @@ def hydrate_linkedin(store: Store, todo: list[Job], max_fetch: int) -> None:
             hydrated += 1
     finally:
         http.close()
-    print(f"hydrated {hydrated}/{len(batch)} linkedin descriptions")
+    print(f"hydrated {hydrated}/{len(batch)} linkedin descriptions{_record_dead(store, dead)}")
+    return {c.job_id for c in dead}
 
 
 def _write_chunks(stage: str, todo: list[Job], filters: dict, chunk: int, max_chars: int,
@@ -474,7 +507,9 @@ def export_rank(chunk: int, max_chars: int, top: int | None, window: int | None,
     if sample > 1:
         todo = todo[::sample]  # positions 0, N, 2N, ... of the window
     # After sampling: a job that is not going to be exported is not worth a description fetch.
-    hydrate_linkedin(store, todo, max_fetch)
+    # A page that says the posting is closed drops it (recorded and re-filtered) on the spot.
+    closed = hydrate_linkedin(store, todo, max_fetch)
+    todo = [j for j in todo if j.id not in closed]
     # A round is many windows now, and the previous window's answers have already been imported:
     # leaving them behind would have the next import read them again as unknown job ids.
     for old in (_out_dir("rank") / "verdicts").glob("chunk-*.jsonl"):
