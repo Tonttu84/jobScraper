@@ -620,6 +620,22 @@ the top was still gaining entrants when the budget ran out); refine 28; sentinel
 Open: one more rank round (`export rank --reset-round`) would rank another 90 of the 1,363-job
 queue; the stop rule did not reach patience.
 
+## Run of 2026-10-17: report #14, run as concurrently as possible
+Scrape 26 sources into `data/runs/20261017-103729.db` (copied forward): 19,499 jobs, arbeitnow 1,991
+new (normal churn), linkedin 484 new, ats_boards 414. The screen started when one source (jobly)
+was left: `filter` on the partial DB, 1,035 jobs in 11 parallel Sonnet chunks; jobly added nothing
+that survived the rules. LinkedIn hydration ran beside the rank windows (53 of 54 fetched under
+429 throttling; the first attempt died on "database is locked" while an export held the DB, so
+exports/imports and hydration must not overlap), then a 53-job re-screen. Rank: four rounds of
+90 (6 parallel Opus chunks each, `--reset-round --top 90`); every round ended on budget with miss
+run 0/30, so the top was still gaining entrants (round 4's best 82, a thinner tail). Refine: four
+incremental Fable passes (12, 5, 2, 1) until "top 20 fully refined". Sentinels: 1/10 rule drops
+kept by the screen (a Deutsche Bank tech internship), 0/10 screen rejects scored 70+ (max 50).
+Top: RUBINLAKE 89, Playback CPH 89, King 88, Eaton 87, Arm 87, ANNEA / NANCE / Ericsson Lund 86.
+Observed: rank agents report the rubric's weighted criteria pulling above 50 where a hard minimum
+(enrolment, years) is unmet, and they score under the weighted sum on purpose — the
+rubric_mismatch notes in the health appendix are mostly this, not noise.
+
 ## Tailored CV (started 2026-10-14)
 Goal: a CV customised per job, built by *selecting* pre-written parts, never by writing text, so
 a hallucinated claim is structurally impossible. The Canva design stays the reference: page 1 is
