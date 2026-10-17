@@ -69,6 +69,29 @@ def test_rule_drops_sample_only_drops(pool):
     assert len(set(_ids(picked))) == 5
 
 
+@pytest.mark.parametrize(("reasons", "in_pool"), [
+    (["posting is 45 days old (max 30)"], False),                       # age only
+    (["application deadline passed on 2026-09-01"], False),             # deadline only
+    (["posting is 45 days old (max 30)",
+      "application deadline passed on 2026-09-01"], False),             # both, still only staleness
+    (["posting is 45 days old (max 30)",
+      "title level excluded by profile: 'Senior Developer'"], True),    # age + a real rule
+    (["application deadline passed on 2026-09-01",
+      "requires fi: 'Finnish required'"], True),                        # deadline + a real rule
+    (["asks for 5 years of experience"], True),                         # an ordinary drop
+    ([], True),                                                         # no reason recorded
+])
+def test_age_and_deadline_only_drops_are_left_out_of_the_rule_drop_pool(reasons, in_pool):
+    """A drop for staleness alone is right by construction; sampling it only dilutes the estimate."""
+    jobs = [_job(1), _job(2)]
+    filters = {jobs[0].id: FilterResult(job_id=jobs[0].id, status="drop", reasons=reasons),
+               jobs[1].id: FilterResult(job_id=jobs[1].id, status="drop",
+                                        reasons=["asks for 5 years of experience"])}
+    picked = _ids(sample_rule_drops(jobs, filters, 50, seed=1))
+    assert (jobs[0].id in picked) is in_pool
+    assert jobs[1].id in picked
+
+
 def test_screen_rejects_are_irrelevant_or_below_the_bar_and_never_rule_drops(pool):
     jobs, filters, pre = pool
     picked = sample_screen_rejects(jobs, filters, pre, 50, seed=1, min_score=30)

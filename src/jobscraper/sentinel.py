@@ -25,11 +25,17 @@ import random
 from collections.abc import Collection, Iterable, Mapping
 from datetime import UTC, date, datetime
 
+from jobscraper.audit import reason_category
 from jobscraper.models import AIVerdict, FilterResult, Job
 
 #: A screen reject the sentinel ranker scores at least this is a find the owner should read, and
 #: counts as a false reject of the screen.
 SENTINEL_FIND_SCORE = 70
+
+#: Rule-drop reason categories (:func:`jobscraper.audit.reason_category`) that are right by
+#: construction: a posting past its age limit or its own closing date. A drop with only these
+#: reasons is left out of the rule-drop pool, since sampling it would only dilute the estimate.
+STALE_REASON_CATEGORIES = frozenset({"too_old", "deadline_passed"})
 
 
 def default_seed(today: date | None = None) -> int:
@@ -54,11 +60,19 @@ def sample_rule_drops(jobs: Iterable[Job], filters: Mapping[str, FilterResult], 
     """A random sample of the rule filter's drops among ``jobs`` (the listed ones in the window).
 
     ``exclude`` holds the jobs that already carry a ``sentinel_prefilter`` verdict: a posting is
-    measured once.
+    measured once. A drop whose every reason is staleness (:data:`STALE_REASON_CATEGORIES`) is
+    not in the pool; one dropped for its age *and* something else is.
     """
     pool = [j for j in jobs
-            if (fr := filters.get(j.id)) is not None and fr.status == "drop" and j.id not in exclude]
+            if (fr := filters.get(j.id)) is not None and fr.status == "drop"
+            and not _stale_only(fr) and j.id not in exclude]
     return _sample(pool, n, seed)
+
+
+def _stale_only(fr: FilterResult) -> bool:
+    """True when ``fr`` has reasons and all of them are age / deadline ones."""
+    return bool(fr.reasons) and all(reason_category(r) in STALE_REASON_CATEGORIES
+                                    for r in fr.reasons)
 
 
 def sample_screen_rejects(jobs: Iterable[Job], filters: Mapping[str, FilterResult],

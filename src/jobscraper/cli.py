@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sys
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -76,14 +77,38 @@ from jobscraper.store import (
 )
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help=__doc__)
-console = Console()
+console = Console()  # no file= on purpose: it resolves sys.stdout at each print (see below)
 log = logging.getLogger(__name__)
+
+#: Characters the CLI really prints ("✓" in status lines, U+2011 in CV/job text).
+_PROBE = "✓‑"
+
+
+def _safe_console_streams() -> None:
+    """Make stdout/stderr unable to raise UnicodeEncodeError, so output can never abort a stage.
+
+    With stdout redirected to a file or pipe on Windows, Python falls back to the ANSI code page
+    (cp1252), and a ``console.print("✓ …")`` or ``typer.echo`` of CV text once ended a whole
+    scrape. A stream that cannot encode what we print is switched to UTF-8 with
+    ``errors="replace"``; one that copes is left as it is, and one without ``reconfigure`` (a
+    test runner's capture, ``None`` under pythonw) is skipped. The module-level rich ``console``
+    has no fixed file, so it writes through the reconfigured ``sys.stdout`` and reads its new
+    encoding.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            _PROBE.encode(stream.encoding or "ascii")
+        except (UnicodeEncodeError, LookupError):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 @app.callback()
 def main(db: Path | None = typer.Option(None, "--db", help="Database to work on (default: newest data/runs/*.db, else data/jobs.db)"),
          profile: str | None = typer.Option(None, "--profile", envvar="JOBSCRAPER_PROFILE",
                                             help="Candidate profile: config/profiles/NAME, data/profiles/NAME, results/NAME")) -> None:
+    _safe_console_streams()
     store_mod.DB_OVERRIDE = db
     try:
         config.use_profile(profile)

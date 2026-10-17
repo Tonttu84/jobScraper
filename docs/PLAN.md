@@ -558,14 +558,17 @@ offset (residual sd 9.3; one job over 20), so disagreement is a health line, not
 
 Tasks, one Opus subagent each, sequential (shared files; browser tests fail under contention),
 each committed after a green `scripts/check.sh`. **All five landed 2026-10-13** (A a404852,
-B 76830af, C 10ddb2e, E 9b27e3b, D below). Follow-up for D: the rule-drop sentinel pool still
-includes age/deadline drops, which are right by construction and dilute the estimate; exclude them.
+B 76830af, C 10ddb2e, E 9b27e3b, D below). Follow-up for D, **done 2026-10-17**: the rule-drop
+sentinel pool leaves out drops whose every reason is age or a passed deadline (right by
+construction, they only diluted the estimate); a drop for age *and* another rule stays in.
+`sentinel.STALE_REASON_CATEGORIES` over `audit.reason_category` slugs `too_old` / `deadline_passed`.
 Follow-up found 2026-10-13 while re-scraping: with stdout redirected to a file on Windows,
 Python's cp1252 fallback made `console.print("✓ …")` in `_book_fetch` raise UnicodeEncodeError,
 which ended the scrape after the first source and discarded the other 24 fetches (their `runs`
-rows were marked errored by hand). `scripts/scheduled_run.sh` now exports `PYTHONUTF8=1`; the code
-fix (console output must never abort a stage: configure the Console for the stream's encoding or
-catch and degrade to ASCII) is a small TDD task still to do.
+rows were marked errored by hand). `scripts/scheduled_run.sh` now exports `PYTHONUTF8=1`. The code
+fix landed 2026-10-17: the app callback calls `cli._safe_console_streams()`, which switches a
+stdout/stderr that cannot encode "✓"/U+2011 to UTF-8 with `errors="replace"` (the module-level
+rich Console resolves `sys.stdout` lazily, so it follows); tests in `tests/test_cli_encoding.py`.
 - **A. Pipeline health**: `run_notes` table + Store API; producers: source count drop vs the
   previous complete run (and the takedown guard: a half-returned listing does not count misses),
   source error, empty-description share per source, borderline language drops, rank/refine
