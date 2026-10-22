@@ -57,7 +57,7 @@ from jobscraper.store import Store
 log = logging.getLogger(__name__)
 
 #: Bump on any wording change below; it is part of the cache key.
-TAILOR_PROMPT_VERSION = "2026-10-17.1"  # measured page budget, drop_order
+TAILOR_PROMPT_VERSION = "2026-10-22.1"  # sidebar shown; gaps judged against the whole page
 
 
 def tailoring_key_prefix(parts: CvParts) -> str:
@@ -198,7 +198,23 @@ def library_block(parts: CvParts, heights: HeightModel | None = None) -> str:
         if entry.lead:
             lines.append(f"  lead: {entry.lead}")
         lines += bullets(entry, mine)
+    if parts.sidebar:
+        lines += ["", "SIDEBAR (always on the page, not selectable; judge gaps against it too)"]
+        lines += [f"- {key.replace('_', ' ').capitalize()}: {_sidebar_text(value)}"
+                  for key, value in parts.sidebar.items()]
     return "\n".join(lines) + "\n"
+
+
+def _sidebar_text(value, *, nested: bool = False) -> str:
+    """A sidebar value on one line: a mapping at the top as ``key: value; ...``, a mapping inside
+    a list (an education block, a labelled skills line) as its values only, lists comma-joined."""
+    if isinstance(value, list):
+        return ", ".join(_sidebar_text(v, nested=True) for v in value)
+    if isinstance(value, dict):
+        if nested:
+            return " ".join(_sidebar_text(v, nested=True) for v in value.values())
+        return "; ".join(f"{k}: {_sidebar_text(v, nested=True)}" for k, v in value.items())
+    return str(value)
 
 
 TAILOR_SYSTEM = """You are tailoring the one-page CV of a specific {role_label} to one job posting.
@@ -234,8 +250,8 @@ expendable first, as "<entry id>/<bullet id>" (projects and work entries alike).
 drops them in that order until the page fits; it never asks you again.
 
 Also return, for the candidate (none of this goes on the CV): `focus`, what the posting most wants;
-`rationale`, why these picks and which strong part you left out and why; `gaps`, requirements the
-library does not cover at all, so the cover letter can address them.
+`rationale`, why these picks and which strong part you left out and why; `gaps`, requirements of
+the posting that neither the library nor the sidebar covers, so the cover letter can address them.
 
 """
 

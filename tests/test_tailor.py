@@ -153,7 +153,7 @@ def test_system_prompt_asks_for_the_budget_and_a_drop_order(settings, parts, fla
     assert "PAGE BUDGET" in prompt and "`drop_order`" in prompt
     assert "it never asks you again" in prompt
     assert "The page is full." not in prompt and "Page budget for summary" in prompt
-    assert TAILOR_PROMPT_VERSION == "2026-10-17.1"
+    assert TAILOR_PROMPT_VERSION == "2026-10-22.1"
 
 
 def test_answer_schema_ranks_the_expendables_after_choosing():
@@ -971,3 +971,19 @@ def test_cli_tailor_batch_marks_a_closed_posting_and_goes_on(batch_env):
     assert "closed" in _row(result.output, jobs[2])
     assert "tailored" in _row(result.output, jobs[0])
     assert len(batch_env.fake.calls) == 1
+
+
+def test_library_block_shows_the_fixed_sidebar_so_gaps_are_judged_against_the_whole_page(parts):
+    """The sidebar is always printed; without it the model listed skills the page already shows
+    (HTML and CSS, 2026-10-22) as gaps."""
+    block = library_block(parts)
+    assert "SIDEBAR (always on the page, not selectable; judge gaps against it too)" in block
+    assert "- Technical: C, C++, Python" in block
+    assert "- Education: Hive Helsinki" in block
+    assert "- Languages: finnish: native; english: fluent" in block
+    assert block.index("SIDEBAR") > block.index("WORK")
+
+
+def test_gaps_are_what_neither_the_library_nor_the_sidebar_covers(settings, parts):
+    prompt = tailor_system_prompt(settings.profile, parts)
+    assert "neither the library nor the sidebar covers" in prompt
