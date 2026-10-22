@@ -51,6 +51,32 @@ def safe_name(text: str) -> str:
     return " ".join(text.split()).rstrip(". ")
 
 
+#: Legal forms dropped from the end of a company name: "CV - Cloudfide", not "CV - CLOUDFIDE SPÓŁKA
+#: Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ". Longest first, so "Sp. z o.o." wins over a bare "SA".
+_LEGAL_FORMS = sorted([
+    "spółka z ograniczoną odpowiedzialnością", "spółka akcyjna", "sp. z o.o.", "sp. z o. o.",
+    "sp z oo", "s.a.", "sa", "gmbh", "ag", "ug", "kg", "oy", "oyj", "ab", "as", "a/s", "aps", "asa",
+    "ltd", "ltd.", "limited", "inc", "inc.", "llc", "plc", "b.v.", "bv", "n.v.", "nv", "sas",
+    "sarl", "srl", "s.r.l.", "s.l.", "sl", "s.p.a.", "spa", "kft", "s.r.o.", "se", "oü", "uab",
+], key=len, reverse=True)
+_LEGAL_TAIL = re.compile(r"[\s,]+(?:" + "|".join(re.escape(f) for f in _LEGAL_FORMS) + r")$",
+                         re.IGNORECASE)
+
+
+def short_company(name: str) -> str:
+    """``name`` without trailing legal forms; an all-caps name that lost one is title-cased
+    (a registry spelling, not a brand). A name that would be left empty is kept as it was."""
+    stripped = name.strip()
+    while (shorter := _LEGAL_TAIL.sub("", stripped)) != stripped:
+        stripped = shorter
+    stripped = stripped.rstrip(" ,")
+    if not stripped:
+        return name.strip()
+    if stripped != name.strip() and name.isupper():
+        stripped = stripped.title()
+    return stripped
+
+
 def _cut(text: str, room: int) -> str:
     return text[:max(room, 0)].rstrip(" .-")
 
@@ -58,7 +84,7 @@ def _cut(text: str, room: int) -> str:
 def candidate_stems(job: Job) -> list[str]:
     """The names ``job``'s CV may take, in order of preference: the company, then the company
     and the title, then that with the short job id (which no other job can own)."""
-    company, title = safe_name(job.company or ""), safe_name(job.title) or job.id
+    company, title = safe_name(short_company(job.company or "")), safe_name(job.title) or job.id
     if not company:
         first = PREFIX + _cut(title, MAX_STEM - len(PREFIX))
         return [first, f"{first} ({job.id[:8]})"]

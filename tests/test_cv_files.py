@@ -39,9 +39,9 @@ def test_safe_name_replaces_what_windows_refuses():
 
 
 def test_stems_company_first_then_company_and_title():
-    job = _job(title="Data/ML Engineer", company="Acme: Oy")
-    assert files.candidate_stems(job) == ["CV - Acme Oy", "CV - Acme Oy - Data-ML Engineer",
-                                          f"CV - Acme Oy - Data-ML Engineer ({job.id[:8]})"]
+    job = _job(title="Data/ML Engineer", company="Acme: Labs")
+    assert files.candidate_stems(job) == ["CV - Acme Labs", "CV - Acme Labs - Data-ML Engineer",
+                                          f"CV - Acme Labs - Data-ML Engineer ({job.id[:8]})"]
 
 
 def test_stems_without_a_company_use_the_title():
@@ -233,3 +233,20 @@ def test_a_lone_pdf_is_a_draft_by_its_own_time(tmp_path):
     written = datetime(2026, 10, 17, 19, 16)
     _touch(tmp_path / "CV - Acme.pdf", "%PDF", written)
     assert files.make_room(tmp_path, "CV - Acme", lambda old: True, now=written.timestamp() + 60) == []
+
+
+@pytest.mark.parametrize("company, expected", [
+    ("CLOUDFIDE SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ", "CV - Cloudfide"),
+    ("Cloudfide Sp. z o.o.", "CV - Cloudfide"),
+    ("RUBINLAKE GmbH", "CV - RUBINLAKE"),
+    ("Advaun Oy", "CV - Advaun"),
+    ("Volvo AB", "CV - Volvo"),
+    ("Acme Ltd.", "CV - Acme"),
+    ("Acme, Inc.", "CV - Acme"),
+    ("Noesis Portugal S.A.", "CV - Noesis Portugal"),
+    ("NANCE", "CV - NANCE"),            # a short all-caps brand stays as it is
+    ("King", "CV - King"),
+    ("GmbH", "CV - GmbH"),              # nothing left after stripping: keep the original
+])
+def test_company_names_lose_their_legal_form(company, expected):
+    assert files.candidate_stems(_job(company=company))[0] == expected
