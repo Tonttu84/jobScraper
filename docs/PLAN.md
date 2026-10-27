@@ -436,6 +436,11 @@ Raise `gone_after_misses` to 2 if that ever bites.
   nothing already scored is invalidated). The ~15 enrolment-gated jobs scored 20–48 on
   2026-09-10 keep those scores until re-scored: delete their rank verdicts and re-export when
   budget allows (one Opus chunk).
+  **Reversed 2026-10-27: closed.** Hive student status ends at the owner's graduation
+  (~mid-November 2026). The `extra_rules` line is gone; the requirement is now a profile
+  `deal_breakers` entry (screen rejects a clear match, ranker scores it 0–10, a "students or
+  recent graduates" preference stays in). Already-scored verdicts are not re-scored; the next
+  fresh run applies it.
 - **Evergreen pipeline adverts** — done 2026-09-10 (`filters/evergreen.py`, rules `2026-09-10d`,
   facets `2026-09-10.1`): 17 cue phrases (EN/DE/FI/PT/SV, title first) set `signals["evergreen"]`;
   never a drop. Shown as a concern in the report, a grey tag and a "hide evergreen adverts"
@@ -664,7 +669,8 @@ Observed:
 - Rank prompt contradiction, raised by most rank agents (12 instruction_gap notes): WHAT COUNTS
   AS A MATCH says an enrolment requirement "is not a blocker, do not cap", the dossier's
   CREDENTIALS says such postings are formally closed. Agents followed the dossier (mark down,
-  never cap). Owner to decide which wording wins; then align the other.
+  never cap). Decided 2026-10-27: closed, now a deal-breaker (see the 2026-09-10 enrolment
+  entry).
 - Passed deadlines reached the ranker: Wärtsilä "Engineer, Sales Tools" (last date 26/10/2026)
   and BEUMER Aarhus internship (23 Oct). The `deadline_passed` rule did not catch either date
   format; add cases to `tests/test_rules.py`.

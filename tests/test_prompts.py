@@ -123,8 +123,9 @@ def test_deal_breakers_default_to_an_empty_list():
     assert Profile(name="Nobody", summary="Someone who writes software.").deal_breakers == []
 
 
-def test_the_repo_profile_loads_with_no_deal_breakers(settings):
-    assert settings.profile.deal_breakers == []
+def test_the_repo_profile_loads_its_deal_breakers_as_plain_strings(settings):
+    # The owner's profile is gitignored and lists deal-breakers since 2026-10-27; a clone has none.
+    assert all(isinstance(item, str) and item.strip() for item in settings.profile.deal_breakers)
 
 
 def test_an_empty_deal_breaker_list_leaves_both_prompts_byte_for_byte_unchanged():

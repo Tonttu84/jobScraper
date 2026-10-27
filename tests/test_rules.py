@@ -874,6 +874,60 @@ def test_a_month_and_year_without_a_day_is_not_a_date() -> None:
     assert find_deadline("Application deadline: September 2026.", TODAY) is None
 
 
+# Two postings from the 2026-10-27 run whose closed deadlines slipped through, verbatim.
+RUN_DAY = date(2026, 10, 27)
+WARTSILA = ("Candidates should apply via Wärtsilä’s careers portal by 26/10/2026, and may contact "
+            "the recruiter for more information.")
+BEUMER = ("Please apply online via the link as soon as possible, and no later than October 23rd. "
+          "We will interview candidates on an ongoing basis and may hire candidates before the "
+          "application deadline.")
+
+
+def test_apply_with_a_short_gap_before_by_is_a_cue() -> None:
+    assert find_deadline(WARTSILA, RUN_DAY) == date(2026, 10, 26)
+
+
+def test_no_later_than_is_a_cue_and_reads_an_ordinal_day() -> None:
+    assert find_deadline(BEUMER, RUN_DAY) == date(2026, 10, 23)
+
+
+def test_a_dateless_deadline_does_not_borrow_the_next_sentences_date() -> None:
+    """BEUMER's closing "application deadline." has no date: the start date after it is not one."""
+    text = ("We may hire candidates before the application deadline. "
+            "Expected start: 1 December 2026.")
+    assert find_deadline(text, RUN_DAY) is None
+    assert find_deadline(BEUMER + " Expected start: 1 December 2026.", RUN_DAY) == date(2026, 10, 23)
+
+
+@pytest.mark.parametrize("text", [
+    "Please apply via our careers page by 13 September 2026.",
+    "Applications must reach us no later than 13 September 2026.",
+    "Applications must reach us not later than 13 September 2026.",
+    "Send your CV latest by 13 September 2026.",
+    "Please apply no later than September 13th.",
+    # Danish
+    "Ansøgningsfrist: 13. september 2026.",
+    "Send din ansøgning senest den 13. september 2026.",
+    # The clause cut keeps a heading's value on the next line and an abbreviated month's dot.
+    "Application deadline:\n13 September 2026",
+    "Application deadline: Sept. 13, 2026.",
+])
+def test_the_extended_deadline_cues_are_read(text: str) -> None:
+    assert find_deadline(text, TODAY) == date(2026, 9, 13)
+
+
+@pytest.mark.parametrize("text", [
+    # "apply ... by" must not reach across a sentence end to an unrelated "by".
+    "Apply now. Built by 12 engineers since 13 September 2026.",
+    "Apply today!\nOwned by the platform team since 13 September 2026.",
+    # Nor run on past the short gap.
+    "Apply to join a product that thousands of hospitals around the world depend on every day, "
+    "built by 12 engineers since 13 September 2026.",
+])
+def test_apply_by_does_not_latch_onto_an_unrelated_by(text: str) -> None:
+    assert find_deadline(text, TODAY) is None
+
+
 def test_a_passed_deadline_is_dropped(settings):
     job = make_job(location_raw="Helsinki, Finland", country="FI",
                    description=ENGLISH_DESC + " Application deadline: 1 September 2026.")

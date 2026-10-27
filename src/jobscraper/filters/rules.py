@@ -21,7 +21,7 @@ from jobscraper.filters.language import detect_language, find_language_requireme
 from jobscraper.models import FilterResult, Job, LivenessCheck
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-10-17a"
+RULES_VERSION = "2026-10-27a"
 
 #: A deadline this near is worth putting in front of the reader (report bullet, UI tag).
 CLOSING_SOON_DAYS = 7

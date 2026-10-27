@@ -30,6 +30,7 @@ MAX_BEHIND_DAYS = 365
 _ENGLISH = "january february march april may june july august september october november december"
 _GERMAN = "januar februar märz april mai juni juli august september oktober november dezember"
 _SWEDISH = "januari februari mars april maj juni juli augusti september oktober november december"
+_DANISH = "januar februar marts april maj juni juli august september oktober november december"
 _PORTUGUESE = ("janeiro fevereiro março abril maio junho julho agosto setembro outubro novembro "
                "dezembro")
 _FINNISH = ("tammikuu helmikuu maaliskuu huhtikuu toukokuu kesäkuu heinäkuu elokuu syyskuu "
@@ -37,9 +38,9 @@ _FINNISH = ("tammikuu helmikuu maaliskuu huhtikuu toukokuu kesäkuu heinäkuu el
 
 
 def _month_table() -> dict[str, int]:
-    """Every month name the five posting languages use, lowercased, → its number."""
+    """Every month name the six posting languages use, lowercased, → its number."""
     table: dict[str, int] = {}
-    for names in (_ENGLISH, _GERMAN, _SWEDISH, _PORTUGUESE, _FINNISH):
+    for names in (_ENGLISH, _GERMAN, _SWEDISH, _DANISH, _PORTUGUESE, _FINNISH):
         for number, name in enumerate(names.split(), start=1):
             table.setdefault(name, number)
     for number, name in enumerate(_ENGLISH.split(), start=1):
@@ -56,7 +57,7 @@ MONTHS: dict[str, int] = _month_table()
 CUES: tuple[str, ...] = (
     # English
     "application deadline", "applications close", "closing date", "last day to apply",
-    "apply by", "closes on", "deadline",
+    "closes on", "deadline", "no later than", "not later than", "latest by",
     # Finnish
     "hakuaika päättyy", "viimeinen hakupäivä", "hae viimeistään", "hakemukset viimeistään",
     # German
@@ -65,14 +66,31 @@ CUES: tuple[str, ...] = (
     "prazo de candidatura", "candidaturas até",
     # Swedish
     "sista ansökningsdag", "ansök senast",
+    # Danish
+    "ansøgningsfrist", "senest den",
+)
+
+#: Cues that need more than a fixed phrase. "Apply by" may carry a short aside between the two
+#: words ("apply via our careers portal by 26/10/2026"), but never a sentence end or a line
+#: break, so "Apply now. Built by 12 engineers since ..." stays a slogan and a team size.
+#: ("At the latest" is left out: the date comes before it, where no cue here looks.)
+_PATTERN_CUES: tuple[str, ...] = (
+    r"apply\b[^.!?\n]{0,60}?\bby",
 )
 
 #: ``(?!-)`` keeps the bare "deadline" cue away from "deadline-driven" and its relatives, which
 #: describe the team's working style rather than a date.
 _CUE_RE = re.compile(
-    r"\b(?:" + "|".join(r"\s+".join(re.escape(w) for w in cue.split()) for cue in CUES) + r")\b(?!-)",
+    r"\b(?:"
+    + "|".join([*(r"\s+".join(re.escape(w) for w in cue.split()) for cue in CUES), *_PATTERN_CUES])
+    + r")\b(?!-)",
     re.I,
 )
+
+#: Where a cue's clause ends: a full stop, "!" or "?" followed by a capitalised word. A dot after
+#: a digit ("13. September", "13.9.2026") or before one ("Sept. 13") is part of a date, and a line
+#: break alone is not an end ("Application deadline:" on one line, the date on the next).
+_SENTENCE_END = re.compile(r"(?<!\d)[.!?]\s+(?=[A-ZÄÖÅÆØÜ])")
 
 # A day or a year must not be a slice of a longer number: without the lookahead "September 2026"
 # reads as the 20th, and a phone number reads as a date.
@@ -143,7 +161,9 @@ def find_deadline(text: str | None, today: date) -> date | None:
     if not text:
         return None
     for cue in _CUE_RE.finditer(text):
-        found = _first_date(text[cue.end(): cue.end() + WINDOW], today)
+        window = text[cue.end(): cue.end() + WINDOW]
+        end = _SENTENCE_END.search(window)
+        found = _first_date(window[: end.start()] if end else window, today)
         if found is not None:
             return found
     return None
