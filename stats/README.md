@@ -17,6 +17,10 @@ Written by `jobscraper report`; regenerate from `stats/runs.jsonl` with `jobscra
 
 | date | report | jobs | new | keep | review | drop | prefiltered | passed | ranked | refine Δ | cost | rules | prompt |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 2026-10-27 | #18 | 21,944 | 0 | 4,196 | 1,220 | 30,981 | 5,174 | 2,623 | 617 | +11.6 | $0.00 | 2026-10-17a | 2026-10-13.1 |
+| 2026-10-27 | #17 | 21,944 | 5,070 | 4,196 | 1,220 | 30,981 | 3,925 | 1,982 | 349 | +13.0 | $0.00 | 2026-10-17a | 2026-10-13.1 |
+| 2026-10-17 | #16 | 18,351 | 0 | 3,779 | 1,076 | 26,472 | 3,925 | 1,982 | 426 | +12.0 | $0.00 | 2026-10-17a | 2026-10-13.1 |
+| 2026-10-17 | #15 | 18,351 | 0 | 3,788 | 1,076 | 26,463 | 3,925 | 1,982 | 435 | +12.6 | $0.00 | 2026-10-17a | 2026-10-13.1 |
 | 2026-10-17 | #14 | 18,351 | 0 | 3,794 | 1,076 | 26,457 | 3,925 | 1,982 | 441 | +11.5 | $0.00 | 2026-10-10a | 2026-10-13.1 |
 | 2026-10-17 | #13 | 18,351 | 4,239 | 3,794 | 1,076 | 26,457 | 2,890 | 1,423 | 86 | +13.6 | $0.00 | 2026-10-10a | 2026-10-13.1 |
 | 2026-10-13 | #12 | 15,405 | 2,737 | 3,059 | 968 | 23,061 | 2,890 | 1,423 | 90 | +13.6 | $0.00 | 2026-10-10a | 2026-10-13.1 |
@@ -45,17 +49,18 @@ Primary drop reason of each profile's newest run.
 
 | profile | category | drops |
 |---|---|---:|
-| default | not_software_title | 6,066 |
-| default | level_excluded | 5,321 |
-| default | duplicate | 4,123 |
-| default | too_old | 2,989 |
-| default | seniority_label | 2,315 |
-| default | non_software_title_hint | 1,750 |
-| default | years_required | 1,535 |
-| default | posting_language | 1,509 |
-| default | language_required | 461 |
-| default | location | 365 |
-| default | deadline_passed | 23 |
+| default | not_software_title | 6,957 |
+| default | level_excluded | 6,318 |
+| default | duplicate | 5,079 |
+| default | too_old | 3,466 |
+| default | seniority_label | 2,516 |
+| default | non_software_title_hint | 2,133 |
+| default | years_required | 1,748 |
+| default | posting_language | 1,744 |
+| default | language_required | 530 |
+| default | location | 433 |
+| default | deadline_passed | 39 |
+| default | closed | 18 |
 | felipe | duplicate | 2,732 |
 | felipe | location | 2,187 |
 | felipe | posting_language | 1,853 |

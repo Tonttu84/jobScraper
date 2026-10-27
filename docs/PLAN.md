@@ -650,6 +650,29 @@ rubric_mismatch notes in the health appendix are mostly this, not noise.
   (`JobView.stale`; a grey "checked open <date>" tag instead), and Indeed pages are read by their
   embedded `"isJobExpired":true|false` flag, never the "This job has expired" i18n string.
 
+## Run of 2026-10-27: report #18
+`run --skip-ai` into `data/runs/20261027-092105.db` (copied forward): 26 sources, 0 errors,
+~4,800 new (arbeitnow 2,156, ats_boards 735, linkedin 560). Screen 1,249 in 13 parallel Sonnet
+chunks; LinkedIn hydration 74/74 (429s retried), 92 verdicts cleared, 74 re-screened (72 kept).
+Rank: three rounds of 90 (6 Opus chunks each, `--reset-round --top 90`), all ending on budget with
+miss run 0/30; round 3 added only one 80+ (Metergrid), so the loop stopped there with 1,436 left in
+the queue. Refine: one Fable pass (9 new vs 11 anchored) → top 20 fully refined. Sentinels: 1/10
+rule drops kept by the screen (score 40, probably mid-level), 0/10 screen rejects reached 50.
+check-live: 40 checked, 38 open, 2 unknown. Top: Mittwald 90, RUBINLAKE 89, Metergrid 89, Arm /
+King 88, Allseas 87, Annea / Aidian / Cisco / Ericsson Gothenburg 86, Advaun 84.
+Observed:
+- Rank prompt contradiction, raised by most rank agents (12 instruction_gap notes): WHAT COUNTS
+  AS A MATCH says an enrolment requirement "is not a blocker, do not cap", the dossier's
+  CREDENTIALS says such postings are formally closed. Agents followed the dossier (mark down,
+  never cap). Owner to decide which wording wins; then align the other.
+- Passed deadlines reached the ranker: Wärtsilä "Engineer, Sales Tools" (last date 26/10/2026)
+  and BEUMER Aarhus internship (23 Oct). The `deadline_passed` rule did not catch either date
+  format; add cases to `tests/test_rules.py`.
+- Subagent hygiene: screen agents shared `D:\tmp` and the session scratchpad and overwrote each
+  other's helper scripts (`show.py`); two noticed and re-read their own rows, and a summary-vs-
+  title cross-check found no crossed verdicts. Later prompts gave each agent its own folder
+  (`D:\tmp\<stage>-cNN\`); keep doing that.
+
 ## Tailored CV (started 2026-10-14)
 Goal: a CV customised per job, built by *selecting* pre-written parts, never by writing text, so
 a hallucinated claim is structurally impossible. The Canva design stays the reference: page 1 is
