@@ -436,8 +436,8 @@ Raise `gone_after_misses` to 2 if that ever bites.
   nothing already scored is invalidated). The ~15 enrolment-gated jobs scored 20–48 on
   2026-09-10 keep those scores until re-scored: delete their rank verdicts and re-export when
   budget allows (one Opus chunk).
-  **Reversed 2026-10-27: closed.** Hive student status ends at the owner's graduation
-  (~mid-November 2026). The `extra_rules` line is gone; the requirement is now a profile
+  **Reversed 2026-10-27: closed.** The owner is not a student:
+  graduated from Hive in April 2026 (last exam; the ceremony is in November). The `extra_rules` line is gone; the requirement is now a profile
   `deal_breakers` entry (screen rejects a clear match, ranker scores it 0–10, a "students or
   recent graduates" preference stays in). Already-scored verdicts are not re-scored; the next
   fresh run applies it.
