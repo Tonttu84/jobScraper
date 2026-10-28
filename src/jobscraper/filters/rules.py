@@ -21,7 +21,7 @@ from jobscraper.filters.language import detect_language, find_language_requireme
 from jobscraper.models import FilterResult, Job, LivenessCheck
 from jobscraper.sources._common import guess_country
 
-RULES_VERSION = "2026-10-27a"
+RULES_VERSION = "2026-10-28a"
 
 #: A deadline this near is worth putting in front of the reader (report bullet, UI tag).
 CLOSING_SOON_DAYS = 7
@@ -172,7 +172,12 @@ def evaluate(job: Job, profile: Profile, today: date | None = None, *,
     role = profile.role
     keep_role = _compile_terms(role.title_terms)
     excl_role = _compile_terms(role.exclude_title_terms)
-    if excl_role and excl_role.search(title) and not (keep_role and keep_role.search(title)):
+    always_role = _compile_terms(role.drop_always_title_terms)
+    if always_role and always_role.search(title):
+        # Closed to this candidate whatever the keep lists say (e.g. "Werkstudent", "Master's
+        # thesis" when the role requires current enrolment): one reason, no role-gate verdict.
+        reasons.append(f"title excluded by profile regardless of role/level: {title!r}")
+    elif excl_role and excl_role.search(title) and not (keep_role and keep_role.search(title)):
         reasons.append(f"title looks like a non-software role: {title!r}")
     elif keep_role and not keep_role.search(title):
         # Not obviously a dev title; give the description one chance before dropping.

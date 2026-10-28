@@ -42,6 +42,8 @@ EXAMPLES = [
     ("title looks like a non-software role: 'Sales Engineer'", "non_software_title_hint"),
     ("title not a software/IT role: 'Help Desk Technician'", "not_software_title"),
     ("title level excluded by profile: 'Senior Backend Developer'", "level_excluded"),
+    ("title excluded by profile regardless of role/level: 'Werkstudent Software (m/w/d)'",
+     "title_always_excluded"),
     ("senior-level title: 'Senior Imaging Software Engineer'", "senior_title"),
     ("seniority label 'Senior' excluded by profile", "seniority_label"),
     ("asks for 7+ years of experience", "years_required"),

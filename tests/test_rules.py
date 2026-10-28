@@ -11,7 +11,7 @@ from datetime import date
 
 import pytest
 
-from jobscraper.config import LocationPolicy, Profile, SeniorityPolicy
+from jobscraper.config import LocationPolicy, Profile, RolePolicy, SeniorityPolicy
 from jobscraper.filters.deadline import find_deadline
 from jobscraper.filters.evergreen import CUES, is_evergreen
 from jobscraper.filters.rules import classify_remote_region, dedupe, evaluate
@@ -390,10 +390,97 @@ def test_data_engineer_passes_the_role_gate(settings):
     [("Werkstudent Softwareentwicklung", "DE"), ("Harjoittelija, ohjelmistokehitys", "FI")],
 )
 def test_entry_level_compound_titles_are_kept(settings, title, country):
+    # The owner's own profile may drop student-only titles (role.drop_always_title_terms); this
+    # test is about the keep lists, so it runs with that list emptied.
+    profile = settings.profile.model_copy(update={
+        "role": settings.profile.role.model_copy(update={"drop_always_title_terms": []}),
+    })
     job = make_job(title=title, country=country)
-    res = evaluate(job, settings.profile)
+    res = evaluate(job, profile)
     assert res.status == "keep"
     assert res.signals["seniority"] == "kept_by_title"
+
+
+# A student-preset-like policy, spelled out so these tests never depend on config/profile.yaml:
+# "software" is a role keep term and "student"/"werkstudent"/"intern" are seniority keep terms.
+_STUDENT_ROLE_TERMS = ["develop", "engineer", "software", "softwareentwick", "backend", "embedded"]
+_STUDENT_KEEP_TERMS = ["junior", "intern", "student", "werkstudent", "praktikum", "thesis"]
+_ENROLMENT_TERMS = ["werkstudent", "working student", "pflichtpraktikum",
+                    "(master'?s?|bachelor'?s?)\\s+thesis|thesis\\s+worker"]
+
+
+def _enrolment_profile(drop_always: list[str]) -> Profile:
+    return Profile(
+        name="X", summary="s",
+        role=RolePolicy(title_terms=_STUDENT_ROLE_TERMS, exclude_title_terms=["sales"],
+                        drop_always_title_terms=drop_always),
+        seniority=SeniorityPolicy(max_years_keep=2, max_years_review=2,
+                                  drop_title_terms=["senior", "student"],
+                                  keep_title_terms=_STUDENT_KEEP_TERMS),
+        location=LocationPolicy(tier1=["FI", "DE"]),
+    )
+
+
+_ALWAYS_REASON = "regardless of role/level"
+
+
+@pytest.mark.parametrize("title", [
+    "Werkstudent Softwareentwicklung (m/w/d)",
+    "Werkstudentin Softwareentwicklung",  # a plain term matches at a word start
+    "Working Student Backend Engineer",
+    "Master's Thesis – Embedded Software",
+    "Bachelor Thesis Software Engineering",
+    "Pflichtpraktikum Software",
+])
+def test_drop_always_title_terms_beat_every_keep_list(title):
+    """Owner (2026-10-28): roles that require current enrolment are closed to him. The title
+    matches a role keep term ("software", "engineer") and a seniority keep term ("werkstudent",
+    "student", "thesis", "praktikum"), and still drops before any AI stage sees it."""
+    profile = _enrolment_profile(_ENROLMENT_TERMS)
+    res = evaluate(make_job(title=title, country="DE"), profile)
+    assert res.status == "drop", title
+    assert any(_ALWAYS_REASON in r and title in r for r in res.reasons), res.reasons
+    # one reason for the title, not a second "non-software role" one on top
+    assert not any("non-software role" in r or "not a software/IT role" in r for r in res.reasons)
+
+
+@pytest.mark.parametrize("title", ["Junior Backend Engineer", "Software Engineering Intern"])
+def test_drop_always_title_terms_leave_other_entry_titles_alone(title):
+    profile = _enrolment_profile(_ENROLMENT_TERMS)
+    res = evaluate(make_job(title=title, country="DE"), profile)
+    assert res.status == "keep", res.reasons
+    assert not any(_ALWAYS_REASON in r for r in res.reasons)
+    assert res.signals["seniority"] == "kept_by_title"
+
+
+def test_drop_always_regex_term_is_used_verbatim():
+    """A regex term demands its own boundaries: "thesis" alone is not "Master's thesis"."""
+    profile = _enrolment_profile(["(master'?s?|bachelor'?s?)\\s+thesis|thesis\\s+worker"])
+    assert evaluate(make_job(title="Master's Thesis – Embedded Software", country="DE"),
+                    profile).status == "drop"
+    assert evaluate(make_job(title="Thesis Worker, Embedded Software", country="DE"),
+                    profile).status == "drop"
+    assert evaluate(make_job(title="Embedded Software Engineer (Thesis welcome)", country="DE"),
+                    profile).status == "keep"
+
+
+@pytest.mark.parametrize("title,status", [
+    ("Werkstudent Softwareentwicklung (m/w/d)", "keep"),
+    ("Working Student Backend Engineer", "keep"),
+    ("Master's Thesis – Embedded Software", "keep"),
+    ("Sales Manager", "drop"),
+    ("Senior Backend Engineer", "drop"),
+])
+def test_an_empty_drop_always_list_changes_nothing(title, status):
+    """The default is empty, and then the keep lists win exactly as before."""
+    res = evaluate(make_job(title=title, country="DE"), _enrolment_profile([]))
+    assert res.status == status, res.reasons
+    assert not any(_ALWAYS_REASON in r for r in res.reasons)
+
+
+def test_drop_always_title_terms_default_to_empty():
+    assert RolePolicy().drop_always_title_terms == []
+    assert Profile(name="X", summary="s").role.drop_always_title_terms == []
 
 
 # ------------------------------------------------------------------ dedupe

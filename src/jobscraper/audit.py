@@ -49,6 +49,7 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("non_software_title_hint", re.compile(r"^title looks like a non-software role\b")),
     ("not_software_title", re.compile(r"^title not a software/IT role\b")),
     ("level_excluded", re.compile(r"^title level excluded by profile\b")),
+    ("title_always_excluded", re.compile(r"^title excluded by profile regardless of role/level\b")),
     ("senior_title", re.compile(r"^senior-level title\b")),
     ("seniority_label", re.compile(r"^seniority label .*excluded by profile$")),
     ("years_required", re.compile(r"^asks for .*years of experience$")),

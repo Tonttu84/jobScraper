@@ -151,6 +151,22 @@ def test_a_valid_weights_dict_loads_in_its_own_order(tmp_path):
     assert list(profile.weights.items()) == [("stack_fit", 30), ("domain", 0), ("pay", 10)]
 
 
+def test_role_drop_always_title_terms_load_from_yaml(tmp_path):
+    from jobscraper import config
+
+    (tmp_path / "profile.yaml").write_text(
+        "name: x\nsummary: y\nrole:\n  title_terms: [software]\n"
+        "  drop_always_title_terms:\n    - werkstudent\n    - \"working student\"\n",
+        encoding="utf-8")
+    (tmp_path / "sources.yaml").write_text("sources: {}\n", encoding="utf-8")
+    role = config.load_settings(tmp_path).profile.role
+    assert role.drop_always_title_terms == ["werkstudent", "working student"]
+    assert role.exclude_title_terms == []
+
+    (tmp_path / "profile.yaml").write_text("name: x\nsummary: y\n", encoding="utf-8")
+    assert config.load_settings(tmp_path).profile.role.drop_always_title_terms == []
+
+
 def test_invalid_weights_are_rejected_with_a_clear_message():
     import pytest
 
@@ -189,6 +205,9 @@ def test_the_profile_template_loads_and_documents_the_rank_only_keys(tmp_path):
 
     assert profile.dossier == "" and profile.weights == {} and profile.deal_breakers == []
     assert profile.web.preset == "student"
+    # the student preset is shared with enrolled students: the key is documented, but empty
+    assert profile.role.drop_always_title_terms == []
+    assert "\n  drop_always_title_terms: []" in text
     assert "\ndossier: \"\"" in text and "\nweights: {}" in text and "\nweb:\n  preset:" in text
     for personal in ("hive", "poker"):
         assert personal not in text.lower()

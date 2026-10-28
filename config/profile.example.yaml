@@ -202,6 +202,11 @@ role:
     - "chef|cook|kokki|waiter|barista"
     - "cleaner|siivooja"
     - "teacher|opettaja|lehtori"
+  # Titles dropped whatever else they match: title_terms above and seniority keep_title_terms
+  # do not save them. For a candidate who is not enrolled, roles that require current
+  # enrolment (working student, thesis, mandatory internship). Empty in this student preset.
+  drop_always_title_terms: []
+  # drop_always_title_terms: [werkstudent, "working student", pflichtpraktikum, "(master'?s?|bachelor'?s?)\\s+thesis"]
 
 # Wording of the AI prompts. The scaffolding (candidate block, language and location bullets,
 # scoring instructions) is generated; these fields are the candidate-specific sentences.

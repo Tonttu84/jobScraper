@@ -145,6 +145,10 @@ class LocationPolicy(BaseModel):
 class RolePolicy(BaseModel):
     title_terms: list[str] = Field(default_factory=list)
     exclude_title_terms: list[str] = Field(default_factory=list)
+    #: Titles dropped whatever else they match: neither ``title_terms`` nor the seniority
+    #: ``keep_title_terms`` save them ("werkstudent", "working student" for a candidate who is
+    #: not enrolled). Empty by default.
+    drop_always_title_terms: list[str] = Field(default_factory=list)
 
 
 class PromptPolicy(BaseModel):
