@@ -655,6 +655,29 @@ rubric_mismatch notes in the health appendix are mostly this, not noise.
   (`JobView.stale`; a grey "checked open <date>" tag instead), and Indeed pages are read by their
   embedded `"isJobExpired":true|false` flag, never the "This job has expired" i18n string.
 
+## Run of 2026-11-02: report #20
+`run --skip-ai` into `data/runs/20261102-064632.db` (its own pre-AI report is #19). The new
+`drop_always_title_terms` dropped 1,031 titles. Screen: 827 jobs in 9 Sonnet chunks, all
+imported, cross-check clean. Hydration: 84 LinkedIn descriptions fetched, 5 closed or gone, 84
+screened again. Rank: one window of 90 (`--reset-round --top 90`, 6 Opus chunks) used the whole
+budget, so the stop rule ended the round. There were no reference scores because the profile
+change (enrolment deal-breaker) gave every old verdict a different profile hash. Refine: 18 new
+against 8 anchors, one round, top 20 fully refined. Decided jobs are left out since f70abf4.
+Sentinels: 2/10 rule drops would pass, both duplicates of kept rows (not real false drops);
+0/10 screen rejects reached 70. check-live: 40/40 open. Top: Mittwald 90, RUBINLAKE 88, Nordic
+Semiconductor (Oulu) 88, EnergyHub (Helsinki) 87, King 87, Apex.AI / Aidian / Allseas /
+Ericsson Gothenburg 86.
+Observed:
+- **Hydrated text is not re-filtered.** Sandvik "Junior Platform Engineer" (LinkedIn) says "no
+  later than October 29th, 2026"; `find_deadline` reads it. The rule filter ran before
+  hydration fetched that text, and nothing re-runs the rules on a hydrated row, so a closed
+  posting reached the ranker (55). Fix: re-evaluate the rules for every row hydration updates.
+- **Weights vs bands** (instruction_gap from 3 rank agents): a tier-1 location (15%) lifts a job
+  that misses a stated minimum to a weighted 55–64, while the bands put it under 50. Agents
+  applied the band. Decide whether the rank prompt should say that the band wins.
+- **Unstated enrolment** (Pigment, Atos, Skydio): French "stage" internships need a school
+  agreement. Agents disagreed on whether that counts as the deal-breaker.
+
 ## Run of 2026-10-27: report #18
 `run --skip-ai` into `data/runs/20261027-092105.db` (copied forward): 26 sources, 0 errors,
 ~4,800 new (arbeitnow 2,156, ats_boards 735, linkedin 560). Screen 1,249 in 13 parallel Sonnet

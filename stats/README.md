@@ -17,6 +17,8 @@ Written by `jobscraper report`; regenerate from `stats/runs.jsonl` with `jobscra
 
 | date | report | jobs | new | keep | review | drop | prefiltered | passed | ranked | refine Δ | cost | rules | prompt |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 2026-11-02 | #20 | 25,252 | 0 | 3,852 | 1,113 | 35,574 | 6,001 | 2,983 | 524 | +10.6 | $0.00 | 2026-10-28a | 2026-10-13.1 |
+| 2026-11-02 | #19 | 25,252 | 4,142 | 3,857 | 1,113 | 35,569 | 5,174 | 2,623 | 454 | +11.6 | $0.00 | 2026-10-28a | 2026-10-13.1 |
 | 2026-10-27 | #18 | 21,944 | 0 | 4,196 | 1,220 | 30,981 | 5,174 | 2,623 | 617 | +11.6 | $0.00 | 2026-10-17a | 2026-10-13.1 |
 | 2026-10-27 | #17 | 21,944 | 5,070 | 4,196 | 1,220 | 30,981 | 3,925 | 1,982 | 349 | +13.0 | $0.00 | 2026-10-17a | 2026-10-13.1 |
 | 2026-10-17 | #16 | 18,351 | 0 | 3,779 | 1,076 | 26,472 | 3,925 | 1,982 | 426 | +12.0 | $0.00 | 2026-10-17a | 2026-10-13.1 |
@@ -49,18 +51,19 @@ Primary drop reason of each profile's newest run.
 
 | profile | category | drops |
 |---|---|---:|
-| default | not_software_title | 6,957 |
-| default | level_excluded | 6,318 |
-| default | duplicate | 5,079 |
-| default | too_old | 3,466 |
-| default | seniority_label | 2,516 |
-| default | non_software_title_hint | 2,133 |
-| default | years_required | 1,748 |
-| default | posting_language | 1,744 |
-| default | language_required | 530 |
-| default | location | 433 |
-| default | deadline_passed | 39 |
-| default | closed | 18 |
+| default | level_excluded | 7,236 |
+| default | not_software_title | 7,224 |
+| default | duplicate | 5,811 |
+| default | too_old | 4,274 |
+| default | seniority_label | 2,708 |
+| default | non_software_title_hint | 2,352 |
+| default | posting_language | 1,905 |
+| default | years_required | 1,905 |
+| default | title_always_excluded | 1,031 |
+| default | language_required | 568 |
+| default | location | 486 |
+| default | deadline_passed | 49 |
+| default | closed | 25 |
 | felipe | duplicate | 2,732 |
 | felipe | location | 2,187 |
 | felipe | posting_language | 1,853 |
