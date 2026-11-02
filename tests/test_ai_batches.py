@@ -1291,6 +1291,42 @@ def test_export_refine_narrows_to_the_top_once_something_is_refined(wide_shortli
     assert batch["job_ids"] == [wide_shortlist[1].id]   # the pair is the whole shortlist now
 
 
+def _decide(data_dir: Path, **statuses: str) -> None:
+    """Record web-UI decisions (``job_id=status``) in the sidecar the web UI writes."""
+    from jobscraper.models import Decision
+
+    store = store_mod.Store(decisions_path=data_dir / "serve" / "decisions.db")
+    try:
+        for job_id, status in statuses.items():
+            store.save_decision(Decision(job_id=job_id, user="owner", status=status))
+    finally:
+        store.close()
+
+
+def test_export_refine_gives_a_decided_jobs_slot_to_the_next_undecided_one(wide_shortlist, data_dir,
+                                                                          monkeypatch, capsys):
+    """Applied and skipped jobs take no slot; an interested one still does."""
+    _decide(data_dir, **{wide_shortlist[0].id: "applied", wide_shortlist[2].id: "skipped",
+                         wide_shortlist[1].id: "interested"})
+
+    _run(monkeypatch, "export", "refine", "--top", "3")
+
+    batch = json.loads((_refine_dir(data_dir) / "batch.json").read_text(encoding="utf-8"))
+    assert batch["job_ids"] == [j.id for j in (wide_shortlist[1], wide_shortlist[3], wide_shortlist[4])]
+    assert "3 new jobs against 0 already placed" in capsys.readouterr().out
+
+
+def test_the_rank_stop_rule_watches_the_undecided_top(wide_shortlist, data_dir, monkeypatch):
+    _rank_rule(monkeypatch, refine_top_n=2)
+    _decide(data_dir, **{wide_shortlist[0].id: "interview"})
+    store = store_mod.Store()
+    try:
+        ids = ai_batches._rank_top_ids(store, ai_batches.load_settings(), store.filter_results())
+    finally:
+        store.close()
+    assert ids == [wide_shortlist[1].id, wide_shortlist[2].id]
+
+
 def test_export_refine_exports_only_the_new_jobs_and_anchors_the_rest(shortlist, data_dir, monkeypatch, capsys):
     """The second-best job is new to the shortlist; the best one rides along as a fixed anchor."""
     _refine_scores(shortlist[:1], [85])

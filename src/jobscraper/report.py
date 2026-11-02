@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -101,7 +101,8 @@ def rank_order(refine: dict[str, AIVerdict], offset: float = 0.0):
 
 def refine_shortlist(jobs: list[Job], filters: dict[str, FilterResult],
                      rank: dict[str, AIVerdict], refine: dict[str, AIVerdict], *,
-                     top: int, first_pass: int) -> tuple[list[Job], float]:
+                     top: int, first_pass: int,
+                     exclude: Collection[str] = frozenset()) -> tuple[list[Job], float]:
     """The jobs the refine pass should be holding, and the offset they were ordered with.
 
     Candidates are the rule-kept jobs that carry a rank verdict, ordered by the very score the
@@ -118,8 +119,14 @@ def refine_shortlist(jobs: list[Job], filters: dict[str, FilterResult],
     one comes along. Scores are whole numbers and a run of them at the boundary is a genuine
     tie — the job id that separates them says nothing about the job — so refining half of a run
     would leave the rest sitting unrefined just inside the window forever.
+
+    ``exclude`` takes job ids out of the candidates before the width and the tie are applied, so
+    the width fills with the next jobs instead. The pipeline passes the jobs the owner has
+    already acted on in the web UI (:func:`jobscraper.audit.load_decided_ids`: applied, skipped,
+    closed, ... — not "interested"); the report passes nothing and lists every job. The refine
+    offset still reads every verdict: a decided job's two scores calibrate the scale as before.
     """
-    alive = {job_id for job_id, f in filters.items() if f.status != "drop"}
+    alive = {job_id for job_id, f in filters.items() if f.status != "drop" and job_id not in exclude}
     offset = refine_offset(rank, refine)
     scored = [(effective_score(rank[j.id], refine.get(j.id), offset) or 0, j)
               for j in jobs if j.id in alive and j.id in rank]
@@ -215,14 +222,19 @@ def same_profile(verdicts: dict[str, AIVerdict], profile_hash: str) -> dict[str,
 
 
 def effective_top(jobs: list[Job], filters: dict[str, FilterResult], rank: dict[str, AIVerdict],
-                  refine: dict[str, AIVerdict], *, top: int) -> tuple[list[str], int | None]:
+                  refine: dict[str, AIVerdict], *, top: int,
+                  exclude: Collection[str] = frozenset()) -> tuple[list[str], int | None]:
     """The ids of the effective top ``top``, and the effective score at its boundary.
 
     The same list :func:`refine_shortlist` holds refined, asked for at one fixed width: this is
     the "top 20" the rank stop rule watches and the boundary the ``run`` pipeline compares
-    across a refine loop. ``None`` as the boundary means nothing is ranked yet.
+    across a refine loop. ``None`` as the boundary means nothing is ranked yet. ``exclude``
+    works as in :func:`refine_shortlist`: the pipeline leaves out the jobs already decided in
+    the web UI, so the top and its boundary are the undecided ones; ``eval`` and the audits pass
+    nothing.
     """
-    picked, offset = refine_shortlist(jobs, filters, rank, refine, top=top, first_pass=top)
+    picked, offset = refine_shortlist(jobs, filters, rank, refine, top=top, first_pass=top,
+                                      exclude=exclude)
     if not picked:
         return [], None
     last = picked[-1]

@@ -2263,6 +2263,56 @@ def test_check_live_defaults_to_the_top_40(data_dir, fake_http):
         store.close()
 
 
+def _decide(data_dir, **statuses: str) -> None:
+    """Record web-UI decisions (``job_id=status``) in the sidecar the web UI writes."""
+    from jobscraper.models import Decision
+
+    store = store_mod.Store(decisions_path=data_dir / "serve" / "decisions.db")
+    try:
+        for job_id, status in statuses.items():
+            store.save_decision(Decision(job_id=job_id, user="owner", status=status))
+    finally:
+        store.close()
+
+
+def test_check_live_top_skips_the_jobs_already_decided(data_dir, fake_http):
+    """An applied job is not re-checked: its slot in the top N goes to the next undecided one."""
+    jobs = _live_jobs(fake_http)
+    _decide(data_dir, **{jobs[0].id: "applied", jobs[1].id: "interested"})
+
+    result = runner.invoke(cli_mod.app, ["check-live", "--top", "2"])
+
+    assert result.exit_code == 0, result.output
+    fetched = [str(c.url) for c in fake_http.calls if "job-board-api" not in str(c.url)]
+    assert fetched == ["https://jobs.example.test/live-open", "https://jobs.example.test/live-dead"]
+    assert "check-live: 2 checked: 1 open, 0 closed, 1 gone, 0 unknown; 1 re-filtered" in result.output
+    # explicit ids are checked whatever the web UI says
+    assert runner.invoke(cli_mod.app, ["check-live", jobs[0].id]).exit_code == 0
+
+
+def test_the_runs_top_and_boundary_skip_the_jobs_already_decided(data_dir, fake_http):
+    jobs = _live_jobs(fake_http)  # ranked 90 / 80 / 70
+    assert cli_mod._top_boundary(30, 2) == 80
+    _decide(data_dir, **{jobs[0].id: "skipped"})
+    assert cli_mod._state_top_ids(30, 2) == [jobs[1].id, jobs[2].id]
+    assert cli_mod._top_boundary(30, 2) == 70
+
+
+def test_refine_gives_a_decided_jobs_slot_to_the_next_undecided_one(data_dir, fake_http, spy_refine):
+    jobs = _live_jobs(fake_http)
+    _decide(data_dir, **{jobs[0].id: "applied"})
+    result = runner.invoke(cli_mod.app, ["refine", "--top", "2"])
+    assert result.exit_code == 0, result.output
+    assert {j.id for j in spy_refine["jobs"]} == {jobs[1].id, jobs[2].id}
+    store = store_mod.Store()
+    try:
+        from jobscraper.ai.prompts import PROMPT_VERSION
+
+        assert set(store.verdicts("refine", PROMPT_VERSION)) == {jobs[1].id, jobs[2].id}
+    finally:
+        store.close()
+
+
 def test_check_live_never_drops_on_a_failed_fetch(data_dir, fake_http):
     jobs = _live_jobs(fake_http)
     fake_http.routes.clear()  # every page fetch now fails

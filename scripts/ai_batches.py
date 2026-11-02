@@ -85,6 +85,13 @@ what the next export asks about. Before anything has been refined the window is 
 equal scores at the boundary goes in whole, because the job id that would split it says nothing
 about the job.
 
+A job the owner has already acted on in the web UI — applied, skipped, closed, interview,
+rejected, offer, read from ``data/serve/decisions.db`` with the latest decision per job across
+every handle — takes no slot in that width, and neither does it in the top N the rank stop rule
+watches: the width fills with the next undecided jobs, so the refine pass is not spent re-reading
+postings already applied to. "interested" is not a decision here; those jobs keep their slot.
+The exclusion comes before the width and the boundary tie. The report still lists every job.
+
 ``export refine`` is incremental: shortlist members that already carry a refine verdict under the
 current prompt version are *not* re-scored. They go into the prompt as fixed anchors — one line
 each with the score and position they already have — and their ids go into ``anchors``;
@@ -158,6 +165,7 @@ from jobscraper.ai.prompts import (
     system_prompt,
 )
 from jobscraper.ai.schemas import Ranking, Refinement, Screening
+from jobscraper.audit import load_decided_ids
 from jobscraper.compare import jaccard as _jaccard
 from jobscraper.compare import spearman as _spearman
 from jobscraper.compare import top_set as _top_set
@@ -457,11 +465,13 @@ def _print_rank_stop(reason: str, misses: int, newly: int, ai) -> None:
 
 
 def _rank_top_ids(store: Store, settings, filters: dict) -> list[str]:
-    """The effective top ``ai.refine_top_n`` as it stands in the database right now."""
+    """The effective top ``ai.refine_top_n`` as it stands in the database right now, without the
+    jobs already decided in the web UI (applied, skipped, ...; "interested" still counts)."""
     ids, _edge = effective_top(_listed(store, settings), filters,
                                store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
                                store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS),
-                               top=settings.profile.ai.refine_top_n or RANK_TOP_WATCH)
+                               top=settings.profile.ai.refine_top_n or RANK_TOP_WATCH,
+                               exclude=load_decided_ids())
     return ids
 
 
@@ -566,6 +576,8 @@ def export_refine(top: int | None, max_chars: int, force: bool = False) -> None:
     passes that the report orders by — so a job the refine pass marked down leaves it and the
     unrefined neighbour that took its place is what the next export asks about. Before anything
     has been refined the window is the wider ``ai.refine_first_pass``. ``--top`` overrides both.
+    Jobs already decided in the web UI (applied, skipped, closed, ...; not "interested") take no
+    slot: the width fills with the next undecided jobs.
 
     Incremental, like the API path: a shortlisted job that already carries a refine verdict under
     the current prompt version is not re-scored, it goes into the prompt as a fixed anchor (one
@@ -581,7 +593,8 @@ def export_refine(top: int | None, max_chars: int, force: bool = False) -> None:
     placed = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
     shortlist, _offset = refine_shortlist(_listed(store, settings), filters,
                                           store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS), placed,
-                                          top=n, first_pass=top or settings.profile.ai.refine_first_pass)
+                                          top=n, first_pass=top or settings.profile.ai.refine_first_pass,
+                                          exclude=load_decided_ids())
     refined = {} if force else placed
     todo = [j for j in shortlist if j.id not in refined]
     anchors = [(j, refined[j.id]) for j in shortlist if j.id in refined]

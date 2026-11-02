@@ -713,6 +713,44 @@ def test_refine_shortlist_breaks_a_tie_by_position_then_rank_score_then_id():
     assert _ids(picked) == [high, low, *sorted([bare_a, bare_b])]
 
 
+# Owner, 2026-11-02: a job already decided in the web UI (applied, skipped, ...) takes no slot in
+# the width; the next undecided job takes it. The report itself passes no exclusion.
+
+
+def test_refine_shortlist_fills_the_width_past_the_excluded_jobs(shortlist_state):
+    jobs, filters, rank, refine = shortlist_state
+    best, second, sinks, rises = (j.id for j in jobs[:4])
+
+    picked, offset = refine_shortlist(jobs, filters, rank, refine, top=3, first_pass=5,
+                                      exclude={best})
+
+    assert _ids(picked) == [second, rises, sinks]  # `sinks` moves up into the freed slot
+    assert offset == 27.3  # the calibration still reads every verdict, decided or not
+
+
+def test_refine_shortlist_with_an_empty_exclusion_changes_nothing(shortlist_state):
+    jobs, filters, rank, refine = shortlist_state
+    assert refine_shortlist(jobs, filters, rank, refine, top=3, first_pass=5, exclude=set()) == \
+        refine_shortlist(jobs, filters, rank, refine, top=3, first_pass=5)
+
+
+def test_refine_shortlist_keeps_the_boundary_tie_after_the_exclusion():
+    """The exclusion comes first; the width and the tie are applied to what is left."""
+    jobs = [make_job("applied", "Junior Backend Developer"), make_job("clear", "Junior SRE"),
+            make_job("tie-a", "Junior QA Engineer"), make_job("tie-b", "Junior Data Engineer"),
+            make_job("below", "Junior Platform Engineer")]
+    filters = {j.id: FilterResult(job_id=j.id, status="keep", location_tier=1) for j in jobs}
+    applied, clear, tie_a, tie_b, below = (j.id for j in jobs)
+    rank = {j.id: make_verdict(j.id, "rank", score)
+            for j, score in zip(jobs, [95, 90, 82, 82, 70])}
+
+    picked, _offset = refine_shortlist(jobs, filters, rank, {}, top=2, first_pass=2,
+                                       exclude={applied})
+
+    assert _ids(picked) == [clear, *sorted([tie_a, tie_b])]
+    assert applied not in _ids(picked) and below not in _ids(picked)
+
+
 # ------------------------------------------------------- diff between reports
 
 
@@ -1009,6 +1047,18 @@ def test_effective_top_keeps_a_tie_at_the_boundary_whole():
 
     assert ids == [jobs[0].id, *sorted([jobs[1].id, jobs[2].id])]
     assert edge == 82
+
+
+def test_effective_top_skips_the_excluded_jobs_and_reads_the_boundary_after_them(shortlist_state):
+    jobs, filters, rank, refine = shortlist_state
+    best, second, sinks, rises = (j.id for j in jobs[:4])
+
+    ids, edge = effective_top(jobs, filters, rank, refine, top=3, exclude={best, rises})
+
+    assert ids == [second, sinks]  # only two undecided jobs are ranked and kept
+    assert edge == effective_top(jobs, filters, rank, refine, top=4)[1]  # sinks' score
+    assert effective_top(jobs, filters, rank, refine, top=3, exclude=frozenset()) == \
+        effective_top(jobs, filters, rank, refine, top=3)
 
 
 # ------------------------------------------- the fixed reference scores every rank batch carries

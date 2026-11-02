@@ -118,6 +118,45 @@ def test_latest_decision_per_job_wins_across_users() -> None:
     assert audit.latest_decisions([newer, older]) == {"a": newer}
 
 
+# Owner, 2026-11-02: a job the owner already acted on in the web UI does not take a slot in the
+# pipeline's top-N widths (refine shortlist, rank stop rule, check-live). "interested" is not
+# acted on yet, so it still counts.
+
+
+def test_decided_ids_takes_the_latest_decision_per_job_across_users() -> None:
+    decisions = [decision("a", "applied", user="alice", hours=1),
+                 decision("a", "interested", user="bob", hours=2),   # later: back to undecided
+                 decision("b", "interested", user="alice", hours=1),
+                 decision("b", "skipped", user="bob", hours=2),      # later: decided
+                 decision("c", "closed", user="alice")]
+    assert audit.decided_ids(decisions) == {"b", "c"}
+
+
+def test_decided_ids_leaves_interested_jobs_in() -> None:
+    statuses = ["interested", "applied", "skipped", "closed", "interview", "rejected", "offer"]
+    decisions = [decision(status, status) for status in statuses]
+    assert audit.decided_ids(decisions) == set(statuses) - {"interested"}
+    assert audit.decided_ids([]) == frozenset()
+
+
+def test_load_decided_ids_reads_the_web_uis_sidecar(data_dir) -> None:
+    sidecar = data_dir / "serve" / "decisions.db"
+    side = Store(data_dir / "jobs.db", decisions_path=sidecar)
+    try:
+        save_decisions(side, [decision("a", "applied", user="alice", hours=1),
+                              decision("a", "skipped", user="bob", hours=2),
+                              decision("b", "interested", user="bob")])
+    finally:
+        side.close()
+    assert audit.load_decided_ids() == {"a"}            # the default: data/serve/decisions.db
+    assert audit.load_decided_ids(sidecar) == {"a"}
+
+
+def test_load_decided_ids_without_a_sidecar_is_empty(data_dir) -> None:
+    assert audit.load_decided_ids() == frozenset()
+    assert audit.load_decided_ids(data_dir / "nowhere.db") == frozenset()
+
+
 def test_counts_merge_users_and_keep_closed_out_of_both_sides() -> None:
     out = run_eval(build_state())
     assert out["counts"] == {

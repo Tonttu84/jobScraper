@@ -34,7 +34,7 @@ import logging
 import shutil
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -526,15 +526,18 @@ def _top_boundary(days: int, n: int) -> int | None:
 
     ``run`` compares it across the refine loop: the refine pass reads a shortlist against itself
     and marks most of it down, so a boundary that fell means jobs that were never ranked could
-    now be in the top — and the ranker is worth another window loop.
+    now be in the top — and the ranker is worth another window loop. Jobs already decided in the
+    web UI take no slot (:func:`jobscraper.audit.load_decided_ids`).
     """
     from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
+    from jobscraper.audit import load_decided_ids
     from jobscraper.report import effective_top
 
     store = Store()
     jobs, filters = _load_state(store, days)
     _ids, edge = effective_top(jobs, filters, store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
-                               store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS), top=n)
+                               store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS), top=n,
+                               exclude=load_decided_ids())
     return edge
 
 
@@ -568,6 +571,7 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
         profile_fingerprint,
         rank_anchor_block,
     )
+    from jobscraper.audit import load_decided_ids
     from jobscraper.prior import queue_prior
     from jobscraper.report import (
         RANK_TOP_WATCH,
@@ -604,7 +608,10 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
     current = same_profile(ranked, profile_fingerprint("rank", settings.profile))
     stage = AIStage("rank", settings.profile, store, model=model,
                     preamble=rank_anchor_block(rank_anchors(jobs, current)))
-    before, _edge = effective_top(jobs, filters, ranked, refined, top=n)
+    # Jobs already decided in the web UI (applied, skipped, ...) take no slot in the watched top:
+    # an entrant is a job the owner has not acted on yet. Read once, fixed for the round.
+    decided = load_decided_ids()
+    before, _edge = effective_top(jobs, filters, ranked, refined, top=n, exclude=decided)
     opening = not ranked  # nothing ranked yet: the first window opens at ai.rank_top_n
     windows: list[tuple[int, int]] = []
     scored: list = []
@@ -620,7 +627,7 @@ def rank(days: int = 30, top: int | None = None, force: bool = False, model: str
         new_ids = [j.id for j in batch if j.id in got]
         scored += [got[job_id] for job_id in new_ids]
         ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
-        after, _edge = effective_top(jobs, filters, ranked, refined, top=n)
+        after, _edge = effective_top(jobs, filters, ranked, refined, top=n, exclude=decided)
         windows.append((len(new_ids), entered_top(set(before), after, new_ids)))
         before = after
         misses = miss_run(windows)
@@ -681,13 +688,15 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
     refined job that fell leaves it and the unrefined neighbour that took its place is scored on
     the next pass — up to ``ai.refine_max_passes`` times. The first request, before anything has
     been refined, is ``ai.refine_first_pass`` wide, and any width takes everything tied with its
-    last member rather than splitting a run of equal scores. Each pass is incremental: only the members
+    last member rather than splitting a run of equal scores. Jobs already decided in the web UI
+    (applied, skipped, ...; not "interested") take no slot. Each pass is incremental: only the members
     without a refine verdict are scored, the rest ride along as fixed anchors. ``--force``
     re-scores the whole shortlist once, and then iterates as usual.
     """
     _setup_logging(verbose)
     from jobscraper.ai.client import RefineStage, estimate_cost
     from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
+    from jobscraper.audit import load_decided_ids
     from jobscraper.report import calibrated_refine, effective_score, refine_shortlist
 
     settings = load_settings()
@@ -702,7 +711,9 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
     jobs, filters = _load_state(store, days)
     ranked = store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS)
     refined = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
-    shortlist, offset = refine_shortlist(jobs, filters, ranked, refined, top=n, first_pass=first_pass)
+    decided = load_decided_ids()
+    shortlist, offset = refine_shortlist(jobs, filters, ranked, refined, top=n, first_pass=first_pass,
+                                         exclude=decided)
     if not shortlist:
         console.print("refine: nothing ranked under the current prompt version — run "
                       "`jobscraper rank` first", soft_wrap=True)
@@ -733,7 +744,7 @@ def refine(days: int = 30, top: int | None = None, model: str | None = None,
         force_now = False
         refined = store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS)
         shortlist, offset = refine_shortlist(jobs, filters, ranked, refined, top=n,
-                                             first_pass=first_pass)
+                                             first_pass=first_pass, exclude=decided)
 
     unrefined = [j for j in shortlist if j.id not in refined]
     if not verdicts:
@@ -849,15 +860,18 @@ def _check_live(store: Store, settings, ids: list[str]) -> None:
 
 
 def _state_top_ids(days: int, n: int) -> list[str]:
-    """The effective top ``n`` as the database stands now: what the next report heads with."""
+    """The effective top ``n`` as the database stands now — what the next report heads with —
+    minus the jobs already decided in the web UI, whose pages need no re-check."""
     from jobscraper.ai.prompts import COMPATIBLE_PROMPT_VERSIONS
+    from jobscraper.audit import load_decided_ids
     from jobscraper.report import effective_top
 
     store = Store()
     try:
         jobs, filters = _load_state(store, days)
         ids, _edge = effective_top(jobs, filters, store.verdicts("rank", COMPATIBLE_PROMPT_VERSIONS),
-                                   store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS), top=n)
+                                   store.verdicts("refine", COMPATIBLE_PROMPT_VERSIONS), top=n,
+                                   exclude=load_decided_ids())
         return ids
     finally:
         store.close()
@@ -886,12 +900,16 @@ def check_live(job_ids: list[str] | None = typer.Argument(None, help="Job ids (o
     """Fetch each job's own page and record whether the posting is still open.
 
     Without ids: the first --top N (default 40) of the latest stored report's ranked section,
-    in report order. HTTP 404/410 is "gone"; a page showing a closed marker (LinkedIn's "No
-    longer accepting applications", SuccessFactors' "job not available") is "closed"; a failed,
+    in report order, skipping the jobs already decided in the web UI (applied, skipped, ...; not
+    "interested"), so the N are undecided ones. Explicit ids are always checked.
+
+    HTTP 404/410 is "gone"; a page showing a closed marker (LinkedIn's "No longer accepting
+    applications", SuccessFactors' "job not available") is "closed"; a failed,
     throttled or walled-off fetch is "unknown" and never drops anything. Closed and gone
     postings are re-filtered at once ("posting closed (checked ...)"), so the next `report`, the
     rank queue, the refine shortlist and the web UI leave them out like any rule drop.
     """
+    from jobscraper.audit import load_decided_ids
     from jobscraper.liveness import CHECK_LIVE_TOP
 
     _setup_logging(verbose)
@@ -905,7 +923,8 @@ def check_live(job_ids: list[str] | None = typer.Argument(None, help="Job ids (o
                 typer.echo(f"check-live: {exc}", err=True)
                 raise typer.Exit(1) from exc
         else:
-            ids = _top_report_ids(store, top or CHECK_LIVE_TOP, command="check-live")
+            ids = _top_report_ids(store, top or CHECK_LIVE_TOP, command="check-live",
+                                  exclude=load_decided_ids())
         _check_live(store, settings, ids)
     finally:
         store.close()
@@ -1218,15 +1237,17 @@ def _interested_ids(store: Store, user: str | None) -> list[str]:
     return [d.job_id for d in store.decisions(user) if d.status == "interested"]
 
 
-def _top_report_ids(store: Store, n: int, command: str = "tailor") -> list[str]:
-    """The first ``n`` of the latest stored report's ranked section, in the report's order."""
+def _top_report_ids(store: Store, n: int, command: str = "tailor",
+                    exclude: Collection[str] = frozenset()) -> list[str]:
+    """The first ``n`` of the latest stored report's ranked section, in the report's order,
+    leaving out ``exclude`` before counting (``check-live``: the jobs already decided)."""
     snap = store.report()
     if snap is None:
         typer.echo(f"{command}: no report stored in {store.path.name}; run `jobscraper report` first",
                    err=True)
         raise typer.Exit(1)
     ranked = sorted((i for i in snap.items if i.section == "ranked"), key=lambda i: i.position)
-    return [i.job_id for i in ranked[:n]]
+    return [i.job_id for i in ranked if i.job_id not in exclude][:n]
 
 
 def _tailor_jobs(store: Store, job_ids: list[str] | None, interested: bool, top: int | None,

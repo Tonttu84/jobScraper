@@ -31,7 +31,7 @@ from collections import defaultdict
 from collections.abc import Collection, Sequence
 from pathlib import Path
 
-from jobscraper.config import Profile
+from jobscraper.config import Profile, paths
 from jobscraper.models import (
     SKIP_REASON_LABELS,
     SKIP_REASONS,
@@ -341,6 +341,41 @@ def latest_decisions(decisions: Sequence[Decision]) -> dict[str, Decision]:
         if seen is None or (d.updated_at, d.user) > (seen.updated_at, seen.user):
             out[d.job_id] = d
     return out
+
+
+#: Web-UI statuses that are not a decision for the pipeline's widths: the owner has not acted on
+#: the job yet, so it keeps its slot in the refine shortlist, the rank stop rule's top and
+#: check-live's top 40.
+UNDECIDED_STATUSES = frozenset({"interested"})
+
+
+def decided_ids(decisions: Sequence[Decision]) -> frozenset[str]:
+    """The jobs the owner has already acted on: latest decision per job (across every user, as
+    :func:`latest_decisions` merges them) with a status outside :data:`UNDECIDED_STATUSES`.
+
+    The pipeline passes this set as ``exclude`` to :func:`jobscraper.report.refine_shortlist` and
+    :func:`jobscraper.report.effective_top`, so an applied or skipped job stops taking a slot in a
+    top-N width and the next undecided job takes it. A later "interested" from another handle
+    puts the job back in.
+    """
+    return frozenset(job_id for job_id, d in latest_decisions(decisions).items()
+                     if d.status not in UNDECIDED_STATUSES)
+
+
+def load_decided_ids(sidecar: Path | None = None) -> frozenset[str]:
+    """:func:`decided_ids` over the web UI's decisions sidecar (default
+    ``data/serve/decisions.db``, as ``eval`` reads it). No sidecar means nothing decided."""
+    if sidecar is None:
+        from jobscraper.web.app import DECISIONS_DB  # web.app imports report: kept lazy
+
+        sidecar = paths().data / "serve" / DECISIONS_DB
+    if not sidecar.is_file():
+        return frozenset()
+    store = Store(sidecar, readonly=True)  # the sidecar's own table is ``main.decisions``
+    try:
+        return decided_ids(store.decisions())
+    finally:
+        store.close()
 
 
 def screen_passes(v: AIVerdict, min_score: int) -> bool:
