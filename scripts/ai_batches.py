@@ -225,6 +225,18 @@ def _record_dead(store: Store, dead: list[LivenessCheck]) -> str:
     return f"; {len(dead)} closed or gone (dropped)"
 
 
+def _refilter_hydrated(store: Store, ids: list[str]) -> tuple[set[str], str]:
+    """Re-run the rule filter on the rows that just got their description: ``(dropped ids, the
+    summary bit)``.
+
+    The filter ran while they were title-only, so no text rule (deadline, years of experience,
+    language, evergreen) had anything to read; a deadline that has passed only shows up now.
+    """
+    results = liveness.refilter(store, load_settings().profile, ids)
+    dropped = {r.job_id for r in results if r.status == "drop"}
+    return dropped, (f"; {len(dropped)} dropped by the rules after hydration" if dropped else "")
+
+
 def _listed(store: Store, settings) -> list[Job]:
     """Recent postings their board still lists — what every stage here may spend a call on.
 
@@ -264,7 +276,8 @@ def hydrate_top_linkedin(top: int, max_fetch: int) -> None:
 
     Those rows were screened from their title alone, so the description can move them up as well
     as down: every job that gets one loses its prefilter *and* rank verdicts and goes back through
-    both passes. ``hydration.jsonl`` keeps the before picture (position and scores) so ``boost``
+    both passes — unless the rule filter, re-run on the new text, now drops it (a deadline that
+    has passed, say): the refill ``export prefilter`` skips a dropped row. ``hydration.jsonl`` keeps the before picture (position and scores) so ``boost``
     can report afterwards how deep ``--top`` actually needed to reach.
     """
     settings = load_settings()
@@ -301,8 +314,9 @@ def hydrate_top_linkedin(top: int, max_fetch: int) -> None:
     finally:
         http.close()
     cleared = store.delete_verdicts(hydrated)
+    _dropped, dropped_note = _refilter_hydrated(store, hydrated)
     print(f"hydrated {len(hydrated)}/{tried} linkedin descriptions; {cleared} verdicts cleared"
-          f"{_record_dead(store, dead)}")
+          f"{dropped_note}{_record_dead(store, dead)}")
 
 
 def boost() -> None:
@@ -351,15 +365,17 @@ def hydrate_linkedin(store: Store, todo: list[Job], max_fetch: int) -> set[str]:
 
     Best effort: each fetch either returns text or None (rate-limited, walled off, gone), and
     only the successes are written back. ``max_fetch`` bounds how long the stage can take.
-    Returns the ids whose page said the posting is closed or gone: those are recorded and
-    re-filtered (dropped), and the caller leaves them out of the export.
+    Every row that gets its text is re-filtered, since the rule filter ran while it was
+    title-only. Returns the ids the caller leaves out of the export: the ones whose page said the
+    posting is closed or gone (recorded and re-filtered), and the ones the rules now drop on the
+    fetched text (a deadline that has passed, say).
     """
     missing = [j for j in todo if j.source == linkedin.NAME and not j.description]
     if not missing or max_fetch <= 0:
         return set()
     batch = missing[:max_fetch]
     http = Http()
-    hydrated = 0
+    hydrated: list[str] = []
     dead: list[LivenessCheck] = []
     try:
         for job in batch:
@@ -368,11 +384,13 @@ def hydrate_linkedin(store: Store, todo: list[Job], max_fetch: int) -> set[str]:
                 continue
             job.description = text
             store.upsert_jobs([job])  # UPDATEs the stored row's data blob, description included
-            hydrated += 1
+            hydrated.append(job.id)
     finally:
         http.close()
-    print(f"hydrated {hydrated}/{len(batch)} linkedin descriptions{_record_dead(store, dead)}")
-    return {c.job_id for c in dead}
+    dropped, dropped_note = _refilter_hydrated(store, hydrated)
+    print(f"hydrated {len(hydrated)}/{len(batch)} linkedin descriptions{dropped_note}"
+          f"{_record_dead(store, dead)}")
+    return dropped | {c.job_id for c in dead}
 
 
 def _write_chunks(stage: str, todo: list[Job], filters: dict, chunk: int, max_chars: int,
@@ -517,9 +535,11 @@ def export_rank(chunk: int, max_chars: int, top: int | None, window: int | None,
     if sample > 1:
         todo = todo[::sample]  # positions 0, N, 2N, ... of the window
     # After sampling: a job that is not going to be exported is not worth a description fetch.
-    # A page that says the posting is closed drops it (recorded and re-filtered) on the spot.
+    # A page that says the posting is closed drops it (recorded and re-filtered) on the spot, and
+    # so does fetched text the rules now drop on; the rest go out with their refreshed signals.
     closed = hydrate_linkedin(store, todo, max_fetch)
     todo = [j for j in todo if j.id not in closed]
+    filters = store.filter_results()
     # A round is many windows now, and the previous window's answers have already been imported:
     # leaving them behind would have the next import read them again as unknown job ids.
     for old in (_out_dir("rank") / "verdicts").glob("chunk-*.jsonl"):

@@ -133,14 +133,31 @@ def record(store: Store, profile: Profile, checks: Sequence[LivenessCheck]) -> l
     ids = list(dict.fromkeys(c.job_id for c in checks))
     latest = store.liveness(ids)
     stored = store.filter_results()
+    changed = [jid for jid in ids
+               if (jid in latest and latest[jid].status in DEAD)
+               or (jid in stored and stored[jid].signals.get("liveness") in DEAD)]
+    return refilter(store, profile, changed)
+
+
+def refilter(store: Store, profile: Profile, ids: Sequence[str]) -> list[FilterResult]:
+    """Re-run the rule filter on the stored jobs ``ids`` and store the results; returns them.
+
+    For a job whose input changed after ``filter`` ran: a liveness check (:func:`record`), or a
+    description fetched later for a title-only row (LinkedIn hydration). The job's latest
+    conclusive check goes in, as in ``filter``. A duplicate stays a duplicate (grouping is
+    ``filter``'s job), and a job the filter never saw is left for the next ``filter``.
+    """
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return []
+    latest = store.liveness(ids)
+    stored = store.filter_results()
     updated: list[FilterResult] = []
     for job in store.jobs(ids=ids):
         fr = stored.get(job.id)
         if fr is None or "duplicate_of" in fr.signals:
             continue
-        live = latest.get(job.id)
-        if (live is not None and live.status in DEAD) or fr.signals.get("liveness") in DEAD:
-            updated.append(evaluate(job, profile, liveness=live))
+        updated.append(evaluate(job, profile, liveness=latest.get(job.id)))
     updated.sort(key=lambda r: ids.index(r.job_id))
     store.save_filter_results(updated, RULES_VERSION)
     return updated

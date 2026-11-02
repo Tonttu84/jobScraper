@@ -671,7 +671,8 @@ Observed:
 - **Hydrated text is not re-filtered.** Sandvik "Junior Platform Engineer" (LinkedIn) says "no
   later than October 29th, 2026"; `find_deadline` reads it. The rule filter ran before
   hydration fetched that text, and nothing re-runs the rules on a hydrated row, so a closed
-  posting reached the ranker (55). Fix: re-evaluate the rules for every row hydration updates.
+  posting reached the ranker (55). Fixed 2026-11-02: hydrated rows are re-filtered
+  (`liveness.refilter`), and a row that now drops leaves the rank window.
 - **Weights vs bands** (instruction_gap from 3 rank agents): a tier-1 location (15%) lifts a job
   that misses a stated minimum to a weighted 55–64, while the bands put it under 50. Agents
   applied the band. Decide whether the rank prompt should say that the band wins.

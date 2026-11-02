@@ -1971,3 +1971,109 @@ def test_hydrate_linkedin_records_a_closed_page_instead_of_hydrating(data_dir, m
     assert set(_stored_verdicts("rank")) == {closed.id}
     out = capsys.readouterr().out
     assert "hydrated 1/2 linkedin descriptions; 1 verdicts cleared; 1 closed or gone (dropped)" in out
+
+
+# ------------------------------------------------- the rule filter re-runs on a hydrated row
+# The rule filter ran while the row was title-only, so every text rule (deadline, years of
+# experience, language, evergreen) saw nothing. A row that gets its description is re-filtered on
+# the spot: one that now drops leaves the rank window, one that still passes carries the fresh
+# signals (a deadline, say) into the prompt.
+
+_PLATFORM_TEXT = ("We build our platform in Go and Kubernetes. English is our working language.\n\n"
+                  "Send your application no later than {when}.")
+
+
+@pytest.fixture
+def frozen_today(monkeypatch):
+    from datetime import date
+
+    from jobscraper.filters import rules
+
+    monkeypatch.setattr(rules, "today_utc", lambda: date(2026, 11, 2))
+
+
+def _platform_job(n: int) -> Job:
+    return Job(source="linkedin", source_id=str(n), url=f"https://www.linkedin.com/jobs/view/{n}",
+               title="Junior Platform Engineer", company="Sandvik", country="FI")
+
+
+def test_export_rank_drops_a_hydrated_job_whose_deadline_has_passed(data_dir, monkeypatch, capsys,
+                                                                     frozen_today):
+    closed = _platform_job(101)
+    fine = _bare("linkedin", 102, "https://www.linkedin.com/jobs/view/102")
+    _seed([closed, fine], ["keep", "keep"])
+    _prefilter_scores([closed, fine], [90, 80])
+    texts = {closed.url: _PLATFORM_TEXT.format(when="October 29th, 2026"),
+             fine.url: "Go and Kubernetes, English-speaking team."}
+    _serve_descriptions(monkeypatch, lambda http, url: texts[url])
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    _live, filters = _liveness_and_filters()
+    assert filters[closed.id].status == "drop"
+    assert "application deadline passed on 2026-10-29" in filters[closed.id].reasons
+    assert filters[fine.id].status == "keep"
+    exported = {e["job_id"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")}
+    assert exported == {fine.id}  # the closed posting is not ranked
+    out = capsys.readouterr().out
+    assert "hydrated 2/2 linkedin descriptions; 1 dropped by the rules after hydration" in out
+
+
+def test_hydrate_linkedin_refilters_a_hydrated_job_and_the_drop_is_not_rescreened(
+        data_dir, monkeypatch, capsys, frozen_today):
+    closed = _platform_job(111)
+    fine = _bare("linkedin", 112, "https://www.linkedin.com/jobs/view/112")
+    _seed([closed, fine], ["keep", "keep"])
+    _prefilter_scores([closed, fine], [90, 80])
+    texts = {closed.url: _PLATFORM_TEXT.format(when="October 29th, 2026"),
+             fine.url: "Go and Kubernetes, English-speaking team."}
+    _serve_descriptions(monkeypatch, lambda http, url: texts[url])
+
+    _run(monkeypatch, "hydrate", "linkedin")
+
+    _live, filters = _liveness_and_filters()
+    assert filters[closed.id].status == "drop"
+    assert filters[closed.id].reasons == ["application deadline passed on 2026-10-29"]
+    assert filters[closed.id].signals["deadline"] == "2026-10-29"
+    assert filters[fine.id].status == "keep"
+    out = capsys.readouterr().out
+    assert ("hydrated 2/2 linkedin descriptions; 2 verdicts cleared; "
+            "1 dropped by the rules after hydration") in out
+
+    _run(monkeypatch, "export", "prefilter")  # the refill pass re-screens only the survivor
+    exported = {e["job_id"] for e in _chunk_entries(data_dir / "exports" / "ai" / "prefilter")}
+    assert exported == {fine.id}
+
+
+def test_a_hydrated_job_that_breaks_no_rule_keeps_its_status_with_fresh_signals(
+        data_dir, monkeypatch, capsys, frozen_today):
+    li = _platform_job(121)
+    _seed([li], ["keep"])
+    _prefilter_scores([li], [90])
+    _serve_descriptions(monkeypatch, lambda http, url: _PLATFORM_TEXT.format(when="November 20th, 2026"))
+
+    _run(monkeypatch, "export", "rank", "--top", "5")
+
+    _live, filters = _liveness_and_filters()
+    assert filters[li.id].status == "keep"
+    assert filters[li.id].signals["deadline"] == "2026-11-20"
+    assert filters[li.id].signals["closes_in_days"] == 18
+    prompts = {e["job_id"]: e["prompt"] for e in _chunk_entries(data_dir / "exports" / "ai" / "rank")}
+    assert "deadline: 2026-11-20 (in 18 days)" in prompts[li.id]  # the window sees the fresh result
+    out = capsys.readouterr().out
+    assert "hydrated 1/1 linkedin descriptions" in out
+    assert "dropped by the rules" not in out  # nothing dropped, nothing to count
+
+
+def test_a_hydrated_duplicate_stays_a_duplicate(data_dir, monkeypatch, capsys, frozen_today):
+    """Grouping is `filter`'s job: re-filtering one row never turns a duplicate back into a keep."""
+    store = store_mod.Store()
+    try:
+        dup = _platform_job(131)
+        store.upsert_jobs([dup])
+        store.save_filter_results([FilterResult(job_id=dup.id, status="drop", reasons=["duplicate of x"],
+                                                signals={"duplicate_of": "x"})], "test-rules")
+        ai_batches.hydrate_linkedin(store, [dup], 5)
+        assert store.filter_results()[dup.id].signals == {"duplicate_of": "x"}
+    finally:
+        store.close()
