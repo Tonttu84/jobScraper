@@ -677,6 +677,10 @@ reference score. Make all of these at once, right before the next full scrape, a
   - **`skills`:** add Next.js and Prisma, framed like the other AI-directed stacks (FastAPI isn't
     listed either). Owner to decide whether skills holds only hand-written ones.
   - **`interests`/domain:** fintech or leasing is a plus, now that he has won in that domain.
+- [ ] Hand-typed timeline in GAPS (owner, 2026-11-07). "hand-typed volume since mid-2025 is small"
+  becomes "since the end of 2025". webserv was finished around September 2025 and ft_transcendence
+  on 2026-01-06; the January 2026 GitHub dates are re-uploads. Also say that Full Stack Open
+  (Mar–Jun 2026) was hand-typed course work. The dossier notes are already corrected.
 
 ## Run of 2026-11-02: report #20
 `run --skip-ai` into `data/runs/20261102-064632.db` (its own pre-AI report is #19). The new
