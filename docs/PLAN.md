@@ -664,10 +664,19 @@ reference score. Make all of these at once, right before the next full scrape, a
   - UI: 624/624;
   - details in `config/dossier-notes/smartHeating.md`.
   `config/cv-parts.yaml` already says this (library 2026-11-07.3).
-- [ ] Lease Loop, if the owner wants it to count in matching. Shared first place at Northfina's
-  24-hour hackathon (5–6 Nov 2026), built in Next.js, TypeScript and Prisma, with an audit trail and
-  signatory links. That makes Next.js and Prisma no longer gaps. The CV entry is still provisional,
-  so use the owner's polished wording if it exists by then.
+- [ ] Lease Loop counts in matching (owner, 2026-11-07: yes). Shared first place at Northfina's
+  24-hour hackathon (5–6 Nov 2026). The CV entry is still provisional, so use the owner's polished
+  wording if it exists by then. It touches four places in the profile:
+  - **AI-DIRECTED WORK:** a new bullet. A three-person team, the owner coordinating the 90 recorded
+    decisions. Strict TypeScript, Next.js 16 App Router, Prisma 7 on SQLite, Zod 4, Vitest with
+    fast-check property tests, and four UI languages. His slices were pricing, invoicing, contracts,
+    exits, second life and signatories, plus the hash-chained audit trail with its verifier. Built
+    by Opus agents in parallel waves with hardening and review agents; no AI in the product.
+  - **GAPS:** "no TypeScript at scale" becomes "TypeScript at scale only AI-directed (Lease Loop,
+    team of three)". The hand-typed TypeScript is still the ft_transcendence Pong engine.
+  - **`skills`:** add Next.js and Prisma, framed like the other AI-directed stacks (FastAPI isn't
+    listed either). Owner to decide whether skills holds only hand-written ones.
+  - **`interests`/domain:** fintech or leasing is a plus, now that he has won in that domain.
 
 ## Run of 2026-11-02: report #20
 `run --skip-ai` into `data/runs/20261102-064632.db` (its own pre-AI report is #19). The new
