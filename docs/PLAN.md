@@ -655,6 +655,20 @@ rubric_mismatch notes in the health appendix are mostly this, not noise.
   (`JobView.stale`; a grey "checked open <date>" tag instead), and Indeed pages are read by their
   embedded `"isJobExpired":true|false` flag, never the "This job has expired" i18n string.
 
+## Before the next full run: batched profile edits (owner, 2026-11-07)
+Any edit to `config/profile.yaml` changes the profile hash, so every old verdict loses its
+reference score. Make all of these at once, right before the next full scrape, and not in between.
+- [ ] smartHeating figures in `cv_text` (line ~114): "775 commits in 12 weeks, ~3 900 tests" →
+  "over 900 commits in 14 weeks, about 5,000 offline tests". Recounted 2026-11-07:
+  - Python: 4,444 passed and 4 skipped;
+  - UI: 624/624;
+  - details in `config/dossier-notes/smartHeating.md`.
+  `config/cv-parts.yaml` already says this (library 2026-11-07.3).
+- [ ] Lease Loop, if the owner wants it to count in matching. Shared first place at Northfina's
+  24-hour hackathon (5–6 Nov 2026), built in Next.js, TypeScript and Prisma, with an audit trail and
+  signatory links. That makes Next.js and Prisma no longer gaps. The CV entry is still provisional,
+  so use the owner's polished wording if it exists by then.
+
 ## Run of 2026-11-02: report #20
 `run --skip-ai` into `data/runs/20261102-064632.db` (its own pre-AI report is #19). The new
 `drop_always_title_terms` dropped 1,031 titles. Screen: 827 jobs in 9 Sonnet chunks, all
