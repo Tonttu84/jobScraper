@@ -680,7 +680,13 @@ reference score. Make all of these at once, right before the next full scrape, a
 - [ ] Hand-typed timeline in GAPS (owner, 2026-11-07). "hand-typed volume since mid-2025 is small"
   becomes "since the end of 2025". webserv was finished around September 2025 and ft_transcendence
   on 2026-01-06; the January 2026 GitHub dates are re-uploads. Also say that Full Stack Open
-  (Mar–Jun 2026) was hand-typed course work. The dossier notes are already corrected.
+  (Mar–Jun 2026) was hand-typed course work (owner confirmed 2026-11-07). The dossier notes are
+  already corrected.
+- [ ] Rust (owner, 2026-11-07). The owner is hand-writing the CodeCrafters "Build your own Claude
+  Code" agent in Rust, in progress. Where the profile lists Rust as "name only", it becomes
+  "learning by hand: a coding agent in Rust (CodeCrafters, in progress)". Add it to the GAPS line
+  as current hand-typed work, and record how far it has got at the time of the edit. No CV entry
+  until the owner writes one.
 
 ## Run of 2026-11-02: report #20
 `run --skip-ai` into `data/runs/20261102-064632.db` (its own pre-AI report is #19). The new
