@@ -15,15 +15,22 @@ on:
   schedule:
     - cron: '0 5 * * *'   # 05:00 UTC, daily
 
+permissions:
+  contents: read
+
 jobs:
   run:
     if: vars.SCHEDULED_RUNS == 'true'
     runs-on: self-hosted
+    # The scrape alone took 62 minutes on 2026-10-12 (docs/PLAN.md); the AI stages come on top.
+    timeout-minutes: 240
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       JOBSCRAPER_PROFILE: ${{ vars.JOBSCRAPER_PROFILE }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install dependencies
         run: uv sync --extra dev
@@ -40,7 +47,7 @@ jobs:
 
       - name: Upload the reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: results
           path: results/
