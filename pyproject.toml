@@ -58,3 +58,14 @@ target-version = "py311"
 # Explicit rule set so results don't change with ruff's defaults.
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 ignore = ["E501", "RUF001", "RUF002", "RUF003", "SIM108", "B905", "B008"]  # B008: typer.Argument defaults are idiomatic
+# Function limits (docs/decisions.md D4): a report for now, not a gate. Ruff has no warning
+# level, so run them with --exit-zero (AGENTS.md → Commands); uncomment to make them fail the gate.
+# extend-select = ["C901", "PLR0912", "PLR0913", "PLR0915"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15          # C901, cyclomatic
+
+[tool.ruff.lint.pylint]
+max-args = 5                 # PLR0913
+max-branches = 12            # PLR0912
+max-statements = 50          # PLR0915, Ruff's stand-in for function length
