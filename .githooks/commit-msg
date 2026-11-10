@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# commit-msg hook: enforces Conventional Commits plus good-message rules.
+#
+#   type(scope)!: summary     scope and ! are optional
+#   - type is one of the allowed types below, in lower case
+#   - scope is lower case: letters, digits, . _ / -
+#   - the subject is at most 72 characters (Dependabot's "chore: bump ..."
+#     subjects excepted) and does not end with a period
+#   - a blank line separates the subject from the body
+#
+# Subjects that start like git's own merge, revert, reapply and
+# fixup!/squash!/amend! messages pass unchecked, typed by hand or not
+# (templates/commit-check.yml keeps fixup commits off main in CI). The
+# subject is measured in characters. The hook checks the message git will
+# save: comment lines and anything below the scissors line are ignored
+# only when git drops them (after its editor, or with commit.cleanup=strip).
+# With -m or -F git keeps them, so they count.
+#
+# Source: https://github.com/Tonttu84/ai-workflow (MIT). Install with
+# hooks/install.sh from that repo. Needs bash 3.2 or later and git.
+set -u
+
+file=${1:?usage: commit-msg <message-file>}
+types='feat|fix|docs|test|refactor|perf|build|ci|chore|revert'
+max=72
+
+comment=$(git config --get core.commentChar 2>/dev/null || true)
+[ "${#comment}" -eq 1 ] || comment='#'
+scissors="$comment ------------------------ >8 ------------------------"
+
+raw=()
+while IFS= read -r line || [ -n "$line" ]; do
+  raw+=("${line%$'\r'}")
+done < "$file"
+
+# Git drops comment lines only in its "strip" cleanup mode: the default
+# when its editor ran, or commit.cleanup=strip. With -m, -F or --no-edit
+# git runs no editor and exports GIT_EDITOR=: to this hook; then comment
+# lines are kept (unless commit.cleanup=strip) and so is a scissors line.
+# Otherwise the editor template says which applies ("will be ignored" or
+# "will be kept"), else commit.cleanup does. A --cleanup option on the
+# command line is invisible here. Run by hand, set GIT_EDITOR=: to check
+# a message as git commit -m would save it.
+cleanup=$(git config --get commit.cleanup 2>/dev/null || true)
+if [ "${GIT_EDITOR-}" = : ]; then
+  cut=0
+  if [ "$cleanup" = strip ]; then strip=1; else strip=0; fi
+else
+  cut=1
+  case $cleanup in
+    whitespace | scissors | verbatim) strip=0 ;;
+    *) strip=1 ;;
+  esac
+  for ((i = 0; i < ${#raw[@]}; i++)); do
+    case ${raw[i]} in
+      "$comment Please enter the commit message"*) strip=1 ;;
+      "$comment with '$comment' will be kept"*) strip=0; break ;;
+      "$scissors"*) break ;;
+    esac
+  done
+fi
+
+# Read the message the way git will save it.
+lines=()
+for ((i = 0; i < ${#raw[@]}; i++)); do
+  line=${raw[i]}
+  if [ "$cut" -eq 1 ]; then
+    case $line in "$scissors"*) break ;; esac
+  fi
+  if [ "$strip" -eq 1 ]; then
+    case $line in "$comment"*) continue ;; esac
+  fi
+  while [[ $line == *[[:space:]] ]]; do line=${line%?}; done
+  if [ "${#lines[@]}" -eq 0 ] && [ -z "$line" ]; then continue; fi
+  lines+=("$line")
+done
+
+errors=()
+if [ "${#lines[@]}" -eq 0 ]; then
+  errors+=("the message is empty")
+  subject=''
+else
+  subject=${lines[0]}
+fi
+
+case $subject in
+  "Merge branch "* | "Merge branches "* | "Merge remote-tracking branch "* | \
+  "Merge pull request "* | "Merge tag "* | "Merge commit "* | \
+  'Revert "'* | 'Reapply "'* | "fixup! "* | "squash! "* | "amend! "*)
+    exit 0 ;;
+esac
+
+if [ -n "$subject" ]; then
+  pattern="^($types)(\([a-z0-9][a-z0-9._/-]*\))?!?: [^ ]"
+  if ! [[ $subject =~ $pattern ]]; then
+    errors+=("the subject must look like 'type(scope)!: summary' with an allowed type")
+  fi
+  # Characters, not bytes, in any locale: drop UTF-8 continuation bytes.
+  length=$(printf '%s' "$subject" | LC_ALL=C tr -d '\200-\277' | wc -c)
+  length=$((length + 0))
+  # Dependabot's subjects name packages and versions and may run longer;
+  # only their length is let off.
+  dependabot="^(chore|ci)(\([a-z0-9][a-z0-9._/-]*\))?: bump (the [^ ]+ group|[^ ]+ from [^ ]+ to [^ ]+)"
+  if [ "$length" -gt "$max" ] && ! [[ $subject =~ $dependabot ]]; then
+    errors+=("the subject is $length characters; the limit is $max")
+  fi
+  if [[ $subject == *. ]]; then
+    errors+=("the subject ends with a period")
+  fi
+  if [ "${#lines[@]}" -gt 1 ] && [ -n "${lines[1]}" ]; then
+    errors+=("the second line must be blank (it separates the subject from the body)")
+  fi
+fi
+
+[ "${#errors[@]}" -eq 0 ] && exit 0
+
+{
+  printf 'commit-msg: rejected: %s\n' "$subject"
+  for e in "${errors[@]}"; do printf '  - %s\n' "$e"; done
+  printf '\nFormat:  type(scope)!: summary   (scope and ! are optional)\n'
+  printf 'Types:   %s\n' "$(printf '%s' "$types" | sed 's/|/, /g')"
+  printf 'Subject: at most %d characters, imperative, no trailing period.\n' "$max"
+  printf 'Body:    after a blank line; say why. Task ids go in a footer (Refs: R99).\n'
+  printf '\nThe message is kept in %s\n' "$file"
+} >&2
+exit 1

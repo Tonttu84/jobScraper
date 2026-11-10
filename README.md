@@ -16,7 +16,7 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone git@github.com:tonttu84/jobScraper.git && cd jobScraper
-uv sync --extra dev            # creates .venv, installs everything incl. python-jobspy from git
+./scripts/setup.sh             # turns the commit hooks on, then `uv sync --extra dev` (.venv, incl. python-jobspy from git)
 cp config/profile.example.yaml config/profile.yaml   # your CV and policies; gitignored (see docs/PLAN.md → "Private data")
 cp .env.example .env           # put your ANTHROPIC_API_KEY in it (only needed for prefilter/rank)
 uv run pytest -q               # fixture-based tests, no network

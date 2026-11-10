@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# pre-push hook: checks the message of every commit about to be pushed,
+# with check-commits and the commit-msg hook next to it, as the CI commit
+# check (templates/commit-check.yml) does, so a failure shows up here,
+# for free, instead of in CI.
+#
+# git passes <remote> <url>, and one line per ref on stdin:
+# <local ref> <local sha> <remote ref> <remote sha>. Deletions are
+# skipped. For a new branch, the commits no remote-tracking branch has
+# yet are checked; with no remote-tracking branches at all, only the tip,
+# with a warning. A pre-push.local next to this hook runs first.
+#
+# Source: https://github.com/Tonttu84/ai-workflow (MIT). Install with
+# hooks/install.sh from that repo. Needs bash 3.2 or later and git.
+set -u
+
+remote=${1:-origin}
+here="$(cd "$(dirname "$0")" && pwd)"
+for f in commit-msg check-commits; do
+  [ -f "$here/$f" ] || { echo "pre-push: $here/$f not found; rerun hooks/install.sh" >&2; exit 1; }
+done
+check_commits() { bash "$here/check-commits" "$here/commit-msg" "$@"; }
+
+# A pre-push that was here before ours (Git LFS installs one) was kept as
+# pre-push.local; it runs first, with the same arguments and input.
+input=$(mktemp) || exit 1
+trap 'rm -f "$input"' EXIT
+cat > "$input"
+if [ -x "$here/pre-push.local" ]; then
+  "$here/pre-push.local" "$@" < "$input" || exit
+fi
+
+status=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ -n "${local_sha//0/}" ] || continue # a deletion
+  if [ -n "${remote_sha//0/}" ] && git cat-file -e "$remote_sha^{commit}" 2> /dev/null; then
+    check_commits "$remote_sha..$local_sha" || status=1
+  elif [ -n "$(git for-each-ref --count=1 refs/remotes)" ]; then
+    # A new branch, or a remote this clone has not fetched from: the
+    # commits no remote branch has yet.
+    check_commits "$local_sha" --not --remotes || status=1
+  else
+    echo "pre-push: nothing is known about $remote yet; checking only the tip, $local_sha" >&2
+    check_commits -1 "$local_sha" || status=1
+  fi
+done < "$input"
+
+if [ "$status" -ne 0 ]; then
+  echo "pre-push: fix the messages (git rebase -i) and push again; never --no-verify." >&2
+fi
+exit "$status"

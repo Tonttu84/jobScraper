@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# check-commits: checks the message of every commit in a range with the
+# commit-msg hook. The pre-push hook runs it over the commits being
+# pushed, and the CI template (templates/commit-check.yml) over a pull
+# request or a push, so both apply the same rules.
+#
+# Usage: check-commits <commit-msg hook> <git rev-list arguments...>
+#
+# fixup!/squash!/amend! commits are rejected: squash them first. Merge
+# commits git writes pass, as the hook lets them through.
+#
+# Source: https://github.com/Tonttu84/ai-workflow (MIT). Install with
+# hooks/install.sh from that repo. Needs bash 3.2 or later and git.
+set -u
+
+[ "$#" -ge 2 ] || { echo "usage: check-commits <commit-msg hook> <rev-list arguments...>" >&2; exit 2; }
+hook=$1
+shift
+
+revs=$(git rev-list --reverse "$@") || exit 2
+msg=$(mktemp) || exit 2
+trap 'rm -f "$msg" "$msg.out"' EXIT
+status=0
+while read -r sha; do
+  [ -n "$sha" ] || continue
+  git log -1 --format=%B "$sha" > "$msg"
+  subject=$(head -n 1 "$msg")
+  case $subject in
+    "fixup! "* | "squash! "* | "amend! "*)
+      printf 'check-commits: %s: squash it first (git rebase -i --autosquash): %s\n' "$sha" "$subject" >&2
+      status=1
+      continue ;;
+  esac
+  if ! GIT_EDITOR=: bash "$hook" "$msg" > "$msg.out" 2>&1; then
+    printf 'check-commits: %s: the message breaks the commit rules\n' "$sha" >&2
+    sed -n '1,/^$/p' "$msg.out" | sed 's/^/  /' >&2
+    status=1
+  fi
+done <<< "$revs"
+exit "$status"

@@ -1,0 +1,4 @@
+# Shell scripts and the commit hooks keep LF endings: bash fails on a CRLF script, and
+# core.autocrlf=true (Git for Windows' default) would check them out with CRLF.
+*.sh text eol=lf
+.githooks/* text eol=lf
