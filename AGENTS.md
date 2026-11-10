@@ -40,7 +40,7 @@ subagents; wait for their report, run the gate, then commit.
 | Live-check the sources (owner's machine only) | `uv run jobscraper probe [source] [-v]` |
 | Unit tests (no gate) | `uv run pytest -q` |
 | Lint | `uv run ruff check src tests` |
-| Function-size report (no gate) | `uv run ruff check src --select C901,PLR0912,PLR0913,PLR0915 --exit-zero` |
+| Function-size report (no gate) | `uv run ruff check src scripts --select C901,PLR0912,PLR0913,PLR0915 --exit-zero` |
 | Quick iteration, no browser suites, coverage not gated | `./scripts/check.sh --fast` |
 | The local gate before every push (ruff, full pytest, coverage 99 %) | `./scripts/check.sh` |
 
@@ -76,9 +76,11 @@ on one worker after the parallel part.
 
 ## Domain rules
 
-- Pipeline: scrape (sources to SQLite) → filter (rules, permissive) → prefilter (Sonnet,
-  permissive) → rank (Opus, top N) → check-live (top 40 pages; closed or gone postings drop) →
-  report (markdown + DB) → publish → serve.
+- Pipeline: scrape (sources to SQLite) → filter (rules, permissive) → prefilter (cheap model,
+  permissive) → rank (strong model, top N) → check-live (top 40 pages; closed or gone postings
+  drop) → report (markdown in `results/`, `data/exports/filtered.jsonl`, and a snapshot in the
+  DB) → publish → serve. The models are `prefilter_model` and `rank_model` in
+  `src/jobscraper/config.py:178-179`, overridable per profile.
 - The rule filter drops only on strong signals (senior title, 5+ years, a posting written in or
   requiring a language the profile does not work in, on-site outside the target countries,
   non-software title); everything softer is `review` and goes to the AI stage.
