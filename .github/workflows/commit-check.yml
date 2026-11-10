@@ -1,0 +1,150 @@
+# The gate for commit messages. The local hook is feedback while writing:
+# a fresh clone has it off until its setup command runs, --no-verify and
+# GitHub's web editor skip it, and a squash merge writes its commit on
+# GitHub. This workflow checks what reaches the default branch:
+#   - every commit of a pull request (base..head), and every commit of a
+#     push to the default branch (before..after), with the project's
+#     .githooks/commit-msg as it was before the change, so a change cannot
+#     weaken its own check. Merge commits git writes pass, as in the hook;
+#     fixup!/squash!/amend! commits fail, squash them first.
+#   - the PR title, which a squash merge makes the commit subject, without
+#     the hook's exemptions for subjects git writes (a title never is one).
+# A ruleset on the default branch that requires this check and blocks
+# force pushes makes it binding.
+#
+# Copy to .github/workflows/commit-check.yml in a project that commits
+# .githooks/commit-msg and .githooks/check-commits (hooks/install.sh in
+# Tonttu84/ai-workflow puts them there), and
+# change `main` below if the default branch has another name.
+#
+# GitHub uses the PR title as the squash subject only when the repository
+# says so; by default a one-commit PR gets that commit's subject. Set it
+# once per repository:
+#   gh api -X PATCH repos/OWNER/REPO \
+#     -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY
+#
+# Triggers: Actions minutes are free for public repositories on standard
+# runners, but private ones share a small monthly allowance on GitHub
+# Free. The pre-push hook runs the same check locally before every push,
+# so CI is a confirmation. A public repository keeps the push trigger; a
+# private one deletes it and uncomments the weekly schedule. A scheduled
+# or manual run checks the last 15 days of commits along the branch's own history.
+name: commit-check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+# A newer run for a pull request replaces an older one. Every other run
+# gets its own group: a push run checks that push's commits, which a
+# later push's run would not cover, and a shared group would also drop
+# a waiting run when a third one arrives.
+concurrency:
+  group: commit-check-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The PR title follows the commit format
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The hook from the base; from the PR itself only when it adds it.
+          hook_from() { git show "$1:.githooks/commit-msg" > "$RUNNER_TEMP/commit-msg" 2> /dev/null; }
+          if ! hook_from "$PR_BASE"; then
+            if ! hook_from "$PR_HEAD"; then
+              echo "::error::.githooks/commit-msg is missing; commit the hook first"
+              exit 1
+            fi
+            echo "::warning::.githooks/commit-msg is new in this pull request; checking with its own copy"
+          fi
+          case $TITLE in
+            "Merge branch "* | "Merge branches "* | "Merge remote-tracking branch "* | \
+            "Merge pull request "* | "Merge tag "* | "Merge commit "* | \
+            'Revert "'* | 'Reapply "'* | "fixup! "* | "squash! "* | "amend! "*)
+              echo "::error::The PR title looks like a message git writes; use 'type(scope): summary'"
+              exit 1 ;;
+          esac
+          # A squash merge appends " (#N)"; the subject on main must still fit.
+          printf '%s (#%s)\n' "$TITLE" "$PR_NUMBER" > "$RUNNER_TEMP/pr-title"
+          GIT_EDITOR=: bash "$RUNNER_TEMP/commit-msg" "$RUNNER_TEMP/pr-title"
+
+  commits:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Every commit follows the commit format
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          have() { git cat-file -e "$1^{commit}" 2> /dev/null; }
+          # The commits to check ($@), the commit before them whose hook
+          # checks them (trusted), and the change's own tip as a fallback.
+          if [ "$EVENT" = pull_request ]; then
+            set -- "$PR_BASE..$PR_HEAD"
+            trusted=$PR_BASE tip=$PR_HEAD
+          elif [ "$EVENT" != push ]; then
+            # A scheduled or manual run: the last 15 days along this branch's own
+            # history (first parents), so a merged old branch counts too.
+            tip=$PUSH_AFTER
+            trusted=$(git rev-list -1 --first-parent --before="15 days ago" "$PUSH_AFTER")
+            if [ -n "$trusted" ]; then set -- "$trusted..$PUSH_AFTER"; else set -- "$PUSH_AFTER"; fi
+          else
+            tip=$PUSH_AFTER trusted=
+            if [ -n "${PUSH_BEFORE//0/}" ]; then
+              # After a force push the old tip may be missing from the clone.
+              have "$PUSH_BEFORE" || timeout 60 git fetch -q origin "$PUSH_BEFORE" 2> /dev/null || true
+              have "$PUSH_BEFORE" && trusted=$PUSH_BEFORE
+            fi
+            if [ -n "$trusted" ]; then
+              set -- "$PUSH_BEFORE..$PUSH_AFTER" # after a force push too: only the new commits
+            else
+              echo "::warning::No earlier commit to compare with (new branch, or an old tip that cannot be fetched); checking $PUSH_AFTER only, with its own hook"
+              set -- -1 "$PUSH_AFTER"
+            fi
+          fi
+          # Each file from the commit before the change, else from the change
+          # itself with a warning. A project's own pre-push is never run.
+          tool_from() {
+            if [ -n "$trusted" ] && git show "$trusted:.githooks/$1" > "$RUNNER_TEMP/$1" 2> /dev/null; then
+              return 0
+            elif git show "$tip:.githooks/$1" > "$RUNNER_TEMP/$1" 2> /dev/null; then
+              [ -z "$trusted" ] || echo "::warning::.githooks/$1 is new in this change; checking with its own copy"
+              return 0
+            fi
+            echo "::error::.githooks/$1 is missing; commit the hooks first (hooks/install.sh)"
+            return 1
+          }
+          tool_from commit-msg
+          tool_from check-commits
+          if ! bash "$RUNNER_TEMP/check-commits" "$RUNNER_TEMP/commit-msg" "$@"; then
+            echo "::error::Some commit messages break the commit rules; see the lines above"
+            exit 1
+          fi
