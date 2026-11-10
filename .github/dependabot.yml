@@ -1,0 +1,54 @@
+# Dependabot version updates: one grouped pull request per ecosystem,
+# roughly every two weeks. Copy to .github/dependabot.yml.
+#
+# Dependabot has no two-week interval, so the schedule is a cron job on
+# the 1st and the 15th of each month (times in UTC). The commit-message
+# prefixes (`chore`, and `ci` for actions) make every title a valid
+# subject for the commit hook and the CI commit check. Dependabot's
+# "bump ..." subjects name packages and versions and can pass 72
+# characters; the hook lets them, and only them, past the length limit.
+#
+# github-actions is always on: workflows pin actions by commit SHA with
+# the release tag in a trailing comment (`@<sha> # v7.0.1`), and only
+# Dependabot moves them. Uncomment the ecosystems the project uses
+# (remove the leading `#` of each `#  ` line).
+#
+# Security updates are a separate repository setting (Settings, Code
+# security, Dependabot security updates); turn them on in every repo.
+# Groups apply to version updates unless they say otherwise, so each
+# ecosystem also has a short-named group for its security updates.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: cron
+      cronjob: '0 6 1,15 * *'
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns:
+          - '*'
+      gha-sec:
+        applies-to: security-updates
+        patterns:
+          - '*'
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: cron
+      cronjob: '0 6 1,15 * *'
+    groups:
+      uv:
+        applies-to: version-updates
+        patterns:
+          - '*'
+      uv-sec:
+        applies-to: security-updates
+        patterns:
+          - '*'
+    commit-message:
+      prefix: chore
