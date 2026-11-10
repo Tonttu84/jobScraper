@@ -40,3 +40,9 @@ updates:
           - '*'
     commit-message:
       prefix: chore
+    ignore:
+      # python-jobspy (LinkedIn/Indeed) requires pandas>=2.1,<3, so a pandas 3 bump cannot
+      # resolve and fails the whole uv job (dependency_file_not_resolvable). Drop this once
+      # python-jobspy allows pandas 3.
+      - dependency-name: pandas
+        update-types: ['version-update:semver-major']
