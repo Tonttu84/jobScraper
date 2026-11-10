@@ -23,7 +23,7 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       JOBSCRAPER_PROFILE: ${{ vars.JOBSCRAPER_PROFILE }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: uv sync --extra dev
@@ -40,7 +40,7 @@ jobs:
 
       - name: Upload the reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: results
           path: results/
