@@ -212,7 +212,7 @@ Launch from the desktop; tick items off here (or delete the section) as they are
   and the requisition service alike, so that board is `lazy_descriptions: false`), OHB 575 and
   Henkel 1 337 unchanged (clean already, so neither pays for a request — Henkel's requisition
   service answers 403 anyway). Cost: one extra request per GMV posting (~130 per run).
-- [ ] **Sync `.venv` to the security-patched lock** (added 2026-11-11, commit 98a22f3). The lock
+- [x] **Sync `.venv` to the security-patched lock** (added 2026-11-11, commit 98a22f3; done 2026-11-11). The lock
   was upgraded to certifi 2026.10.23, aiohttp 3.14.5, multidict 7.2.1, urllib3 2.8.0 and yarl
   1.25.1, which closed all 13 Dependabot alerts. `.venv` still has the old versions, because the
   running `jobscraper serve` locks `jobscraper.exe` and `uv sync` can't replace it.
