@@ -4,6 +4,9 @@
 #   scripts/check.sh            full run, gates on coverage (before every push of a code change)
 #   scripts/check.sh --fast     the parallel part only: no browser suites, coverage not gated
 #
+# Not needed before a push of data, stats or docs commits; a commit that only edits
+# config/sources.yaml needs only `uv run pytest tests/test_config.py` (AGENTS.md, Kind; D6).
+#
 # The non-browser tests run on all cores (pytest-xdist); the two headless-browser suites run
 # afterwards on one worker, because parallel Chromium instances fail intermittently. Coverage is
 # collected across both invocations (--cov-append) and gated once at the end.

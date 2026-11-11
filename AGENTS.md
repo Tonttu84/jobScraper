@@ -19,6 +19,16 @@ working branch: if a session started on one, push the same commits to `main` too
 pull request unless the owner asks. Don't commit half-written files from still-running
 subagents; wait for their report, run the gate, then commit.
 
+**Project exception to the local gate** (owner, 2026-09-11, restored 2026-11-11; `docs/decisions.md`
+D6). This overrides the shared rule "run the local gate before every push" for these commits only:
+
+- Data, stats and docs commits (the outputs of scrape, filter, rank, refine, report and publish;
+  `stats/`; documentation) need no `./scripts/check.sh` before the push.
+- A commit whose only change is an edit to `config/sources.yaml` needs only
+  `uv run pytest tests/test_config.py`.
+- Every other commit, and any commit that mixes in code, runs `./scripts/check.sh` before the
+  push. The `pre-push` hook checks the commit messages of every push either way.
+
 ## Stack
 
 - Python 3.11+, `uv`, Typer CLI (`jobscraper`), SQLite (one database per run under `data/runs/`).
@@ -42,7 +52,7 @@ subagents; wait for their report, run the gate, then commit.
 | Lint | `uv run ruff check src tests` |
 | Function-size report (no gate) | `uv run ruff check src scripts --select C901,PLR0912,PLR0913,PLR0915 --exit-zero` |
 | Quick iteration, no browser suites, coverage not gated | `./scripts/check.sh --fast` |
-| The local gate before every push (ruff, full pytest, coverage 99 %) | `./scripts/check.sh` |
+| The local gate before every push (ruff, full pytest, coverage 99 %; exceptions under Kind) | `./scripts/check.sh` |
 
 Never run two checks (or a check and the browser suites) at the same time: the headless-browser
 tests fail intermittently under contention. `scripts/check.sh` already runs the browser suites
