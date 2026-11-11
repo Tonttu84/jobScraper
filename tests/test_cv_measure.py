@@ -82,6 +82,14 @@ def test_layout_signature_follows_the_fonts_and_the_css(monkeypatch):
     assert layout_signature(True) != before
 
 
+def test_layout_signature_follows_the_font_files(monkeypatch):
+    """Other font files (same family names, same CSS) are another layout: measured again."""
+    before, without = layout_signature(True), layout_signature(False)
+    monkeypatch.setattr(measure_mod.render, "font_faces", lambda: "@font-face { other bytes }")
+    assert layout_signature(True) != before
+    assert layout_signature(False) == without  # the fallback fonts do not load the files
+
+
 # ------------------------------------------------------------------- the measuring page
 
 
@@ -102,7 +110,7 @@ def test_the_measuring_page_marks_every_part(parts):
     # Every bullet of every entry, in the real column: the CV's own classes and stylesheet.
     assert "Ran CGI scripts." in html and "Supported heredocs." in html
     assert '<main class="main">' in html and '<aside class="sidebar">' in html
-    assert "fonts.googleapis" not in html and "fonts.googleapis" in measurement_html(parts)
+    assert "@font-face" not in html and "@font-face" in measurement_html(parts)
 
 
 def _boxes(parts) -> dict:
@@ -187,7 +195,7 @@ def test_measure_heights_uses_one_browser_for_every_part(parts, fake_playwright)
     model = measure_heights(parts)
     assert fake_playwright.launches == 1 and fake_playwright.closed
     measuring, cv = fake_playwright.html
-    assert 'data-m="summary:default"' in measuring and "fonts.googleapis" in measuring
+    assert 'data-m="summary:default"' in measuring and "@font-face" in measuring
     assert "data-m" not in cv and "A general summary" in cv  # the untailored CV, as printed
     assert model.layout == layout_signature(True)
     assert model.overhead_mm == pytest.approx(250 - 75.6)
@@ -195,7 +203,7 @@ def test_measure_heights_uses_one_browser_for_every_part(parts, fake_playwright)
 
 def test_measure_heights_without_web_fonts(parts, fake_playwright):
     assert measure_heights(parts, fonts=False).layout == layout_signature(False)
-    assert all("fonts.googleapis" not in html for html in fake_playwright.html)
+    assert all("@font-face" not in html for html in fake_playwright.html)
 
 
 def test_main_height_mm(parts, fake_playwright):
@@ -281,7 +289,7 @@ def cli_env(tmp_path, monkeypatch, counted):
 def test_cli_cv_heights_measures_and_prints(cli_env):
     result = runner.invoke(cli_mod.app, ["cv-heights"])
     assert result.exit_code == 0, result.output
-    assert cli_env.counted == [True]  # the real cache is measured with the web fonts
+    assert cli_env.counted == [True]  # the real cache is measured with the CV fonts
     files = list((cli_env.data / "cv").glob("heights-*.json"))
     assert len(files) == 1 and str(files[0]) in result.output
     assert "measured" in result.output

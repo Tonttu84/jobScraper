@@ -805,6 +805,19 @@ PDF/PNG exports (`cv-canva-2026-10.*`).
 - Next: exact fonts (Aileron is free; "Now" to check) if the owner wants them; tailoring as a
   stage of `run` once an API key exists.
 
+- 2026-11-11, fonts:
+  - **The problem:** Google Fonts serves Roboto and League Spartan as variable fonts. Chromium
+    prints those as Type 3 glyphs, and PDF viewers draw them unhinted, so "l" and "I" looked dark
+    at some zooms (the owner saw it).
+  - **The fix:** the renderer now inlines static Fontsource woff2 files from `src/jobscraper/cv/fonts/`
+    (OFL). It uses two families: League Spartan for the name, title and headings, Roboto for
+    everything else. Lato is gone, by the owner's choice. The Canva measurements above still
+    describe the Canva original.
+  - **Heights:** the cache key now covers the font files. Re-measured, every height came out unchanged.
+  - **Open (review finding, low):** `test_every_weight_in_the_stylesheet_is_loaded` checks the
+    union of weights, not each family's. A Roboto 300 rule would pass silently and fall back to
+    400.
+
 ## Later ideas
 - ~~Scheduled runs (cron / GitHub Actions on a self-hosted runner) with a diff of new top jobs.~~
   Done: `jobscraper report` diffs itself against the previous snapshot in the same database and

@@ -9,13 +9,18 @@ the overflow in mm is what the caller warns about. :func:`measure_overflow` take
 measurement without printing, for the tailor step's page-fit check.
 
 Measurements come from the Canva export (docs/PLAN.md, "Tailored CV"). Canva's fonts "Now" and
-"Aileron" are not on Google Fonts; the closest substitutes found there sit in the ``FONT_*``
-constants, so the exact fonts can be swapped in later (``@font-face`` files) without touching
-the layout.
+"Aileron" are not freely available; the closest substitutes sit in the ``FONT_*`` constants. Two
+families: League Spartan for the name, the title and the headings, Roboto for everything else.
+Their static (non-variable) files are vendored in ``fonts/`` (Fontsource, OFL; see the LICENSE
+files there) and inlined as ``@font-face`` data URIs, so a render needs no network, and every
+font lands in the PDF as a real embedded font: Chromium prints variable web fonts as Type 3
+glyphs, which PDF viewers draw unhinted (thin stems turn visibly darker).
 """
 
 from __future__ import annotations
 
+import base64
+import functools
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -26,14 +31,22 @@ from typing import Any
 
 from jobscraper.cv.parts import ResolvedEntry, TailoredCV, _flat
 
-#: Canva's "Now" (name, title, section headings): not on Google Fonts; the closest one there.
+#: Canva's "Now" (name, title, section headings): not freely available; the closest one.
 FONT_DISPLAY = "League Spartan"
-#: Canva's "Aileron" (project and work entries): not on Google Fonts either.
+#: Everything else: the profile, the sidebar, the project and work entries.
 FONT_TEXT = "Roboto"
-#: Canva's "Lato" (profile paragraph, sidebar): on Google Fonts as itself.
-FONT_BODY = "Lato"
-#: Weights loaded for every family above.
-FONT_WEIGHTS = "300;400;700"
+#: The weights the stylesheet uses, per family: one vendored file per weight and subset.
+FONT_WEIGHTS = {FONT_DISPLAY: (300, 400, 700), FONT_TEXT: (400, 700)}
+#: Where the static woff2 files live: ``<family-slug>-<subset>-<weight>-normal.woff2``.
+FONT_DIR = Path(__file__).parent / "fonts"
+#: The subsets vendored, with their ``unicode-range`` from the Fontsource packages' CSS.
+FONT_SUBSETS = {
+    "latin": ("U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,"
+              "U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"),
+    "latin-ext": ("U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,"
+                  "U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,"
+                  "U+2113,U+2C60-2C7F,U+A720-A7FF"),
+}
 
 NAVY = "#163853"  # sampled from the Canva export
 GREY = "#545454"
@@ -90,16 +103,15 @@ _CSS = """
 * { box-sizing: border-box; margin: 0; padding: 0 }
 html, body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact }
 .page { width: 210mm; min-height: 297mm; display: flex; background: #fff; color: %(grey)s;
-        font-family: %(body)s; font-kerning: normal }
+        font-family: %(text)s; font-kerning: normal }
 ul { list-style: none }
 ul > li { position: relative; padding-left: 4.4mm }
 ul > li::before { content: ""; position: absolute; left: 1.15mm; top: 0.62em; width: 1mm;
                   height: 1mm; border-radius: 50%%; background: currentColor }
 
-/* --- sidebar: Lato 10, the name in Now 23 (Canva units are pt) ---------------------- */
+/* --- sidebar: 10pt, the name in Now 23 (Canva units are pt) ------------------------ */
 .sidebar { width: 64.5mm; flex: none; background: %(navy)s; color: #fff;
-           padding: 5.2mm 3.6mm 5mm 4.1mm; font-family: %(body)s; font-size: 10pt;
-           line-height: 1.35 }
+           padding: 5.2mm 3.6mm 5mm 4.1mm; font-size: 10pt; line-height: 1.35 }
 .name { font-family: %(display)s; font-weight: 300; font-size: 27.4pt; line-height: 0.86;
         letter-spacing: 0.01em; margin: 0 0 0 1.5mm }
 .title { font-family: %(display)s; font-weight: 300; font-size: 13.9pt; margin-top: 10.1mm;
@@ -124,14 +136,12 @@ ul > li::before { content: ""; position: absolute; left: 1.15mm; top: 0.62em; wi
 .edu-title { font-weight: 700; margin-bottom: 0.6mm }
 .side-block .edu ul > li { margin-bottom: 0.3mm }
 
-/* --- main column: Aileron 11.1 / 10.1, profile Lato 12, headings Now Bold ----------- */
-.main { flex: 1; padding: 8mm 8.6mm 7mm 14.3mm; font-family: %(text)s; font-size: 10.1pt;
-        line-height: 1.36 }
+/* --- main column: Aileron 11.1 / 10.1, profile 12, headings Now Bold ---------------- */
+.main { flex: 1; padding: 8mm 8.6mm 7mm 14.3mm; font-size: 10.1pt; line-height: 1.36 }
 .heading { font-family: %(display)s; font-weight: 700; font-size: 15.4pt; letter-spacing: 0.15em;
            color: %(navy)s; line-height: 1.15; margin: 0 }
 .heading .light { font-weight: 400 }
-.summary { font-family: %(body)s; font-size: 12pt; line-height: 1.38; text-align: justify;
-           margin-top: 0.6mm }
+.summary { font-size: 12pt; line-height: 1.38; text-align: justify; margin-top: 0.6mm }
 .projects { margin-top: 7mm; margin-left: -1.9mm }
 .projects .heading { margin-bottom: 3.8mm }
 .project { margin: 0 0 2.8mm 4.6mm }
@@ -157,12 +167,21 @@ def _stack(family: str) -> str:
     return f"'{family}', 'Segoe UI', Arial, sans-serif"
 
 
-def _font_links() -> str:
-    families = list(dict.fromkeys((FONT_DISPLAY, FONT_TEXT, FONT_BODY)))
-    query = "&".join(f"family={f.replace(' ', '+')}:wght@{FONT_WEIGHTS}" for f in families)
-    return ('<link rel="preconnect" href="https://fonts.googleapis.com">'
-            '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-            f'<link rel="stylesheet" href="https://fonts.googleapis.com/css2?{query}&display=swap">')
+@functools.cache
+def font_faces() -> str:
+    """One ``@font-face`` per family, weight and subset, each file inlined as a data URI."""
+    rules = []
+    for family, weights in FONT_WEIGHTS.items():
+        slug = family.lower().replace(" ", "-")
+        for weight in weights:
+            for subset, unicode_range in FONT_SUBSETS.items():
+                data = (FONT_DIR / f"{slug}-{subset}-{weight}-normal.woff2").read_bytes()
+                rules.append(
+                    f"@font-face {{ font-family: '{family}'; font-style: normal; "
+                    f"font-weight: {weight}; font-display: block; "
+                    f"src: url(data:font/woff2;base64,{base64.b64encode(data).decode('ascii')}) "
+                    f"format('woff2'); unicode-range: {unicode_range} }}")
+    return "\n".join(rules)
 
 
 # --------------------------------------------------------------------------- sidebar
@@ -303,20 +322,20 @@ def _main(cv: TailoredCV) -> str:
 def layout_css() -> str:
     """The page's stylesheet, as :func:`to_html` inlines it."""
     return _CSS % {"navy": NAVY, "grey": GREY, "display": _stack(FONT_DISPLAY),
-                   "text": _stack(FONT_TEXT), "body": _stack(FONT_BODY)}
+                   "text": _stack(FONT_TEXT)}
 
 
 def _document(body: str, *, fonts: bool, title: str) -> str:
     """One self-contained HTML document around ``body`` (already escaped)."""
     return ("<!doctype html>\n"
             f'<html lang="en"><head><meta charset="utf-8"><title>{_e(title)}</title>'
-            + (_font_links() if fonts else "")
+            + (f"<style>{font_faces()}</style>" if fonts else "")
             + f"<style>{layout_css()}</style></head><body>{body}</body></html>\n")
 
 
 def to_html(cv: TailoredCV, *, fonts: bool = True, title: str | None = None) -> str:
-    """The CV as one self-contained A4 page; ``fonts=False`` leaves out the Google Fonts links
-    (tests: nothing touches the network, the fallback fonts are used). ``title`` (default: the
+    """The CV as one self-contained A4 page; ``fonts=False`` leaves out the inlined fonts (tests:
+    a small page in the fallback fonts). ``title`` (default: the
     name) becomes the printed PDF's title: a tailored CV carries its job id there."""
     return _document(f'<div class="page">{_sidebar(cv)}{_main(cv)}</div>', fonts=fonts,
                      title=title or cv.header.get("name", "CV"))
@@ -375,7 +394,7 @@ def _overflow_mm(page: Any) -> float:
 
 def measure_overflow(cv: TailoredCV, *, fonts: bool = True) -> float:
     """The overflow :func:`render_pdf` would report for ``cv``, without writing anything: the
-    page-fit check of a tailoring. ``fonts=True`` loads the web fonts, as the real print does.
+    page-fit check of a tailoring. ``fonts=True`` loads the CV fonts, as the real print does.
 
     Raises :class:`RenderUnavailable` when Playwright or its browser is not installed.
     """

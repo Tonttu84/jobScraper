@@ -1538,7 +1538,7 @@ def cv_render(job_id: str | None = typer.Argument(None, help="A tailored job's i
 def cv_heights(force: bool = typer.Option(False, "--force", help="Measure again even when the cache is current")) -> None:
     """Measure every CV part's height on the printed page and print it (mm).
 
-    Headless Chromium with the web fonts, one session for the whole library; cached in
+    Headless Chromium with the CV fonts, one session for the whole library; cached in
     data/cv/heights-<library>.json and measured again only when the library or the layout
     changes. These are the heights the tailor prompt shows and the page fitter adds up.
     """

@@ -110,9 +110,11 @@ class HeightModel(BaseModel):
 
 
 def layout_signature(fonts: bool) -> str:
-    """What the heights depend on besides the library: the stylesheet, the fonts, this module."""
+    """What the heights depend on besides the library: the stylesheet, the fonts (and their
+    files, when they are loaded), this module."""
     key = "\n".join((MEASURE_VERSION, render._CSS, render.FONT_DISPLAY, render.FONT_TEXT,
-                     render.FONT_BODY, render.FONT_WEIGHTS, f"fonts={fonts}"))
+                     repr(render.FONT_WEIGHTS), f"fonts={fonts}",
+                     render.font_faces() if fonts else ""))
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
 
 
@@ -166,7 +168,7 @@ def heights_from_boxes(parts: CvParts, boxes: dict[str, dict], main_px: float, *
 
 def measure_heights(parts: CvParts, *, fonts: bool = True) -> HeightModel:
     """Measure every part in one headless Chromium session (two documents: the measuring page,
-    then the untailored CV for the overhead). ``fonts=True`` loads the web fonts, as the print
+    then the untailored CV for the overhead). ``fonts=True`` loads the CV fonts, as the print
     does. Raises :class:`~jobscraper.cv.render.RenderUnavailable` without a browser."""
     with render._chromium_page(measurement_html(parts, fonts=fonts)) as page:
         boxes = page.evaluate(_BOXES_JS)

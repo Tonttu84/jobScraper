@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -197,12 +198,31 @@ def test_text_is_html_escaped(parts):
     assert "R&amp;D &lt;lab&gt;" in html
 
 
-def test_fonts_switch(cv):
-    assert "fonts.googleapis" not in to_html(cv, fonts=False)
-    with_fonts = to_html(cv)
-    assert 'href="https://fonts.googleapis.com/css2?' in with_fonts
-    for family in (render_mod.FONT_DISPLAY, render_mod.FONT_TEXT, render_mod.FONT_BODY):
-        assert family.replace(" ", "+") in with_fonts
+def _font_faces(html: str) -> list[str]:
+    return re.findall(r"@font-face\s*\{([^}]*)\}", html)
+
+
+def test_the_fonts_are_inlined_static_files_not_google_fonts(cv):
+    html = to_html(cv)
+    assert "fonts.googleapis" not in html and "fonts.gstatic" not in html and "<link" not in html
+    faces = _font_faces(html)
+    loaded = {(re.search(r"font-family:\s*'([^']+)'", f).group(1),
+               int(re.search(r"font-weight:\s*(\d+)", f).group(1))) for f in faces}
+    # Two families: League Spartan for the name, title and headings, Roboto for everything else.
+    assert loaded == {("League Spartan", 300), ("League Spartan", 400), ("League Spartan", 700),
+                      ("Roboto", 400), ("Roboto", 700)}
+    # Each weight comes in the latin and latin-ext subsets, as a self-contained woff2 data URI.
+    assert len(faces) == 2 * len(loaded)
+    assert all("src: url(data:font/woff2;base64," in f and "unicode-range: U+" in f for f in faces)
+    without_data = re.sub(r"url\(data:[^)]*\)", "", html)
+    assert "Lato" not in without_data
+    assert "@font-face" not in to_html(cv, fonts=False)
+
+
+def test_every_weight_in_the_stylesheet_is_loaded():
+    used = {int(w) for w in re.findall(r"font-weight:\s*(\d+)", render_mod.layout_css())}
+    loaded = {w for weights in render_mod.FONT_WEIGHTS.values() for w in weights}
+    assert used <= loaded
 
 
 def test_count_pdf_pages():
@@ -302,15 +322,15 @@ def test_measure_overflow_measures_without_printing(fake_playwright, cv):
     assert render_mod.measure_overflow(cv) == 20.5
     assert not any(name == "pdf" for name, _ in fake.calls)
     html = dict(fake.calls)["html"]
-    # The real print loads the web fonts, so the measurement does too (unless told otherwise).
-    assert "fonts.googleapis" in html and "A general summary" in html
+    # The real print loads the CV fonts, so the measurement does too (unless told otherwise).
+    assert "@font-face" in html and "A general summary" in html
     assert fake.closed
 
 
 def test_measure_overflow_without_web_fonts_and_when_it_fits(fake_playwright, cv):
     fake = fake_playwright()
     assert render_mod.measure_overflow(cv, fonts=False) == 0.0
-    assert "fonts.googleapis" not in dict(fake.calls)["html"]
+    assert "@font-face" not in dict(fake.calls)["html"]
 
 
 def test_measure_overflow_without_playwright(monkeypatch, cv):
@@ -433,7 +453,7 @@ def test_cv_render_default(cli_env):
     assert pdf.is_file() and str(pdf) in result.output
     call = cli_env.fake.calls[0]
     assert call["pdf"] == pdf and call["png"] is None
-    assert "Webserver" in call["html"] and "fonts.googleapis" in call["html"]
+    assert "Webserver" in call["html"] and "@font-face" in call["html"]
     assert "WARNING" not in result.output
 
 

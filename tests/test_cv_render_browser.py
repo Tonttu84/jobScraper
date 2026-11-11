@@ -3,15 +3,18 @@
 Also the part heights (``jobscraper.cv.measure``): the additive height model against the real
 main column, and the fitter against a real overflowing page.
 
-Runs with ``fonts=False`` so nothing leaves the machine (``set_content``, no server, no web
-fonts); the fallback fonts are close enough in size for the fit checks. Skips when Playwright's
+Mostly runs with ``fonts=False`` (``set_content``, no server, the fallback fonts are close enough
+in size for the fit checks); the font check prints with the vendored fonts, which are inlined in
+the page, so nothing leaves the machine either way. Skips when Playwright's
 browser is not installed (``python -m playwright install chromium``). Listed in scripts/check.sh's
 ``BROWSER`` suites, which run on one worker after the parallel part.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
+import zlib
 from pathlib import Path
 
 import pytest
@@ -58,6 +61,40 @@ def test_the_fixture_cv_is_one_page(parts, tmp_path):
     assert result.pages == 1 and result.overflow_mm == 0.0
     assert pdf.read_bytes().startswith(b"%PDF")
     assert not pdf.with_suffix(".png").exists()
+
+
+_FONT_SUBTYPES = {b"Type0", b"Type1", b"MMType1", b"Type3", b"TrueType", b"CIDFontType0",
+                  b"CIDFontType2"}
+
+
+def _pdf_fonts(data: bytes) -> tuple[list[bytes], list[bytes], int]:
+    """The font ``/Subtype``s, the ``/FontName``s (subset tag stripped) and the number of
+    embedded font programs (``/FontFile*``) of a PDF, its deflated streams inflated."""
+    chunks = [data]
+    for stream in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", data, re.S):
+        try:
+            chunks.append(zlib.decompress(stream.group(1)))
+        except zlib.error:  # not deflated (or not a stream at all)
+            continue
+    text = b"\n".join(chunks)
+    subtypes = [s for s in re.findall(rb"/Subtype\s*/(\w+)", text) if s in _FONT_SUBTYPES]
+    names = [re.sub(rb"^[A-Z]{6}\+", b"", n) for n in re.findall(rb"/FontName\s*/([^\s/>]+)", text)]
+    return subtypes, names, len(re.findall(rb"/FontFile[23]?\b", text))
+
+
+def test_the_printed_fonts_are_embedded_not_type3(parts, tmp_path):
+    """Variable web fonts come out of Chromium's PDF backend as Type 3 glyphs, which viewers
+    draw unhinted (thin stems turn dark); the vendored static files embed as real fonts."""
+    html = to_html(resolve(parts, default_selection(parts)))
+    assert "fonts.googleapis" not in html  # offline: the fonts are inlined
+    pdf = tmp_path / "cv.pdf"
+    render_pdf(html, pdf)
+    subtypes, names, programs = _pdf_fonts(pdf.read_bytes())
+    assert subtypes and b"Type3" not in subtypes, subtypes
+    assert any(n.startswith(b"Roboto") for n in names), names
+    assert any(n.replace(b"-", b"").startswith(b"LeagueSpartan") for n in names), names
+    assert not any(b"Lato" in n for n in names), names
+    assert programs >= len(names)  # every described font carries its font program
 
 
 def test_too_much_text_overflows(parts, tmp_path):
