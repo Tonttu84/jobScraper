@@ -12,7 +12,7 @@ See `docs/PLAN.md` for the design, the source list, and the decisions behind it.
 
 ## Setup (your machine)
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.11.5+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone git@github.com:tonttu84/jobScraper.git && cd jobScraper

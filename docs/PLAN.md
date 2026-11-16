@@ -12,7 +12,7 @@ manual scrolling as possible:
 ## Decisions (2026-09-07)
 | Topic | Decision |
 |---|---|
-| Stack | Python 3.11, `uv`, SQLite, `httpx`, `typer`. Reuse `ats-scrapers` (company career boards) and `python-jobspy` (LinkedIn/Indeed). Everything else written here. |
+| Stack | Python 3.11.5+, `uv`, SQLite, `httpx`, `typer`. Reuse `ats-scrapers` (company career boards) and `python-jobspy` (LinkedIn/Indeed). Everything else written here. |
 | Seniority | intern, trainee, junior, graduate, and unlabeled roles asking ≤2 years. 3-4 years → review. 5+ or senior/lead titles → drop. Degree requirements are not a blocker. |
 | Languages | Working language must be EN/FI/DE. Posting on a Polish/German/French board that needs only English is fine. Posting *written* in another language → drop. Other language *required* → drop; Swedish required → review. "X is a plus" never drops. |
 | Location | Tier 1 FI/EE, tier 2 EU/EEA+NO+CH, tier 3 Dubai + ex-Eastern-bloc (GE, AZ, AM, BA, RS, ME, MK, AL, MD, XK, UA, KZ, UZ, KG, TR) with work-rights notes. On-site elsewhere → drop. |
@@ -698,8 +698,9 @@ reference score. Make all of these at once, right before the next full scrape, a
 - [ ] Employment (owner, 2026-11-16). The owner was hired by Northfina as a junior full stack
   developer, on a six-month contract from 2026-11-23. "No developer employment yet" leaves GAPS,
   and `cv_text` gets the job.
-  - Ask before the run what the search should target now: roles starting around June 2027, or
-    keep searching as it does today.
+  - Owner, 2026-11-16: no scrapes for a while. The next run would only be to show the project at
+    Hive, and results matched to the current (pre-job) profile are fine for that. So these
+    batched edits wait until a real search resumes. Ask then what the search should target.
   - The CV library already has a provisional `northfina` work entry.
 
 ## Run of 2026-11-02: report #20

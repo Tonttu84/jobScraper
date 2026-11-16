@@ -31,7 +31,7 @@ D6). This overrides the shared rule "run the local gate before every push" for t
 
 ## Stack
 
-- Python 3.11+, `uv`, Typer CLI (`jobscraper`), SQLite (one database per run under `data/runs/`).
+- Python 3.11.5+, `uv`, Typer CLI (`jobscraper`), SQLite (one database per run under `data/runs/`).
 - HTTP: `httpx` behind the polite client `src/jobscraper/http.py`; headless Chromium (Playwright)
   for Cloudflare-protected boards; `ats-scrapers` and `python-jobspy` for company boards and
   LinkedIn/Indeed.
