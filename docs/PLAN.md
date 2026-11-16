@@ -695,6 +695,12 @@ reference score. Make all of these at once, right before the next full scrape, a
   "learning by hand: a coding agent in Rust (CodeCrafters, in progress)". Add it to the GAPS line
   as current hand-typed work, and record how far it has got at the time of the edit. No CV entry
   until the owner writes one.
+- [ ] Employment (owner, 2026-11-16). The owner was hired by Northfina as a junior full stack
+  developer, on a six-month contract from 2026-11-23. "No developer employment yet" leaves GAPS,
+  and `cv_text` gets the job.
+  - Ask before the run what the search should target now: roles starting around June 2027, or
+    keep searching as it does today.
+  - The CV library already has a provisional `northfina` work entry.
 
 ## Run of 2026-11-02: report #20
 `run --skip-ai` into `data/runs/20261102-064632.db` (its own pre-AI report is #19). The new
